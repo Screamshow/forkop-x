@@ -22,7 +22,7 @@ release() { # version assets...
 }
 {
     printf '{"schema":1,"name":"rust-x","releases":['
-    release 0.0.26 "$(asset 0.0.26 1 aarch64_cortex-a53 ipk)" "$(asset 0.0.26 r1 aarch64_cortex-a53 apk)" "$(asset 0.0.26 r1 x86_64 apk)"
+    release 0.0.26 "$(asset 0.0.26 r1 aarch64_cortex-a73 apk)" "$(asset 0.0.26 1 aarch64_cortex-a53 ipk)" "$(asset 0.0.26 r1 aarch64_cortex-a53 apk)" "$(asset 0.0.26 r1 x86_64 apk)"
     printf ','
     release 0.0.25 "$(asset 0.0.25 1 aarch64_cortex-a53 ipk)" "$(asset 0.0.25 r1 x86_64 apk)"
     printf ','
@@ -61,6 +61,7 @@ let code = "const FORKOP_MIRROR_BASE_URL = \"https://mirror.51343.ru\";\n" +
     "assert(join(\",\", versions) == " + sprintf("%J", ARGV[4]) + ", \"versions: \" + join(\",\", versions));\n" +
     "if (length(versions) > 0) {\n" +
     "  let r = selected_rust_x_release(versions[0]);\n" +
+    "  if (read_openwrt_release_value(\"DISTRIB_ARCH\") == \"aarch64_cortex-a73\") assert(r.architecture == \"aarch64_cortex-a73\" && latest.architecture == r.architecture, \"Beam exact architecture\");\n" +
     "  assert(r.format == (is_apk() ? \"apk\" : \"ipk\") && r.version == versions[0] + (is_apk() ? \"-r1\" : \"-1\"), \"selected package\");\n" +
     "  assert(r.size == 4893243 && length(r.sha256) == 64 && index(r.url, \"https://mirror.51343.ru/forkop/rust-x/releases/\") == 0, \"package metadata\");\n" +
     "}\n" +

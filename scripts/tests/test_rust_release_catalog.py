@@ -18,11 +18,12 @@ class RustCatalogTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
-    def release(self, version):
+    def release(self, version, beam=False):
         folder = self.root / 'releases' / version
         folder.mkdir(parents=True)
         assets = []
-        for arch in ('x86_64', 'aarch64_cortex-a53'):
+        architectures = ('aarch64_cortex-a73', 'aarch64_cortex-a53', 'x86_64') if beam else ('x86_64', 'aarch64_cortex-a53')
+        for arch in architectures:
             for fmt in ('apk', 'ipk'):
                 revision = 'r1' if fmt == 'apk' else '1'
                 package_version = version + '-' + revision
@@ -47,6 +48,13 @@ class RustCatalogTests(unittest.TestCase):
         self.assertEqual(release['formats'], ['apk', 'ipk'])
         self.assertEqual(release['architectures'], ['aarch64_cortex-a53', 'x86_64'])
         self.assertEqual(len(release['assets']), 4)
+
+    def test_beam_architecture_is_available_without_replacing_old_packages(self):
+        self.release('0.0.27', beam=True)
+        entry = publisher.build_catalog(self.root)['releases'][0]
+        self.assertEqual(len(entry['assets']), 6)
+        self.assertEqual(entry['assets'][0]['architecture'], 'aarch64_cortex-a73')
+        self.assertEqual(entry['architectures'], ['aarch64_cortex-a53', 'aarch64_cortex-a73', 'x86_64'])
 
     def test_missing_size_and_hash_failures_excluded(self):
         self.release('0.0.26')
