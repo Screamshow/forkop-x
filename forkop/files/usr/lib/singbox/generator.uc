@@ -1958,7 +1958,9 @@ function tls_alpn_array(value, transport) {
 function apply_link_tls(outbound, scheme, query) {
     query = object_or_empty(query);
     let security = as_string(query.security || "");
-    if (security == "" && (scheme == "hysteria2" || scheme == "hy2"))
+    // Trojan runs over TLS: a link without security= means TLS, as in the
+    // subscription parser and in the links Forkop writes itself.
+    if (security == "" && (scheme == "hysteria2" || scheme == "hy2" || scheme == "trojan"))
         security = "tls";
 
     if (security == "" || security == "none")

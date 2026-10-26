@@ -166,6 +166,10 @@ expect(manual_trojan["localhost"]?.password=="pw"&&manual_trojan["localhost"]?.t
 let reality_out=manual_trojan["www.example.com"];
 expect(reality_out?.tls?.enabled===true&&reality_out.tls.server_name=="www.example.com"&&reality_out.tls.utls?.enabled===true&&reality_out.tls.utls?.fingerprint=="chrome"&&reality_out.tls.reality?.enabled===true&&reality_out.tls.reality?.public_key==pbk&&reality_out.tls.reality?.short_id=="0123abcd","manual REALITY Trojan link lost its TLS: "+sprintf("%J",reality_out));
 if(rust_binary)expect(run([rust_binary,"check","-c",work+"/generated.json"])==0,"real Xrust check failed for manual Trojan links");
+manual.section[0].selector_proxy_links=["trojan://pw@127.0.0.1:443?sni=localhost#Trojan%20Default"];
+expect(generate(manual,trojan_core,work+"/generated.json","1")==0,"manual Trojan link without security rejected: "+log_text());
+let default_tls=outbounds_of_type(json(fs.readfile(work+"/generated.json")),["trojan"])[0];
+expect(default_tls?.tls?.enabled===true&&default_tls.tls.server_name=="localhost","manual Trojan link without security must default to TLS like subscriptions: "+sprintf("%J",default_tls));
 manual.section[0].selector_proxy_links=["ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpwdw@127.0.0.1:8388#SS%20Manual"];
 expect(generate(manual,trojan_core,work+"/kept.json","1")!=0,"manual Shadowsocks link accepted on Trojan-capable Xrust");
 expect(index(last_log_line(),"which is not included in Xrust; remove it or use a VLESS, Trojan or Hysteria2 connection")>=0,"unclear manual link error: "+last_log_line());
