@@ -25,11 +25,24 @@ function provenance() {
     let result = capture([ "ucode", "-L", LIB_DIR, STATE_UC, "sing-box-runtime-provenance" ]);
     return result.status == 0 ? parsed(result.output) : null;
 }
+// The start time read straight from /proc: enough to prove that the PID
+// still names the process whose full provenance was checked before HUP.
+function start_ticks(pid) {
+    let stat = str(fs.readfile("/proc/" + int(pid) + "/stat"));
+    let marker = index(stat, ") ");
+    if (marker < 0) return null;
+    let fields = split(trim(substr(stat, marker + 2)), /[ \t\r\n]+/);
+    return length(fields) >= 20 && match(fields[19], /^[0-9]+$/) != null ? int(fields[19]) : null;
+}
 function same_process(expected, actual) {
     return type(expected) == "object" && type(actual) == "object" &&
         int(expected.pid) > 0 && expected.pid == actual.pid && expected.start_ticks == actual.start_ticks;
 }
-function controller_request(config_path, path, method) {
+// One controller endpoint per config path for this invocation: the poll loop
+// must not re-read the whole config and rewrite the secret file every round.
+let controllers = {};
+function controller(config_path) {
+    if (controllers[config_path] != null) return controllers[config_path];
     let root = read(config_path);
     let api = type(root) == "object" ? common.object_or_empty(common.object_or_empty(root.experimental).clash_api) : {};
     let address = str(api.external_controller);
@@ -44,9 +57,18 @@ function controller_request(config_path, path, method) {
         "header = \"Authorization: Bearer " + escaped + "\"\n") == null) {
         unlink(temporary); return null;
     }
-    let result = capture([ "curl", "--noproxy", "*", "-fsS", "--max-time", method == "POST" ? "60" : "2", "--config", temporary,
-        "--request", method || "GET", "http://" + address + path ]);
-    unlink(temporary);
+    controllers[config_path] = { address, auth: temporary };
+    return controllers[config_path];
+}
+function forget_controllers() {
+    for (let path in controllers) unlink(controllers[path].auth);
+    controllers = {};
+}
+function controller_request(config_path, path, method) {
+    let api = controller(config_path);
+    if (api == null) return null;
+    let result = capture([ "curl", "--noproxy", "*", "-fsS", "--max-time", method == "POST" ? "60" : "2", "--config", api.auth,
+        "--request", method || "GET", "http://" + api.address + path ]);
     return result.status == 0 ? (method == "DELETE" ? { ok: true } : parsed(result.output)) : null;
 }
 function status(config_path) {
@@ -107,6 +129,15 @@ function acknowledged(plan, current, actual, fingerprint) {
         int(current.pid) == int(plan.process.pid) && int(current.generation) > int(plan.generation) &&
         current.config_sha256 == fingerprint;
 }
+// A core that reports refused reloads names the refused config: stop waiting
+// for this fingerprint instead of holding the transition until the timeout.
+function rejected(plan, current, fingerprint) {
+    return type(current) == "object" && plan.reload_attempt != null &&
+        int(current.pid) == int(plan.process.pid) &&
+        int(current.reload_attempt) > int(plan.reload_attempt) &&
+        str(current.rejected_sha256) == fingerprint &&
+        int(current.generation) == int(plan.generation);
+}
 function plan(stage_path) {
     let cfg = common.object_or_empty(uci.get_all(CONFIG_NAME, "settings"));
     let current_path = str(cfg.config_path);
@@ -134,6 +165,7 @@ function apply(plan_path, restore_path) {
     // Require a new acknowledgment for this signal, including rollback of a
     // no-op configuration whose hash is already visible.
     value.generation = int(before.generation);
+    value.reload_attempt = before.reload_attempt;
     let fingerprint = value.config_sha256;
     if (str(restore_path) != "") {
         if (capture([ "cp", "-p", restore_path, value.current_path ]).status != 0) return 1;
@@ -143,26 +175,37 @@ function apply(plan_path, restore_path) {
     let timeout = int(getenv("FORKOP_HOT_RELOAD_TIMEOUT") || "30");
     timeout = timeout > 0 && timeout <= 120 ? timeout : 30;
     let deadline = int(clock(true)[0]) + timeout;
+    let expected = value.process;
     while (int(clock(true)[0]) <= deadline) {
-        let actual = provenance();
-        if (!same_process(value.process, actual)) return 1;
-        if (acknowledged(value, status(value.current_path), actual, fingerprint)) return 0;
-        capture([ "sleep", "0.2" ]);
+        let actual = { pid: expected.pid, start_ticks: start_ticks(expected.pid) };
+        if (!same_process(expected, actual)) return 1;
+        let current = status(value.current_path);
+        // Confirm the full provenance (sole procd-owned core) once, on success.
+        if (acknowledged(value, current, actual, fingerprint))
+            return same_process(expected, provenance()) ? 0 : 1;
+        if (rejected(value, current, fingerprint)) return 1;
+        sleep(100);
     }
     return 1;
 }
+function finish(code) { forget_controllers(); exit(code); }
 let mode = ARGV[0] || "";
-if (mode == "plan") exit(plan(ARGV[1] || ""));
-else if (mode == "close-retired") exit(close_retired(ARGV[1] || "", ARGV[2] || "", ""));
-else if (mode == "close-tag") exit(close_retired("", ARGV[1] || "", ARGV[2] || ""));
+if (mode == "plan") finish(plan(ARGV[1] || ""));
+else if (mode == "close-retired") finish(close_retired(ARGV[1] || "", ARGV[2] || "", ""));
+else if (mode == "close-tag") finish(close_retired("", ARGV[1] || "", ARGV[2] || ""));
 else if (mode == "connections-fixture") {
     let fixture = read(ARGV[1]);
     print(sprintf("%J", affected_ids(fixture.connections, retired_tags(fixture.previous, fixture.current))), "\n");
 }
-else if (mode == "apply") exit(apply(ARGV[1] || "", ""));
-else if (mode == "restore") exit(apply(ARGV[1] || "", ARGV[2] || ""));
+else if (mode == "apply") finish(apply(ARGV[1] || "", ""));
+else if (mode == "restore") finish(apply(ARGV[1] || "", ARGV[2] || ""));
 else if (mode == "ack-fixture") {
     let fixture = read(ARGV[1]);
     exit(acknowledged(fixture.plan, fixture.current, fixture.actual, fixture.fingerprint) ? 0 : 1);
 }
+else if (mode == "reject-fixture") {
+    let fixture = read(ARGV[1]);
+    exit(rejected(fixture.plan, fixture.current, fixture.fingerprint) ? 0 : 1);
+}
+else if (mode == "start-ticks-fixture") print(start_ticks(ARGV[1]), "\n");
 else exit(1);
