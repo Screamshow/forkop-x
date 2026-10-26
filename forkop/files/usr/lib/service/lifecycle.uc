@@ -1252,10 +1252,17 @@ function abort_guarded_transition(status, stage_path, backup_path, guard_active)
     return status == 0 ? 1 : status;
 }
 
+// The cold fallback below always runs behind the fail-closed guard, also when
+// the hot attempt itself did not need one.
+function abort_hot_to_guarded(status, stage_path, backup_path) {
+    module_success(NFT_UC, [ "install-transition-guard", NFT_TABLE_NAME, NFT_FAKEIP_MARK ]);
+    return abort_guarded_transition(status, stage_path, backup_path, true);
+}
+
 function abort_hot_transition(status, stage_path, backup_path) {
     nft_candidate_finish(false);
     if (!finish_list_change_files(true))
-        return abort_guarded_transition(status, stage_path, backup_path, true);
+        return abort_hot_to_guarded(status, stage_path, backup_path);
     // A queued HUP may finish late. Always request and acknowledge the old
     // config after restoring it; a momentary old hash is not sufficient.
     if (fs.stat(backup_path) != null && module_success(HOT_RELOAD_UC, [
@@ -1269,7 +1276,7 @@ function abort_hot_transition(status, stage_path, backup_path) {
         log_message("Hot reload failed; previous core configuration and nft policy restored", "warn");
         return abort_reload(status, false);
     }
-    return abort_guarded_transition(status, stage_path, backup_path, true);
+    return abort_hot_to_guarded(status, stage_path, backup_path);
 }
 
 function abort_invalid_staged_config(stage_path) {
@@ -1878,10 +1885,14 @@ function reload(reason) {
         // The guard is installed atomically in the existing table after
         // mangle marking and before TPROXY. It is the only unavoidable
         // cross-component window: protected packets are dropped, never sent
-        // to a process with a different routing generation.
-        if (!module_success(NFT_UC, [ "install-transition-guard", NFT_TABLE_NAME, NFT_FAKEIP_MARK ]))
-            return abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, false);
-        transition_guard_active = true;
+        // to a process with a different routing generation. A hot reload
+        // with an unchanged nft policy has no such window: the same process
+        // swaps its routing at once, so traffic keeps flowing.
+        if (!hot_reload || nft_candidate_batch_file != "") {
+            if (!module_success(NFT_UC, [ "install-transition-guard", NFT_TABLE_NAME, NFT_FAKEIP_MARK ]))
+                return abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, false);
+            transition_guard_active = true;
+        }
         if (hot_reload) {
             log_message("Applying Xrust configuration with acknowledged hot reload", "info");
             if (!module_success(SINGBOX_UC, [ "commit-config-stage", staged_singbox_config, staged_singbox_backup ]))
@@ -1928,7 +1939,7 @@ function reload(reason) {
         }
         if (nft_candidate_batch_file != "" && !nft_candidate_finish(true, true))
             return hot_reload ? abort_hot_transition(1, staged_singbox_config, staged_singbox_backup) : abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, transition_guard_active);
-        if (nft_candidate_batch_file == "" && !module_success(NFT_UC, [ "remove-transition-guard", NFT_TABLE_NAME, NFT_FAKEIP_MARK ]))
+        if (transition_guard_active && nft_candidate_batch_file == "" && !module_success(NFT_UC, [ "remove-transition-guard", NFT_TABLE_NAME, NFT_FAKEIP_MARK ]))
             return hot_reload ? abort_hot_transition(1, staged_singbox_config, staged_singbox_backup) : abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, transition_guard_active);
         transition_guard_active = false;
         if (hot_reload) {
