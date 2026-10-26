@@ -1931,9 +1931,9 @@ function resolve_sing_box_x_release(version, rust) {
     let arch = read_openwrt_release_value("DISTRIB_ARCH");
     let format = is_apk() ? "apk" : "ipk";
     for (let asset in catalog.assets || []) {
-        // OpenWrt APK uses aarch64 for filogic and accepts cortex-a53 packages.
+        // APK ARM64 and Beam cortex-a73 can use the cortex-a53 baseline build.
         let compatible = asset.architecture == arch ||
-            (is_apk() && arch == "aarch64" && asset.architecture == "aarch64_cortex-a53");
+            (is_apk() && (arch == "aarch64" || arch == "aarch64_cortex-a73") && asset.architecture == "aarch64_cortex-a53");
         if (asset.package != package_name || asset.format != format || !compatible)
             continue;
         if (asset.name != package_name + "_" + asset.version + "_" + asset.architecture + "." + format ||
@@ -1959,9 +1959,9 @@ function rust_x_catalog_asset(release) {
     let arch = read_openwrt_release_value("DISTRIB_ARCH");
     let format = is_apk() ? "apk" : "ipk";
     for (let asset in release.assets || []) {
-        // OpenWrt APK uses aarch64 for filogic and accepts cortex-a53 packages.
+        // APK ARM64 and Beam cortex-a73 can use the cortex-a53 baseline build.
         let compatible = asset.architecture == arch ||
-            (is_apk() && arch == "aarch64" && asset.architecture == "aarch64_cortex-a53");
+            (is_apk() && (arch == "aarch64" || arch == "aarch64_cortex-a73") && asset.architecture == "aarch64_cortex-a53");
         if (asset.package != "rust-x" || asset.format != format || !compatible)
             continue;
         if (match(as_string(asset.version), is_apk() ? /^[0-9.]+-r[1-9][0-9]*$/ : /^[0-9.]+-[1-9][0-9]*$/) == null ||

@@ -49,13 +49,15 @@ function extract(name) {
 }
 let code = "const FORKOP_MIRROR_BASE_URL = \"https://mirror.51343.ru\";\n" +
     "function as_string(v) { return v == null ? \"\" : \"\" + v; }\n" +
-    "function http_get(url) { assert(url == FORKOP_MIRROR_BASE_URL + \"/forkop/rust-x/releases.json\", url); return " + sprintf("%J", fs.readfile(ARGV[1])) + "; }\n" +
+    "const fixture = " + sprintf("%J", fs.readfile(ARGV[1])) + ";\n" +
+    "function http_get(url) { if (url == FORKOP_MIRROR_BASE_URL + \"/forkop/rust-x/latest.json\") { let r = json(fixture).releases[0]; return sprintf(\"%J\", { schema: 1, name: \"rust-x\", version: r.version, package_revision: 1, assets: r.assets }); } assert(url == FORKOP_MIRROR_BASE_URL + \"/forkop/rust-x/releases.json\", url); return fixture; }\n" +
     "function parse_json_object(v) { try { let o = json(v); return type(o) == \"object\" ? o : {}; } catch (e) { return {}; } }\n" +
     "function read_openwrt_release_value(key) { return " + sprintf("%J", ARGV[2]) + "; }\n" +
     "function is_apk() { return " + (ARGV[3] == "1" ? "true" : "false") + "; }\n" +
     "function cleanup_tmp_dir() {}\n" +
-    join("\n", map([ "rust_x_catalog_asset", "rust_x_release_catalog", "rust_x_releases", "selected_rust_x_release" ], extract)) + "\n" +
+    join("\n", map([ "resolve_sing_box_x_release", "rust_x_catalog_asset", "rust_x_release_catalog", "rust_x_releases", "selected_rust_x_release" ], extract)) + "\n" +
     "let versions = map(rust_x_release_catalog(), r => r.build_version);\n" +
+    "let latest = resolve_sing_box_x_release(\"\", true); assert((latest != null) == (index(versions, \"0.0.26\") >= 0), \"latest catalog architecture\");\n" +
     "assert(join(\",\", versions) == " + sprintf("%J", ARGV[4]) + ", \"versions: \" + join(\",\", versions));\n" +
     "if (length(versions) > 0) {\n" +
     "  let r = selected_rust_x_release(versions[0]);\n" +
@@ -73,6 +75,8 @@ exit(status);
 }
 select_releases aarch64_cortex-a53 0 0.0.26,0.0.25 >"$work/ipk.json" || fail 'opkg filogic release selection'
 select_releases aarch64 1 0.0.26 >"$work/apk.json" || fail 'APK filogic release selection'
+select_releases aarch64_cortex-a73 1 0.0.26 >/dev/null || fail 'APK Beam release selection'
+select_releases aarch64_cortex-a73 0 '' >/dev/null || fail 'IPK must not use APK architecture fallback'
 select_releases x86_64 1 0.0.26,0.0.25 >/dev/null || fail 'APK x86_64 release selection'
 select_releases mipsel_24kc 0 '' >"$work/none.json" || fail 'unsupported architecture'
 ucode -e '

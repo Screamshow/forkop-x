@@ -26,6 +26,8 @@ touch "$FORKOP_TEST_RELEASE_FILE"
 
 read_openwrt_release_value() {
   case "$1" in
+    DISTRIB_ID) printf '%s\n' "${TEST_ID:-OpenWrt}" ;;
+    DISTRIB_REVISION) printf '%s\n' "${TEST_REVISION:-}" ;;
     DISTRIB_RELEASE) printf '%s\n' "$TEST_RELEASE" ;;
     DISTRIB_TARGET) printf '%s\n' "$TEST_TARGET" ;;
     DISTRIB_ARCH) printf '%s\n' "$TEST_ARCH" ;;
@@ -75,6 +77,20 @@ expect_rejected 25.12.5 0
 expect_native_fallback 24.10.4 0 ramips/mt7621 mipsel_24kc
 expect_native_fallback 24.10.4 0 mediatek/filogic mipsel_24kc
 expect_native_fallback 25.12.5 1 x86/64 x86_64
+
+TEST_ID='Beam WRT'
+TEST_REVISION=r20260929-d958caf
+FORKOP_CHANNEL=canary
+expect_native_fallback 1.5.0 1 qualcommbe/ipq95xx aarch64_cortex-a73
+expect_rejected 1.5.0 0 qualcommbe/ipq95xx aarch64_cortex-a73
+expect_rejected 1.5.0 1 mediatek/filogic aarch64_cortex-a73
+TEST_REVISION=unknown
+expect_rejected 1.5.0 1 qualcommbe/ipq95xx aarch64_cortex-a73
+TEST_REVISION=r20260929-d958caf
+FORKOP_CHANNEL=stable
+expect_rejected 1.5.0 1 qualcommbe/ipq95xx aarch64_cortex-a73
+TEST_ID=OpenWrt
+TEST_REVISION=''
 
 interactive_terminal_available() { return 1; }
 SING_BOX_INSTALL_VARIANT=""

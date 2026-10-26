@@ -34,6 +34,16 @@ ucode "$helper" core-package-plan rust-x aarch64 apk https://mirror.51343.ru <"$
 if ucode "$helper" core-package-plan sing-box-x aarch64 apk https://mirror.51343.ru <"$work/rust-x.json"; then
   echo 'Catalog of another core accepted' >&2; exit 1
 fi
+ucode "$helper" core-package-plan rust-x aarch64_cortex-a73 apk https://mirror.51343.ru <"$work/rust-x.json" >"$work/beam-plan"
+cmp "$work/rust-plan" "$work/beam-plan"
+for arch in arm_cortex-a7 mipsel_24kc x86_64; do
+  if ucode "$helper" core-package-plan rust-x "$arch" apk https://mirror.51343.ru <"$work/rust-x.json"; then
+    echo "ARM64 package accepted for $arch" >&2; exit 1
+  fi
+done
+if ucode "$helper" core-package-plan rust-x aarch64_cortex-a73 ipk https://mirror.51343.ru <"$work/rust-x.json"; then
+  echo 'APK fallback accepted for IPK' >&2; exit 1
+fi
 if ucode "$helper" core-package-plan sing-box aarch64 apk https://mirror.51343.ru <"$work/rust-x.json"; then
   echo 'Unknown core package accepted' >&2; exit 1
 fi

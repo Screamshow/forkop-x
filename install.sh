@@ -1622,7 +1622,7 @@ function core_package_plan(name, arch, format, base) {
         exit(1);
     for (let asset in catalog.assets || []) {
         if (asset.package != name || asset.format != format ||
-            (asset.architecture != arch && !(format == "apk" && arch == "aarch64" && asset.architecture == "aarch64_cortex-a53")))
+            (asset.architecture != arch && !(format == "apk" && (arch == "aarch64" || arch == "aarch64_cortex-a73") && asset.architecture == "aarch64_cortex-a53")))
             continue;
         if (index(as_string(asset.name), name + "_") != 0 ||
             match(as_string(asset.name), /^[a-z-]+_[A-Za-z0-9_.+-]+[.](apk|ipk)$/) == null ||
@@ -2156,6 +2156,19 @@ check_system() {
     major="$(printf '%s' "$release" | sed 's/[^0-9].*$//' | cut -d. -f1)"
 
     [ -n "$release" ] || fail "Unable to detect the OpenWrt release"
+    # Beam uses its own release number, unrelated to the OpenWrt version.
+    # Keep this opt-in scoped to the verified main-based firmware and canary.
+    if [ "$(read_openwrt_release_value "DISTRIB_ID")" = "Beam WRT" ] &&
+        [ "$FORKOP_CHANNEL" = "canary" ] &&
+        [ "$release" = "1.5.0" ] &&
+        [ "$(read_openwrt_release_value "DISTRIB_REVISION")" = "r20260929-d958caf" ] &&
+        [ "$target" = "qualcommbe/ipq95xx" ] &&
+        [ "$architecture" = "aarch64_cortex-a73" ]; then
+        [ "$PKG_IS_APK" -eq 1 ] || fail "Beam WRT 1.5.0 requires apk packages"
+        warn "Beam WRT canary support is experimental; dependencies and kernel modules use Beam firmware feeds"
+        msg "Beam WRT $release, target $target, architecture $architecture"
+        return 0
+    fi
     if [ -n "$major" ] && [ "$major" -lt 24 ]; then
         fail "Forkop requires OpenWrt 24.10 or newer"
     fi
