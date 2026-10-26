@@ -146,6 +146,7 @@ ops/deployed-nginx/
 !/tests/dns_restart_vm.sh
 !/tests/installer_dhcp_detection.sh
 !/tests/xhttp_capabilities.sh
+!/tests/trojan_capabilities.sh
 !/tests/support_operator_migration.sh
 !/tests/singbox_transient_process.sh
 !/tests/sing_box_memory_storage.sh

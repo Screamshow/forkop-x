@@ -290,17 +290,30 @@ function output_has_build_tag(output, tag) {
     return false;
 }
 
+function output_has_feature(output, feature) {
+    for (let line in split(as_string(output), "\n"))
+        if (substr(trim(line), 0, 9) == "Features:" &&
+            output_has_build_tag(substr(trim(line), 9), feature))
+            return true;
+    return false;
+}
+
 function sing_box_supports_xhttp(version, version_output) {
     // Legacy Extended builds predate Features. X must declare the transport;
     // its package name and upstream version alone do not imply XHTTP support.
     if (sing_box_is_extended(version))
         return true;
     version_output = version_output == null ? sing_box_version_output() : as_string(version_output);
-    for (let line in split(version_output, "\n"))
-        if (substr(trim(line), 0, 9) == "Features:" &&
-            output_has_build_tag(substr(trim(line), 9), "transport.xhttp"))
-            return true;
-    return false;
+    return output_has_feature(version_output, "transport.xhttp");
+}
+
+function sing_box_supports_trojan(version, version_output) {
+    // The other cores keep their Trojan client. Xrust releases up to 0.0.27
+    // have none; later builds declare it in Features.
+    if (index(as_string(version), "-rust-x.") < 0)
+        return true;
+    version_output = version_output == null ? sing_box_version_output() : as_string(version_output);
+    return output_has_feature(version_output, "outbound.trojan");
 }
 
 function sing_box_supports_tailscale(version, version_output) {
@@ -967,6 +980,7 @@ function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferre
     // This invocation cannot change the installed core; use one capability
     // snapshot for both generator arguments instead of executing version twice.
     let core_version = sing_box_version();
+    let version_output = sing_box_is_extended(core_version) ? "" : sing_box_version_output();
     let generate_status = command_status(
         module_command([
             LIB_DIR + "/singbox/generator.uc",
@@ -974,9 +988,10 @@ function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferre
             temp_config,
             service_listen_address_value(settings),
             mwan3_active ? "1" : "0",
-            sing_box_supports_xhttp(core_version, null) ? "1" : "0",
+            sing_box_supports_xhttp(core_version, version_output) ? "1" : "0",
             deferred_sections,
-            core_version
+            core_version,
+            sing_box_supports_trojan(core_version, version_output) ? "1" : "0"
         ]) + " >" + shell_quote(runtime_log) + " 2>&1"
     );
     if (SINGBOX_CONFIG_FAIL_PHASE == "generate")

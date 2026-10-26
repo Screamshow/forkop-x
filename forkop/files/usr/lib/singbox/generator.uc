@@ -32,6 +32,7 @@ let runtime_supports_xhttp = true;
 let runtime_supports_certificate_pins = false;
 let runtime_supports_dns_response_matching = false;
 let runtime_supports_legacy_protocols = true;
+let runtime_supports_trojan = true;
 let runtime_supports_tls12_fingerprints = true;
 let runtime_supports_vless_encryption = true;
 let runtime_supports_reality_mldsa65 = true;
@@ -560,7 +561,8 @@ function outbound_uses_certificate_pins(outbound) {
 }
 
 // Mirrors the outbound types rejected by the Xrust profile without the
-// legacy-protocols build feature (xrust core-config validate()).
+// legacy-protocols build feature (xrust core-config validate()). Newer Xrust
+// builds declare their Trojan client with the outbound.trojan feature.
 const RUST_X_EXCLUDED_OUTBOUND_TYPES = {
     naive: true, vmess: true, trojan: true, shadowsocks: true, tuic: true,
     anytls: true, snell: true, shadowtls: true, fptn: true, openvpn: true,
@@ -576,6 +578,8 @@ function outbound_excluded_protocol(outbound) {
     if (runtime_supports_legacy_protocols || type(outbound) != "object")
         return "";
     let t = lc(as_string(outbound.type || ""));
+    if (t == "trojan" && runtime_supports_trojan)
+        return "";
     return RUST_X_EXCLUDED_OUTBOUND_TYPES[t] ? t : "";
 }
 
@@ -666,7 +670,7 @@ function ensure_explicit_outbound_supported(outbound, source, name) {
     use_supported_utls_fingerprint(outbound, source, name);
     let excluded = outbound_excluded_protocol(outbound);
     if (excluded != "")
-        runtime_generate_unsupported(as_string(source) + " '" + as_string(name) + "' uses protocol " + excluded + ", which is not included in Xrust; remove it or use a VLESS or Hysteria2 connection");
+        runtime_generate_unsupported(as_string(source) + " '" + as_string(name) + "' uses protocol " + excluded + ", which is not included in Xrust; remove it or use a " + (runtime_supports_trojan ? "VLESS, Trojan" : "VLESS") + " or Hysteria2 connection");
     let encryption = outbound_unsupported_vless_encryption(outbound);
     if (encryption != "")
         runtime_generate_unsupported(as_string(source) + " '" + as_string(name) + "' uses VLESS encryption " + encryption + ", which Xrust does not support; use a link with encryption=none");
@@ -3589,14 +3593,16 @@ function enabled_sections(deferred_sections) {
     return result;
 }
 
-function generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version) {
+function generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan) {
     runtime_prunable_outbounds = {};
     runtime_skipped_protocol_outbounds = {};
     // Verified for Xrust; Go X 1.0.4 and Extended 2.7.2 do not support this
     // whole-certificate pin. Never substitute an SPKI pin or remove the pin.
     runtime_supports_certificate_pins = rust_x_core_version(sing_box_version);
-    // Xrust is built without vmess, trojan, shadowsocks and socks outbounds.
+    // Xrust is built without vmess, shadowsocks and socks outbounds; only
+    // builds declaring outbound.trojan include the Trojan client.
     runtime_supports_legacy_protocols = !rust_x_core_version(sing_box_version);
+    runtime_supports_trojan = cli_bool(supports_trojan);
     runtime_supports_tls12_fingerprints = !rust_x_core_version(sing_box_version);
     runtime_supports_vless_encryption = !rust_x_core_version(sing_box_version);
     runtime_supports_reality_mldsa65 = !rust_x_core_version(sing_box_version);
@@ -3669,11 +3675,11 @@ function generate_config(output_path, service_address, mwan3_active, supports_xh
     }
 }
 
-function generate_config_fixture(fixture_path, output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version) {
+function generate_config_fixture(fixture_path, output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan) {
     use_fixture_cursor(fixture_path);
     runtime_subscription.set_section_cache_dir(output_path + ".section-cache");
     runtime_ruleset_folder = output_path + ".rulesets";
-    generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version);
+    generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan);
 }
 
 function stdin_contains(needle) {
@@ -3715,9 +3721,9 @@ function service_route_check_section_fixture() {
 let mode = ARGV[0] || "";
 
 if (mode == "generate-config")
-    generate_config(ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5] || "", ARGV[6] || "");
+    generate_config(ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5] || "", ARGV[6] || "", ARGV[7] || "");
 else if (mode == "generate-config-fixture")
-    generate_config_fixture(ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5], ARGV[6] || "", ARGV[7] || "");
+    generate_config_fixture(ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5], ARGV[6] || "", ARGV[7] || "", ARGV[8] || "");
 else if (mode == "stdin-contains")
     exit(stdin_contains(ARGV[1]) ? 0 : 1);
 else if (mode == "csv-to-json-array")

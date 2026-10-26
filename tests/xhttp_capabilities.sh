@@ -12,7 +12,7 @@ function sing_box_marker_is(v) { return false; }
 function sing_box_version() { return ""; }
 function sing_box_version_output() { return ""; }
 UC
-sed -n '/^function sing_box_version_is_extended(/,/^}/p; /^function sing_box_is_extended(/,/^}/p; /^function output_has_build_tag(/,/^}/p; /^function sing_box_supports_xhttp(/,/^}/p' "$SOURCE"
+sed -n '/^function sing_box_version_is_extended(/,/^}/p; /^function sing_box_is_extended(/,/^}/p; /^function output_has_build_tag(/,/^}/p; /^function output_has_feature(/,/^}/p; /^function sing_box_supports_xhttp(/,/^}/p' "$SOURCE"
 cat <<'UC'
 for (let version in ["1.14.2", "1.14.2-x-1.0.1", "1.14.2-x-1.0.2", "1.14.2-tiny"])
     assert(!sing_box_supports_xhttp(version, "Tags: with_utls,with_clash_api\n"), "old core capability");
