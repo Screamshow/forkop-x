@@ -4,7 +4,7 @@ let common = require("core.common");
 
 function family(version) {
     version = lc(common.as_string(version));
-    if (index(version, "-rust-x.") >= 0 || index(version, "tachyon") >= 0)
+    if (index(version, "-rust-x.") >= 0)
         return "rust-x";
     if (match(version, /-x-[0-9]+[.]/) != null)
         return "x";

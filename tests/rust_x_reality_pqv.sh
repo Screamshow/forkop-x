@@ -43,7 +43,7 @@ function generate(fixture,version){
 }
 function vless_remarks(){let r={};for(let o in json(fs.readfile(output)).outbounds)if(o.type=="vless")r[o.tag]=o;return r;}
 let fixture={settings,section:[section]};
-let rust=["1.14.2-rust-x.0.0.26","v0.0.26-tachyon.0"];
+let rust=["1.14.2-rust-x.0.0.26","v0.0.26-rust-x.0"];
 let plain=normalize(link("Plain",false)+"\n")[0], with_pqv=normalize(link("PQV",true)+"\n")[0];
 
 // Mixed subscription on Xrust: the pqv node is skipped with a warning.

@@ -22,7 +22,7 @@ fs.writefile(fixture, sprintf("%J", {
     section: [{ ".name": "probe", ".type": "section", enabled: "1", action: "connection",
         outbound_jsons: [ '{"type":"direct"}' ] }]
 }));
-let versions = ["1.14.2", "1.14.2-tiny", "1.14.2-x-1.0.4", "v0.0.8-rust-x.0", "v0.0.7-tachyon.0", "1.14.2-extended-2.7.2"];
+let versions = ["1.14.2", "1.14.2-tiny", "1.14.2-x-1.0.4", "v0.0.8-rust-x.0", "v0.0.7-rust-x.0", "1.14.2-extended-2.7.2"];
 let expected = [base, base, base + ".forkop-x", base + ".forkop-rust-x", base + ".forkop-rust-x", base + ".forkop-extended"];
 fs.writefile(base, "legacy upstream cache");
 for (let i = 0; i < length(versions); i++) {

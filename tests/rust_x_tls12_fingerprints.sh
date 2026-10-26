@@ -33,7 +33,7 @@ function generate(fixture,version){
  return fps;
 }
 let fixture={settings,section:[section]};
-for(let version in ["1.14.2-rust-x.0.0.26","v0.0.26-tachyon.0"]){
+for(let version in ["1.14.2-rust-x.0.0.26","v0.0.26-rust-x.0"]){
  let fps=generate(fixture,version);
  expect(fps["Android Node"]=="chrome"&&fps["Q360 Node"]=="chrome",version+": TLS 1.2-only fingerprint generated: "+sprintf("%J",fps));
  expect(fps["Firefox Node"]=="firefox",version+": supported fingerprint changed");

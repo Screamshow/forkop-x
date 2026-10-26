@@ -32,7 +32,7 @@ function generate(fixture,version){
 }
 function vless_tags(){let tags={};for(let o in json(fs.readfile(output)).outbounds)if(o.type=="vless")tags[o.tag]=o.encryption??"";return tags;}
 let fixture={settings,section:[section]};
-let rust=["1.14.2-rust-x.0.0.26","v0.0.26-tachyon.0"];
+let rust=["1.14.2-rust-x.0.0.26","v0.0.26-rust-x.0"];
 
 // Mixed subscription: absent and "none" stay, the encrypted node is skipped.
 fs.writefile(work+"/cache/probe-subscription-1.json",sprintf("%J",{outbounds:[node("Plain",null),node("None","none"),node("Encrypted",enc)]}));

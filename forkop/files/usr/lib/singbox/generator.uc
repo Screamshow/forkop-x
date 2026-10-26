@@ -568,8 +568,8 @@ const RUST_X_EXCLUDED_OUTBOUND_TYPES = {
 };
 
 function rust_x_core_version(version) {
-    // The packaged wrapper reports "-rust-x."; the bare binary reports "-tachyon.".
-    return match(as_string(version), /-(rust-x|tachyon)\./) != null;
+    // Both the packaged wrapper and the bare binary report "-rust-x.".
+    return match(as_string(version), /-rust-x\./) != null;
 }
 
 function outbound_excluded_protocol(outbound) {
