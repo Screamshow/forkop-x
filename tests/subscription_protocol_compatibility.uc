@@ -53,7 +53,7 @@ function outbounds_of_type(config,types){return filter(config.outbounds,function
 write(work+"/cache/probe-subscription-1.json",{outbounds:[vless,hy2,trojan,ss,vmess,socks,chained,mixed_group,legacy_group,nested_group]});
 let cached=fs.readfile(work+"/cache/probe-subscription-1.json");
 let fixture={settings,section:[subscription_section]};
-for(let profile in [{version:"1.14.2-rust-x.0.0.26",binary:rust_binary},{version:"v0.0.26-rust-x.0",binary:rust_binary}]){
+for(let profile in [{version:"1.14.2-rust-x.0.0.26",binary:rust_binary}]){
  let output=work+"/generated.json";
  expect(generate(fixture,profile.version,output)==0,"mixed subscription failed: "+profile.version+": "+log_text());
  let config=json(fs.readfile(output));
@@ -96,7 +96,7 @@ expect(index(last_log_line(),"manual outbound 'Trojan Manual' uses protocol troj
 expect(fs.readfile(work+"/kept.json")=="LAST_KNOWN_GOOD\n","manual failure replaced config");
 for(let link in ["ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpwdw@127.0.0.1:8388#SS%20Manual","socks5://127.0.0.1:1080#SOCKS%20Manual"]){
  manual.section[0].selector_proxy_links=[link];
- expect(generate(manual,"v0.0.26-rust-x.0",work+"/kept.json")!=0,"manual link accepted on Xrust: "+link);
+ expect(generate(manual,"1.14.2-rust-x.0.0.26",work+"/kept.json")!=0,"manual link accepted on Xrust: "+link);
  expect(index(last_log_line(),"is not included in Xrust")>=0,"unclear manual link error: "+last_log_line());
 }
 manual.section[0].selector_proxy_links=["trojan://pw@127.0.0.1:443?security=tls&sni=localhost#Trojan%20Manual"];

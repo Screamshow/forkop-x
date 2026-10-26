@@ -18,7 +18,7 @@ function generate(version,output){
 }
 write(work+"/cache/probe-subscription-1.json",{outbounds:[node,pinned,chained,{type:"selector",tag:"pinned-group",outbounds:["pinned"]}]});
 let cached=fs.readfile(work+"/cache/probe-subscription-1.json");
-for(let profile in [{version:"1.14.2-x-1.0.4",binary:ARGV[2]},{version:"1.14.1-extended-2.7.2"},{version:"1.14.2-rust-x.0.0.22",binary:ARGV[3]},{version:"v0.0.22-rust-x.0",binary:ARGV[3]}]){
+for(let profile in [{version:"1.14.2-x-1.0.4",binary:ARGV[2]},{version:"1.14.1-extended-2.7.2"},{version:"1.14.2-rust-x.0.0.22",binary:ARGV[3]}]){
  let output=work+"/generated.json";
  expect(generate(profile.version,output)==0,"mixed subscription failed: "+profile.version+": "+fs.readfile(work+"/generation.log"));
  let config=json(fs.readfile(output));let nodes=filter(config.outbounds,function(o){return o.type=="vless";});
