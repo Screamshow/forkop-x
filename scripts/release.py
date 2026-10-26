@@ -17,6 +17,7 @@ import time
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
+XRUST_FINALIZE = ROOT / 'artifacts/xrust/scripts/finalize_release.py'
 HOST = 'root@192.168.200.138'
 APK = '/root/.cache/forkop/openwrt-sdk/extracted/apk/staging_dir/host/bin/apk'
 KEY = '/srv/mirror/keys/forkop-apk.pem'
@@ -253,7 +254,7 @@ class Release:
                 if manifest['source_commit'] != self.source or manifest['version'] != self.version:
                     raise ValueError('Public source/version mismatch')
             else:
-                manifest = load(ROOT / 'artifacts/tachyon-core/scripts/finalize_release.py').validate(self.directory, self.version, signed=True)
+                manifest = load(XRUST_FINALIZE).validate(self.directory, self.version, signed=True)
                 if manifest['binary_source_commit'] != self.source:
                     raise ValueError('Public source mismatch')
             names = [a['file'] for a in manifest['assets']] + [filename, 'forkop-apk.pem', 'SHA256SUMS']
@@ -263,7 +264,7 @@ class Release:
         if self.project == 'forkop':
             self.finalize_forkop()
         else:
-            run(sys.executable, ROOT / 'artifacts/tachyon-core/scripts/finalize_release.py', '--tag', self.tag,
+            run(sys.executable, XRUST_FINALIZE, '--tag', self.tag,
                 '--ssh-key', self.args.ssh_key, '--output', self.directory)
         self.verify_signatures()
         run('gh', 'release', 'edit', self.tag, '-R', self.repo, '--draft=false')
@@ -353,8 +354,8 @@ def main():
             if not re.fullmatch(pattern, version):
                 parser.error(f'Invalid {project} version')
             releases.append(Release(args, project, version))
-    if args.rust and not (ROOT / 'artifacts/tachyon-core/scripts/finalize_release.py').is_file():
-        parser.error('Xrust main checkout required at artifacts/tachyon-core')
+    if args.rust and not XRUST_FINALIZE.is_file():
+        parser.error('Xrust main checkout required at artifacts/xrust')
     for release in releases:
         release.preflight()
     for release in releases:

@@ -13,7 +13,7 @@ python scripts/release.py --forkop 2.2.3-canary.1 --rust 0.0.8
 
 These are example **new** versions. For Rust X first prepare and push the
 workspace version, Cargo.lock and release notes on its existing main branch.
-Keep its checkout at `artifacts/tachyon-core`. The command checks the GitHub
+Keep its checkout at `artifacts/xrust`. The command checks the GitHub
 main version before it creates a tag. Forkop accepts `x.y.z` and
 `x.y.z-canary.N`; its package version is set by the build workflow.
 
