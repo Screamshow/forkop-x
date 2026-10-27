@@ -2156,16 +2156,15 @@ check_system() {
     major="$(printf '%s' "$release" | sed 's/[^0-9].*$//' | cut -d. -f1)"
 
     [ -n "$release" ] || fail "Unable to detect the OpenWrt release"
-    # Beam uses its own release number, unrelated to the OpenWrt version.
-    # Keep this opt-in scoped to the verified main-based firmware and canary.
-    if [ "$(read_openwrt_release_value "DISTRIB_ID")" = "Beam WRT" ] &&
-        [ "$FORKOP_CHANNEL" = "canary" ] &&
-        [ "$release" = "1.5.0" ] &&
-        [ "$(read_openwrt_release_value "DISTRIB_REVISION")" = "r20260929-d958caf" ] &&
-        [ "$target" = "qualcommbe/ipq95xx" ] &&
-        [ "$architecture" = "aarch64_cortex-a73" ]; then
-        [ "$PKG_IS_APK" -eq 1 ] || fail "Beam WRT 1.5.0 requires apk packages"
-        warn "Beam WRT canary support is experimental; dependencies and kernel modules use Beam firmware feeds"
+    # Beam WRT (Xiaomi BE7000) is OpenWrt main with its own release number, so
+    # DISTRIB_RELEASE says nothing about the OpenWrt base. It always uses apk
+    # and its own aarch64_cortex-a73 feeds, kernel modules included; those
+    # feeds stay as they are and only Forkop packages come from the mirror.
+    if [ "$(read_openwrt_release_value "DISTRIB_ID")" = "Beam WRT" ]; then
+        [ "$PKG_IS_APK" -eq 1 ] || fail "Beam WRT $release is expected to use apk packages"
+        [ "$architecture" = "aarch64_cortex-a73" ] ||
+            fail "Beam WRT on $architecture is not supported: Forkop knows Beam WRT only as aarch64_cortex-a73"
+        warn "Beam WRT: system dependencies and kernel modules are installed from the Beam WRT firmware feeds"
         msg "Beam WRT $release, target $target, architecture $architecture"
         return 0
     fi

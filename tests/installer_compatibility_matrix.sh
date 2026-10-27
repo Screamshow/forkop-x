@@ -78,19 +78,26 @@ expect_native_fallback 24.10.4 0 ramips/mt7621 mipsel_24kc
 expect_native_fallback 24.10.4 0 mediatek/filogic mipsel_24kc
 expect_native_fallback 25.12.5 1 x86/64 x86_64
 
+# Beam WRT numbers its own releases; any of them, on either channel and
+# after a reinstall with a different build revision, must be accepted.
 TEST_ID='Beam WRT'
-TEST_REVISION=r20260929-d958caf
-FORKOP_CHANNEL=canary
-expect_native_fallback 1.5.0 1 qualcommbe/ipq95xx aarch64_cortex-a73
+for channel in stable canary; do
+  FORKOP_CHANNEL="$channel"
+  for revision in r20260929-d958caf r20261101-0123abc ''; do
+    TEST_REVISION="$revision"
+    for release in 1.5.0 1.4.9 1.6.0 debug-20261021-rc149; do
+      expect_native_fallback "$release" 1 qualcommbe/ipq95xx aarch64_cortex-a73
+    done
+  done
+done
 expect_rejected 1.5.0 0 qualcommbe/ipq95xx aarch64_cortex-a73
-expect_rejected 1.5.0 1 mediatek/filogic aarch64_cortex-a73
-TEST_REVISION=unknown
-expect_rejected 1.5.0 1 qualcommbe/ipq95xx aarch64_cortex-a73
-TEST_REVISION=r20260929-d958caf
+expect_rejected 1.5.0 1 qualcommbe/ipq95xx aarch64_cortex-a53
+expect_rejected 1.5.0 1 qualcommbe/ipq95xx aarch64
 FORKOP_CHANNEL=stable
-expect_rejected 1.5.0 1 qualcommbe/ipq95xx aarch64_cortex-a73
 TEST_ID=OpenWrt
 TEST_REVISION=''
+# The Beam exception is tied to DISTRIB_ID, not to the Beam version number.
+expect_rejected 1.5.0 1 qualcommbe/ipq95xx aarch64_cortex-a73
 
 interactive_terminal_available() { return 1; }
 SING_BOX_INSTALL_VARIANT=""
