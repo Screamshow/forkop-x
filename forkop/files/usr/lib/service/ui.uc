@@ -1,6 +1,7 @@
 #!/usr/bin/env ucode
 
 let fs = require("fs");
+let locks = require("core.locks");
 let process_memory = require("core.process_memory");
 let uci_core = require("core.uci");
 
@@ -790,43 +791,11 @@ function action_state_from_dirs() {
 }
 
 function acquire_dir_lock(lock_dir) {
-    lock_dir = as_string(lock_dir);
-    let owner_pid = current_pid();
-    if (!job_pid_valid(owner_pid))
-        return false;
-
-    if (command_success_from_args([ "mkdir", lock_dir ])) {
-        if (write_file(lock_dir + "/pid", owner_pid + "\n"))
-            return true;
-        release_dir_lock(lock_dir);
-        return false;
-    }
-
-    let current_owner_pid = first_line(lock_dir + "/pid");
-    if (pid_running(current_owner_pid))
-        return false;
-
-    let lock_stat = fs.stat(lock_dir);
-    if (current_owner_pid == "" && lock_stat != null) {
-        let lock_age = now_seconds() - int(lock_stat.mtime || 0);
-        if (lock_age >= 0 && lock_age < 5)
-            return false;
-    }
-
-    remove_file(lock_dir + "/pid");
-    command_success_from_args([ "rmdir", lock_dir ]);
-    if (!command_success_from_args([ "mkdir", lock_dir ]))
-        return false;
-
-    if (write_file(lock_dir + "/pid", owner_pid + "\n"))
-        return true;
-    release_dir_lock(lock_dir);
-    return false;
+    return locks.acquire(lock_dir, current_pid());
 }
 
 function release_dir_lock(lock_dir) {
-    remove_file(as_string(lock_dir) + "/pid");
-    command_success_from_args([ "rmdir", lock_dir ]);
+    locks.release(lock_dir);
 }
 
 function service_enabled() {
@@ -1526,7 +1495,7 @@ function running_latency_test_reason() {
         return "";
     // What counts as a held lock is decided in one place, including a lock
     // created moments ago whose owner is not written yet.
-    if (!module_success(STATE_UC, [ "runtime-dir-lock-held", LATENCY_TEST_LOCK_DIR ]))
+    if (!locks.held(LATENCY_TEST_LOCK_DIR))
         return "";
 
     let message = "Another latency test is already running";

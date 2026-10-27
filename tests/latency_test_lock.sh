@@ -9,16 +9,16 @@ cat <<'UCODE'
 let lock_present = true;
 let lock_held = true;
 let states = [];
-const STATE_UC = "service/state.uc";
 const LATENCY_TEST_LOCK_DIR = "/var/run/forkop/automatic-latency-test.lock";
 const LATENCY_ACTION_DIR = "/var/run/forkop/latency-actions";
 let fs = { stat: (path) => lock_present ? { type: "directory" } : null };
+let locks = {
+    held: (lock_dir) => {
+        assert(lock_dir == LATENCY_TEST_LOCK_DIR, "unexpected lock query");
+        return lock_held;
+    }
+};
 function as_string(value) { return value == null ? "" : "" + value; }
-function module_success(module_path, args) {
-    assert(module_path == STATE_UC && args[0] == "runtime-dir-lock-held" &&
-        args[1] == LATENCY_TEST_LOCK_DIR, "unexpected lock query");
-    return lock_held;
-}
 function action_state_from_dir(dir) {
     assert(dir == LATENCY_ACTION_DIR, "unexpected job directory");
     return states;

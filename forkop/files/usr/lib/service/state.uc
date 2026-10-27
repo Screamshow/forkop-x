@@ -1,6 +1,7 @@
 #!/usr/bin/env ucode
 
 let fs = require("fs");
+let locks = require("core.locks");
 let uci_core = require("core.uci");
 let netstat = require("core.netstat");
 let runtime_health = require("core.runtime_health");
@@ -235,20 +236,6 @@ function consume_pending_reload(path) {
     return true;
 }
 
-function first_line_value(path) {
-    let data = fs.readfile(path);
-    if (data == null)
-        return "";
-
-    let newline = index(data, "\n");
-    return newline >= 0 ? substr(data, 0, newline) : data;
-}
-
-function pid_alive(pid) {
-    pid = as_string(pid);
-    return match(pid, /^[0-9]+$/) != null && command_success_from_args([ "kill", "-0", pid ]);
-}
-
 function package_upgrade_quiescing() {
     return command_success_from_args([ "ucode", "-L", LIB_DIR, LIB_DIR + "/service/ui.uc", "package-upgrade-transition-active" ]);
 }
@@ -277,69 +264,8 @@ function run_pending_reload_if_requested(path, init_script) {
     return true;
 }
 
-function lock_dir_write_owner(lock_dir, owner_pid) {
-    return write_text_file(as_string(lock_dir) + "/pid", as_string(owner_pid) + "\n");
-}
-
-// A lock is taken in two steps: the directory first, its owner second. A
-// directory without an owner is therefore either one that was created moments
-// ago or one its owner never finished, and only age tells them apart. Without
-// this window a second caller removed a lock the first was still writing, and
-// both walked away believing they held it.
-const LOCK_OWNER_WRITE_GRACE_SECONDS = 5;
-
-function runtime_dir_lock_held(lock_dir) {
-    lock_dir = as_string(lock_dir);
-    let stat = lock_dir == "" ? null : fs.stat(lock_dir);
-    if (stat == null)
-        return false;
-
-    let pid = first_line_value(lock_dir + "/pid");
-    if (pid != "")
-        return pid_alive(pid);
-
-    let now = int(current_epoch(), 10) || 0;
-    let created = int(stat.mtime || 0);
-    return now <= 0 || created <= 0 || now - created < LOCK_OWNER_WRITE_GRACE_SECONDS;
-}
-
-// Replaces an abandoned lock without removing one that somebody else may have
-// created in the meantime: the rename only succeeds for the caller that still
-// sees the abandoned directory, and mkdir decides the rest.
-function replace_abandoned_runtime_dir_lock(lock_dir, owner_pid) {
-    let aside = lock_dir + ".abandoned." + owner_pid;
-    if (!command_success_from_args([ "mv", lock_dir, aside ]))
-        return false;
-
-    command_success_from_args([ "rm", "-f", aside + "/pid" ]);
-    command_success_from_args([ "rmdir", aside ]);
-    return command_success_from_args([ "mkdir", lock_dir ]);
-}
-
 function acquire_runtime_dir_lock(lock_dir, owner_pid) {
-    lock_dir = as_string(lock_dir);
-    owner_pid = as_string(owner_pid);
-    if (lock_dir == "" || owner_pid == "")
-        return false;
-
-    if (command_success_from_args([ "mkdir", lock_dir ])) {
-        if (lock_dir_write_owner(lock_dir, owner_pid))
-            return true;
-        release_runtime_dir_lock(lock_dir);
-        return false;
-    }
-
-    if (runtime_dir_lock_held(lock_dir))
-        return false;
-
-    if (!replace_abandoned_runtime_dir_lock(lock_dir, owner_pid))
-        return false;
-
-    if (lock_dir_write_owner(lock_dir, owner_pid))
-        return true;
-
-    release_runtime_dir_lock(lock_dir);
-    return false;
+    return locks.acquire(lock_dir, owner_pid);
 }
 
 function acquire_runtime_dir_lock_wait(lock_dir, owner_pid, timeout) {
@@ -375,12 +301,7 @@ function acquire_runtime_dir_lock_wait_until_package_upgrade(lock_dir, owner_pid
 }
 
 function release_runtime_dir_lock(lock_dir) {
-    lock_dir = as_string(lock_dir);
-    if (lock_dir == "")
-        return;
-
-    command_success_from_args([ "rm", "-f", lock_dir + "/pid" ]);
-    command_success_from_args([ "rmdir", lock_dir ]);
+    locks.release(lock_dir);
 }
 
 function write_reload_state(path, values) {
@@ -2056,8 +1977,6 @@ else if (mode == "consume-pending-reload")
     exit(consume_pending_reload(ARGV[1]) ? 0 : 1);
 else if (mode == "run-pending-reload-if-requested")
     exit(run_pending_reload_if_requested(ARGV[1], ARGV[2]) ? 0 : 1);
-else if (mode == "runtime-dir-lock-held")
-    exit(runtime_dir_lock_held(ARGV[1]) ? 0 : 1);
 else if (mode == "acquire-runtime-dir-lock")
     exit(acquire_runtime_dir_lock(ARGV[1], ARGV[2]) ? 0 : 1);
 else if (mode == "acquire-runtime-dir-lock-wait")

@@ -1,6 +1,7 @@
 #!/usr/bin/env ucode
 
 let fs = require("fs");
+let locks = require("core.locks");
 let constants = require("core.constants");
 let uci_core = require("core.uci");
 
@@ -183,37 +184,8 @@ function pid_alive(pid) {
     return match(pid, /^[0-9]+$/) != null && command_success_from_args([ "kill", "-0", pid ]);
 }
 
-function lock_dir_write_owner(lock_dir, owner_pid) {
-    return write_text_file(as_string(lock_dir) + "/pid", as_string(owner_pid) + "\n");
-}
-
 function acquire_runtime_dir_lock(lock_dir, owner_pid) {
-    lock_dir = as_string(lock_dir);
-    owner_pid = as_string(owner_pid);
-    if (lock_dir == "" || owner_pid == "")
-        return false;
-
-    if (command_success_from_args([ "mkdir", lock_dir ])) {
-        if (lock_dir_write_owner(lock_dir, owner_pid))
-            return true;
-        release_runtime_dir_lock(lock_dir);
-        return false;
-    }
-
-    if (pid_alive(first_line_value(lock_dir + "/pid")))
-        return false;
-
-    command_success_from_args([ "rm", "-f", lock_dir + "/pid" ]);
-    if (!command_success_from_args([ "rmdir", lock_dir ]))
-        return false;
-    if (!command_success_from_args([ "mkdir", lock_dir ]))
-        return false;
-
-    if (lock_dir_write_owner(lock_dir, owner_pid))
-        return true;
-
-    release_runtime_dir_lock(lock_dir);
-    return false;
+    return locks.acquire(lock_dir, owner_pid);
 }
 
 function acquire_runtime_dir_lock_wait(lock_dir, owner_pid, timeout) {
@@ -231,12 +203,7 @@ function acquire_runtime_dir_lock_wait(lock_dir, owner_pid, timeout) {
 }
 
 function release_runtime_dir_lock(lock_dir) {
-    lock_dir = as_string(lock_dir);
-    if (lock_dir == "")
-        return;
-
-    command_success_from_args([ "rm", "-f", lock_dir + "/pid" ]);
-    command_success_from_args([ "rmdir", lock_dir ]);
+    locks.release(lock_dir);
 }
 
 function mark_pending_reload(path, reason) {
