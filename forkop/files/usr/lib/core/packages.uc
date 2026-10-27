@@ -287,6 +287,10 @@ function opkg_installed_version_state(package_name) {
 }
 
 function apk_installed_version_state(package_name) {
+    // A query that failed counts as failed even when it said nothing: apk
+    // exits non-zero without a word often enough, and reading that silence as
+    // "the package is not installed" is what a rollback must never do.
+    let failed = false;
     let failure = "";
     for (let query in [
         [ "list", [ "apk", "list", "--installed", package_name ] ],
@@ -295,8 +299,11 @@ function apk_installed_version_state(package_name) {
     ]) {
         let result = command_result(query[1]);
         if (result.status != 0) {
+            failed = true;
             if (failure == "")
                 failure = first_error_line(result.output);
+            if (failure == "")
+                failure = "apk " + query[0] + " failed with exit code " + result.status;
             continue;
         }
 
@@ -308,7 +315,7 @@ function apk_installed_version_state(package_name) {
     }
 
     // Every query answered and none reported the package: it is not installed.
-    if (failure == "")
+    if (!failed)
         return missing_state();
 
     let fallback = apk_db_state(package_name, fs.readfile(APK_DB_PATH));

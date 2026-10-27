@@ -25,6 +25,8 @@ STUB
 
 cat >"$work/apk-bin/apk" <<'STUB'
 #!/bin/sh
+# apk exits non-zero without a word often enough; the query still failed.
+[ "${STUB_APK_SILENT:-0}" = 1 ] && exit 1
 if [ "${STUB_APK_LOCK:-0}" = 1 ]; then
   echo "ERROR: Unable to lock database: temporary error" >&2
   exit 1
@@ -100,6 +102,13 @@ run apk-bin 0 "found 2.5.0" forkop STUB_APK_LOCK=1 "$apk_env" FORKOP_APK_DB_PATH
 run apk-bin 3 "missing" luci-app-forkop STUB_APK_LOCK=1 "$apk_env" FORKOP_APK_DB_PATH="$work/apk-db"
 run apk-bin 2 "error ERROR: Unable to lock database" forkop STUB_APK_LOCK=1 "$apk_env" \
   FORKOP_APK_DB_PATH="$work/absent-apk-db"
+
+# A query that failed without printing anything is still a failed query, never
+# a package that is not installed.
+run apk-bin 0 "found 2.5.0" forkop STUB_APK_SILENT=1 "$apk_env" FORKOP_APK_DB_PATH="$work/apk-db"
+run apk-bin 2 "error apk list failed with exit code 1" forkop STUB_APK_SILENT=1 "$apk_env" \
+  FORKOP_APK_DB_PATH="$work/absent-apk-db"
+run apk-bin 3 "missing" luci-app-forkop STUB_APK_SILENT=1 "$apk_env" FORKOP_APK_DB_PATH="$work/apk-db"
 
 # A database in another format is not an empty database: a package that the
 # query could not confirm must never be reported as not installed.
