@@ -2186,6 +2186,11 @@ function uninstall() {
     }
 
     command_success_from_args([ "rm", "-rf", "/usr/lib/forkop" ]);
+    // The precompiled copy of the library the sources above fed.  It can no
+    // longer be resolved once they are gone, but leaving it occupies tmpfs
+    // until the next boot.
+    command_success_from_args([ "rm", "-rf",
+        getenv("FORKOP_BYTECODE_CACHE_DIR") || "/var/run/forkop/bytecode" ]);
     command_success_from_args([ "rm", "-rf", LUCI_VIEW_DIR ]);
     remove_file(SERVICE_INIT);
     remove_file(BIN_PATH);

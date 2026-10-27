@@ -181,3 +181,4 @@ ops/deployed-nginx/
 !/tests/runtime_dir_lock.sh
 !/docs/releases/2.3.9.md
 !/docs/releases/2.4.2.md
+!/tests/bytecode_cache.sh

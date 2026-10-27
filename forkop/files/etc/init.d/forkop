@@ -11,10 +11,13 @@ NAME="$(basename ${script:-$initscript})"
 FORKOP_LIB="/usr/lib/forkop"
 FORKOP_INITD_UC="$FORKOP_LIB/service/initd.uc"
 
+# FORKOP_LIB is deliberately not exported: service/initd.uc resolves the
+# precompiled library cache itself and hands the result to everything it starts.
+# Pinning the source directory here would reach every child through the
+# environment and switch the whole procd path back to parsing sources.
 initd_ucode() {
     [ -r "$FORKOP_INITD_UC" ] || return 1
-    FORKOP_LIB="$FORKOP_LIB" \
-        FORKOP_SERVICE_NAME="$NAME" \
+    FORKOP_SERVICE_NAME="$NAME" \
         ucode -L "$FORKOP_LIB" "$FORKOP_INITD_UC" "$@"
 }
 

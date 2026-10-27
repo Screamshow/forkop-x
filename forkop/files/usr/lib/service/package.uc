@@ -1,6 +1,7 @@
 #!/usr/bin/env ucode
 
 let fs = require("fs");
+let bytecode = require("core.bytecode");
 let uci_core = require("core.uci");
 
 function as_string(value) {
@@ -308,6 +309,11 @@ function prerm_cleanup(action) {
         return false;
     }
     remember_upgrade_state(action);
+    // The files under /usr/lib/forkop are replaced right after this returns.
+    // Dropping the cache's short-lived validation stamp makes the next process
+    // re-check the manifest against the new sources instead of trusting a
+    // library compiled from the old ones.
+    bytecode.invalidate_validation_stamp();
     if (!PACKAGE_TEST_MODE) {
         if (path_exists('/etc/init.d/forkop-tailscale'))
             command_success_from_args([ '/etc/init.d/forkop-tailscale', 'stop' ]);
@@ -336,6 +342,7 @@ function postinst_restore() {
         return true;
 
     clear_component_update_check_cache();
+    bytecode.invalidate_validation_stamp();
     if (!PACKAGE_TEST_MODE && path_exists('/etc/forkop-tailscale/enabled') && path_exists('/etc/init.d/forkop-tailscale'))
         command_success_from_args([ '/etc/init.d/forkop-tailscale', 'start' ]);
     if (!restore_compressed_upgrade_backup()) {

@@ -2,6 +2,7 @@
 
 let fs = require("fs");
 let locks = require("core.locks");
+let bytecode = require("core.bytecode");
 let constants = require("core.constants");
 let uci_core = require("core.uci");
 
@@ -15,7 +16,10 @@ function constant_value(name, fallback) {
 }
 
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || constant_value("FORKOP_CONFIG_NAME", "forkop");
-const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
+// Resolved once for the whole procd path: every module and command started
+// below receives it, so the reload a config change triggers loads precompiled
+// modules instead of parsing them again in each of its processes.
+const LIB_DIR = getenv("FORKOP_LIB") || bytecode.refresh();
 const BIN_PATH = getenv("FORKOP_BIN") || constant_value("FORKOP_BIN", "/usr/bin/forkop");
 const SERVICE_INIT = getenv("FORKOP_SERVICE_INIT") || constant_value("FORKOP_SERVICE_INIT", "/etc/init.d/forkop");
 const SERVICE_NAME = getenv("FORKOP_SERVICE_NAME") || constant_value("FORKOP_SERVICE_NAME", "forkop");
@@ -98,7 +102,18 @@ function module_args(module_path, args) {
 }
 
 function module_command(module_path, args) {
-    return command_from_args(module_args(module_path, args));
+    return "FORKOP_LIB=" + shell_quote(LIB_DIR) + " " +
+        command_from_args(module_args(module_path, args));
+}
+
+// /usr/bin/forkop resolves the library itself when nothing hands it one.  Pass
+// the directory this process already resolved so every level of the procd path
+// agrees on one library instead of resolving it again.
+function bin_args(args) {
+    let result = [ "env", "FORKOP_LIB=" + LIB_DIR ];
+    for (let arg in (type(args) == "array" ? args : []))
+        push(result, arg);
+    return result;
 }
 
 function module_status(module_path, args) {
@@ -434,7 +449,7 @@ function finish_external_service_action(action, job_id, status) {
 }
 
 function runtime_status_object() {
-    let data = command_output_from_args([ BIN_PATH, "get_status" ]);
+    let data = command_output_from_args(bin_args([ BIN_PATH, "get_status" ]));
     try {
         data = json(data);
     }
@@ -592,7 +607,7 @@ function start_service(reason, owner_pid) {
         return 1;
     }
 
-    let status = command_status_from_args([ BIN_PATH, "start" ]);
+    let status = command_status_from_args(bin_args([ BIN_PATH, "start" ]));
     release_runtime_dir_lock(RELOAD_LOCK_DIR);
     if (status == 0) {
         clear_start_retry(START_RETRY_FILE);
@@ -623,7 +638,7 @@ function restart_service(owner_pid) {
     clear_start_retry(START_RETRY_FILE);
     cancel_scheduled_start_retry(START_RETRY_PID_FILE);
     let job_id = begin_external_service_action("restart", "initd", owner_pid);
-    let status = command_status_from_args([ BIN_PATH, "restart" ]);
+    let status = command_status_from_args(bin_args([ BIN_PATH, "restart" ]));
     release_runtime_dir_lock(RELOAD_LOCK_DIR);
     finish_external_service_action("restart", job_id, status);
     if (status == 0 && active_service_action_value() == "")
@@ -651,7 +666,7 @@ function stop_service(owner_pid) {
         return 1;
     }
 
-    let status = command_status_from_args([ BIN_PATH, "stop" ]);
+    let status = command_status_from_args(bin_args([ BIN_PATH, "stop" ]));
     return stop_finish(job_id, status);
 }
 
@@ -747,7 +762,8 @@ function reload_service(reason, owner_pid) {
 
     // Public CLI reload enters this same lock/queue path. Invoke lifecycle
     // directly here, after acquiring the lock, to avoid re-entering initd.
-    let status = command_status(command_from_args([ "env", "FORKOP_UI_ACTION_TRACKED=1", "ucode", "-L", LIB_DIR, LIB_DIR + "/service/lifecycle.uc", "reload", reason ]) + " >/dev/null 2>&1");
+    let status = command_status(command_from_args([ "env", "FORKOP_LIB=" + LIB_DIR, "FORKOP_UI_ACTION_TRACKED=1",
+        "ucode", "-L", LIB_DIR, LIB_DIR + "/service/lifecycle.uc", "reload", reason ]) + " >/dev/null 2>&1");
     let finish = reload_finish_value(reason, plan.job_id, status);
     if (finish.sync)
         print("sync\n");

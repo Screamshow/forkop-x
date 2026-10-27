@@ -7,7 +7,24 @@ function as_string(value) {
 }
 
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
-const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
+const SOURCE_LIB_DIR = getenv("FORKOP_SOURCE_LIB") || "/usr/lib/forkop";
+
+// Every process start parses the modules it imports, and on a router that parse
+// costs more than most commands do. core/bytecode.uc keeps a compiled copy of
+// the library in tmpfs and hands back the directory to load from; the fallback
+// is the source tree, so a cache that cannot be built or trusted only costs
+// what it always cost. An explicit FORKOP_LIB still wins, both for tests and
+// because every child process already receives the resolved directory that way.
+function resolved_library_dir() {
+    try {
+        return loadfile(SOURCE_LIB_DIR + "/core/bytecode.uc")().refresh();
+    }
+    catch (e) {
+        return SOURCE_LIB_DIR;
+    }
+}
+
+const LIB_DIR = getenv("FORKOP_LIB") || resolved_library_dir();
 const BIN_PATH = getenv("FORKOP_BIN") || "/usr/bin/forkop";
 const SERVICE_INIT = getenv("FORKOP_SERVICE_INIT") || "/etc/init.d/forkop";
 
@@ -27,6 +44,12 @@ function normalize_status(status) {
     return status > 255 ? int(status / 256) : status;
 }
 
+// Every module below spawns further modules from FORKOP_LIB, so the resolved
+// directory is exported once here instead of being resolved again at each level.
+function module_command(args) {
+    return "FORKOP_LIB=" + shell_quote(LIB_DIR) + " " + command_from_args(args);
+}
+
 function module_path(path) {
     return LIB_DIR + "/" + as_string(path);
 }
@@ -39,7 +62,7 @@ function restore_dnsmasq_failsafe() {
     let module = module_path("dns/apply.uc");
     if (!file_readable(module))
         return;
-    system(command_from_args([ "ucode", "-L", LIB_DIR, module, "failsafe-restore" ]) + " >/dev/null 2>&1");
+    system(module_command([ "ucode", "-L", LIB_DIR, module, "failsafe-restore" ]) + " >/dev/null 2>&1");
 }
 
 function restore_dnsmasq_failsafe_on_loader_failure(command) {
@@ -211,7 +234,7 @@ function run_spec(command, spec, user_args) {
     for (let i = 0; i < count; i++)
         push(args, user_args[i] || "");
 
-    return normalize_status(system(command_from_args(args)));
+    return normalize_status(system(module_command(args)));
 }
 
 function main() {
