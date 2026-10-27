@@ -64,6 +64,9 @@ function constants_map() {
     c.NFT_INTERFACE_SET_NAME = env("NFT_INTERFACE_SET_NAME", "forkop_interfaces");
     c.NFT_FAKEIP_MARK = env("NFT_FAKEIP_MARK", "0x04000000");
     c.NFT_OUTBOUND_MARK = env("NFT_OUTBOUND_MARK", "0x08000000");
+    // What the router itself sends to the core. A mark of its own keeps the
+    // source-check rule at priority 103 away from its rerouting lookups.
+    c.NFT_ROUTER_MARK = env("NFT_ROUTER_MARK", "0x10000000");
 
     c.SB_REQUIRED_VERSION = env("SB_REQUIRED_VERSION", "1.12.0");
     c.SB_MANAGED_SERVICE_MARKER = env("SB_MANAGED_SERVICE_MARKER", "Forkop managed sing-box service for binary variants");

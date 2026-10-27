@@ -20,6 +20,14 @@ const NFT_TRANSITION_GUARD_CHAIN = "forkop_transition_guard";
 // already holds. Marked and handed to TPROXY it finds no socket of its own,
 // so the connection dies; download traffic stops walking the chain here too.
 const REPLY_RETURN = [ "ct", "direction", "reply", "return" ];
+// What the router itself sends to the core. The default mirrors
+// core/constants.uc: a mark of its own keeps the source-check rule at
+// priority 103 away from the rerouting lookup of a locally generated packet.
+const ROUTER_MARK = getenv("NFT_ROUTER_MARK") || "0x10000000";
+// The rule that answers the kernel's source check, before the TPROXY rules at
+// 105. Upstream puts it at 104; here that priority belongs to the Tailscale
+// exit-node LAN rule, whose own setup refuses to run beside a foreign 104.
+const SOURCE_CHECK_PRIORITY = "103";
 
 const IPV6_TPROXY_ENABLED = core_ip.ipv6_tproxy_enabled();
 
@@ -641,8 +649,9 @@ function nft_add_priority_rule_pair(table, chain, section, interface_set, localv
             nft_add_rule(table, chain, nft_priority_prerouting_args(section, 6, interface_set, localv6_set, match6, mark));
     }
 
-    return nft_add_rule(table, chain, nft_priority_rule_args(section, 4, localv4_set, match4, mark)) &&
-        nft_add_rule(table, chain, nft_priority_rule_args(section, 6, localv6_set, match6, mark));
+    // priority_output_rules only ever sees what the router itself sends.
+    return nft_add_rule(table, chain, nft_priority_rule_args(section, 4, localv4_set, match4, ROUTER_MARK)) &&
+        nft_add_rule(table, chain, nft_priority_rule_args(section, 6, localv6_set, match6, ROUTER_MARK));
 }
 
 function nft_fully_routed_priority_args(section, family, interface_set, local_set, fakeip_range, protocol, mark) {
@@ -757,12 +766,52 @@ function nft_add_section_priority_rules_from_sections(sections, table, interface
     return true;
 }
 
+function hex_digit_value(value) {
+    let pos = index("0123456789abcdef", lc(as_string(value)));
+    return pos >= 0 ? pos : null;
+}
+
+function parse_mark_number(value) {
+    value = lc(trim(as_string(value)));
+    if (value == "")
+        return null;
+
+    if (substr(value, 0, 2) == "0x") {
+        value = substr(value, 2);
+        if (value == "")
+            return null;
+
+        let result = 0;
+        for (let i = 0; i < length(value); i++) {
+            let digit = hex_digit_value(substr(value, i, 1));
+            if (digit == null)
+                return null;
+            result = result * 16 + digit;
+        }
+        return result;
+    }
+
+    return match(value, /^[0-9]+$/) == null ? null : int(value);
+}
+
+function mark_union_hex(first, second) {
+    let left = parse_mark_number(first);
+    let right = parse_mark_number(second);
+    if (left == null || right == null)
+        return "";
+
+    return sprintf("0x%08x", left | right);
+}
+
 function nft_create_runtime_base(table, localv4_set, common_set, port_set, ip_port_set, interface_set, source_interfaces, fakeip_mark, outbound_mark, fakeip_range, tproxy_port, exclude_ntp, localv6_set, common6_set, ip_port6_set, fakeip6_range, tproxy6_address) {
     localv6_set = default_arg(localv6_set, "localv6");
     common6_set = default_arg(common6_set, "forkop_subnets6");
     ip_port6_set = default_arg(ip_port6_set, "forkop_ip6_ports");
     fakeip6_range = default_arg(fakeip6_range, "fc00::/18");
     tproxy6_address = default_arg(tproxy6_address, "::1");
+    let capture_mask = mark_union_hex(fakeip_mark, ROUTER_MARK);
+    if (capture_mask == "")
+        return false;
 
     if (!nft_create_table(table) ||
         !nft_create_ipv4_set(table, localv4_set) ||
@@ -818,12 +867,14 @@ function nft_create_runtime_base(table, localv4_set, common_set, port_set, ip_po
         !nft_add_rule(table, "mangle", [ "ip6", "daddr", fakeip6_range, "meta", "l4proto", "tcp", "meta", "mark", "set", fakeip_mark, "counter", "return" ]) ||
         !nft_add_rule(table, "mangle", [ "ip6", "daddr", fakeip6_range, "meta", "l4proto", "udp", "meta", "mark", "set", fakeip_mark, "counter", "return" ]) ||
         // Keep marked router-originated packets eligible for TPROXY as well.
+        // They arrive on loopback carrying the router mark, a LAN client's own
+        // packet the FakeIP mark; both reach the same inbound.
         // Direct packets need no protocol/family-specific interception checks.
-        !nft_add_rule(table, "proxy", [ "meta", "mark", "&", fakeip_mark, "==", "0", "return" ]) ||
-        !nft_add_rule(table, "proxy", [ "meta", "mark", "&", fakeip_mark, "==", fakeip_mark, "meta", "l4proto", "tcp", "tproxy", "ip", "to", ":" + as_string(tproxy_port), "counter" ]) ||
-        !nft_add_rule(table, "proxy", [ "meta", "mark", "&", fakeip_mark, "==", fakeip_mark, "meta", "l4proto", "udp", "tproxy", "ip", "to", ":" + as_string(tproxy_port), "counter" ]) ||
-        !nft_add_rule(table, "proxy", [ "meta", "mark", "&", fakeip_mark, "==", fakeip_mark, "meta", "l4proto", "tcp", "tproxy", "ip6", "to", core_ip.format_ipv6_tproxy_target(tproxy6_address, tproxy_port), "counter" ]) ||
-        !nft_add_rule(table, "proxy", [ "meta", "mark", "&", fakeip_mark, "==", fakeip_mark, "meta", "l4proto", "udp", "tproxy", "ip6", "to", core_ip.format_ipv6_tproxy_target(tproxy6_address, tproxy_port), "counter" ]) ||
+        !nft_add_rule(table, "proxy", [ "meta", "mark", "&", capture_mask, "==", "0", "return" ]) ||
+        !nft_add_rule(table, "proxy", [ "meta", "mark", "&", capture_mask, "!=", "0", "meta", "l4proto", "tcp", "tproxy", "ip", "to", ":" + as_string(tproxy_port), "counter" ]) ||
+        !nft_add_rule(table, "proxy", [ "meta", "mark", "&", capture_mask, "!=", "0", "meta", "l4proto", "udp", "tproxy", "ip", "to", ":" + as_string(tproxy_port), "counter" ]) ||
+        !nft_add_rule(table, "proxy", [ "meta", "mark", "&", capture_mask, "!=", "0", "meta", "l4proto", "tcp", "tproxy", "ip6", "to", core_ip.format_ipv6_tproxy_target(tproxy6_address, tproxy_port), "counter" ]) ||
+        !nft_add_rule(table, "proxy", [ "meta", "mark", "&", capture_mask, "!=", "0", "meta", "l4proto", "udp", "tproxy", "ip6", "to", core_ip.format_ipv6_tproxy_target(tproxy6_address, tproxy_port), "counter" ]) ||
         // A server on the router answering over WAN, and the core's own replies
         // to a client it captured, leave through this chain in the reply
         // direction; only what the router itself opens may be classified.
@@ -880,6 +931,8 @@ function nft_create_runtime_base_from_uci(table, localv4_set, common_set, port_s
         bool_option(settings, "disable_quic", true) ? "1" : "0");
 }
 
+// fakeip_mark stays in the signature for the callers; what leaves this chain is
+// the router's own traffic, and it carries the router mark.
 function nft_create_runtime_output_rules(table, localv4_set, common_set, port_set, ip_port_set, fakeip_mark, fakeip_range, localv6_set, common6_set, ip_port6_set, fakeip6_range) {
     // Provider queues precede this common tail; only its own matches return.
     localv6_set = default_arg(localv6_set, "localv6");
@@ -888,39 +941,11 @@ function nft_create_runtime_output_rules(table, localv4_set, common_set, port_se
     fakeip6_range = default_arg(fakeip6_range, "fc00::/18");
 
     return (
-        nft_add_rule(table, "mangle_output", [ "ip", "daddr", fakeip_range, "meta", "l4proto", "tcp", "meta", "mark", "set", fakeip_mark, "counter", "return" ]) &&
-        nft_add_rule(table, "mangle_output", [ "ip", "daddr", fakeip_range, "meta", "l4proto", "udp", "meta", "mark", "set", fakeip_mark, "counter", "return" ]) &&
-        nft_add_rule(table, "mangle_output", [ "ip6", "daddr", fakeip6_range, "meta", "l4proto", "tcp", "meta", "mark", "set", fakeip_mark, "counter", "return" ]) &&
-        nft_add_rule(table, "mangle_output", [ "ip6", "daddr", fakeip6_range, "meta", "l4proto", "udp", "meta", "mark", "set", fakeip_mark, "counter", "return" ])
+        nft_add_rule(table, "mangle_output", [ "ip", "daddr", fakeip_range, "meta", "l4proto", "tcp", "meta", "mark", "set", ROUTER_MARK, "counter", "return" ]) &&
+        nft_add_rule(table, "mangle_output", [ "ip", "daddr", fakeip_range, "meta", "l4proto", "udp", "meta", "mark", "set", ROUTER_MARK, "counter", "return" ]) &&
+        nft_add_rule(table, "mangle_output", [ "ip6", "daddr", fakeip6_range, "meta", "l4proto", "tcp", "meta", "mark", "set", ROUTER_MARK, "counter", "return" ]) &&
+        nft_add_rule(table, "mangle_output", [ "ip6", "daddr", fakeip6_range, "meta", "l4proto", "udp", "meta", "mark", "set", ROUTER_MARK, "counter", "return" ])
     );
-}
-
-function hex_digit_value(value) {
-    let pos = index("0123456789abcdef", lc(as_string(value)));
-    return pos >= 0 ? pos : null;
-}
-
-function parse_mark_number(value) {
-    value = lc(trim(as_string(value)));
-    if (value == "")
-        return null;
-
-    if (substr(value, 0, 2) == "0x") {
-        value = substr(value, 2);
-        if (value == "")
-            return null;
-
-        let result = 0;
-        for (let i = 0; i < length(value); i++) {
-            let digit = hex_digit_value(substr(value, i, 1));
-            if (digit == null)
-                return null;
-            result = result * 16 + digit;
-        }
-        return result;
-    }
-
-    return match(value, /^[0-9]+$/) == null ? null : int(value);
 }
 
 function nft_provider_mark_hex(route_mark_base, index) {
@@ -1197,25 +1222,41 @@ function rule_line_has_fwmark(fields, expected_mark) {
     return false;
 }
 
+// Mark and table have to meet on one line: the source-check rule carries the
+// same mark towards the main table, and a second marking rule the same table.
 function has_tproxy_marking_rule_text(rule_list, table, mark) {
     let expected_mark = parse_mark_number(mark);
-    let has_lookup = false;
-    let has_fwmark = false;
 
     if (expected_mark == null)
         return false;
 
-    for (let line in split(rule_list, "\n")) {
+    for (let line in split(as_string(rule_list), "\n")) {
         let fields = normalized_fields(line);
         if (length(fields) == 0)
             continue;
 
-        if (!has_lookup && rule_line_has_lookup_table(fields, table))
-            has_lookup = true;
-        if (!has_fwmark && rule_line_has_fwmark(fields, expected_mark))
-            has_fwmark = true;
+        if (rule_line_has_lookup_table(fields, table) && rule_line_has_fwmark(fields, expected_mark))
+            return true;
+    }
 
-        if (has_lookup && has_fwmark)
+    return false;
+}
+
+// "103: from all fwmark 0x4000000/0x4000000 iif lo lookup main", as iproute2 prints it
+function has_source_check_rule_text(rule_list, mark) {
+    let expected_mark = parse_mark_number(mark);
+
+    if (expected_mark == null)
+        return false;
+
+    for (let line in split(as_string(rule_list), "\n")) {
+        let fields = normalized_fields(line);
+        let position = index(fields, "iif");
+        if (length(fields) == 0 || fields[0] != SOURCE_CHECK_PRIORITY + ":")
+            continue;
+
+        if (position > 0 && fields[position + 1] == "lo" && rule_line_has_fwmark(fields, expected_mark) &&
+            rule_line_has_lookup_table(fields, "main"))
             return true;
     }
 
@@ -1274,6 +1315,10 @@ function tproxy_route_present(table) {
     return tproxy_route4_present(table) && (!IPV6_TPROXY_ENABLED || tproxy_route6_present(table));
 }
 
+function source_check_rule4_present(mark) {
+    return has_source_check_rule_text(command_output_from_args([ "ip", "-4", "rule", "list", "priority", SOURCE_CHECK_PRIORITY ]), mark);
+}
+
 function tproxy_marking_rule4_present(table, mark) {
     return has_tproxy_marking_rule_text(command_output_from_args([ "ip", "-4", "rule", "list" ]), table, mark);
 }
@@ -1290,8 +1335,22 @@ function tproxy_route_rule_present(table, mark) {
     return tproxy_route_present(table) && tproxy_marking_rule_present(table, mark);
 }
 
+function ensure_ip_rule(present, argv, message) {
+    if (present())
+        return true;
+
+    if (!run_args(argv) && !present()) {
+        log_fatal(message);
+        return false;
+    }
+
+    return true;
+}
+
 function ensure_tproxy_route_rule(table, mark, rt_tables_path) {
     rt_tables_path = as_string(rt_tables_path || "/etc/iproute2/rt_tables");
+    let mask = as_string(mark) + "/" + as_string(mark);
+    let router_mask = ROUTER_MARK + "/" + ROUTER_MARK;
 
     if (!ensure_rt_table_entry(rt_tables_path, "105", table)) {
         log_fatal("Failed to update route table registry. Aborted.");
@@ -1325,7 +1384,7 @@ function ensure_tproxy_route_rule(table, mark, rt_tables_path) {
 
     if (!tproxy_marking_rule4_present(table, mark)) {
         log_debug("Creating IPv4 TPROXY marking rule");
-        if (!run_args([ "ip", "-4", "rule", "add", "fwmark", as_string(mark) + "/" + as_string(mark), "table", table, "priority", "105" ]) && !tproxy_marking_rule4_present(table, mark)) {
+        if (!run_args([ "ip", "-4", "rule", "add", "fwmark", mask, "table", table, "priority", "105" ]) && !tproxy_marking_rule4_present(table, mark)) {
             log_fatal("Failed to create IPv4 marking rule. Aborted.");
             return false;
         }
@@ -1334,9 +1393,25 @@ function ensure_tproxy_route_rule(table, mark, rt_tables_path) {
         log_debug("IPv4 TPROXY marking rule already exists");
     }
 
+    if (!ensure_ip_rule(() => tproxy_marking_rule4_present(table, ROUTER_MARK),
+        [ "ip", "-4", "rule", "add", "fwmark", router_mask, "table", table, "priority", "105" ],
+        "Failed to create IPv4 marking rule for router traffic. Aborted."))
+        return false;
+
+    // With src_valid_mark on -- tailscaled in netfilter mode turns it on -- the kernel
+    // checks the source of a packet it routes to itself with a lookup from lo carrying
+    // the packet's mark. Rule 105 would answer it from the Forkop table, whose local
+    // default route makes the client's address one of the router's, and the packet dies
+    // as a martian source. The main table answers it instead. Rerouting what the router
+    // itself sends is a lookup from lo as well, which is why it carries its own mark.
+    if (!ensure_ip_rule(() => source_check_rule4_present(mark),
+        [ "ip", "-4", "rule", "add", "iif", "lo", "fwmark", mask, "lookup", "main", "priority", SOURCE_CHECK_PRIORITY ],
+        "Failed to create the IPv4 source-check routing rule. Aborted."))
+        return false;
+
     if (IPV6_TPROXY_ENABLED && !tproxy_marking_rule6_present(table, mark)) {
         log_debug("Creating IPv6 TPROXY marking rule");
-        if (!run_args([ "ip", "-6", "rule", "add", "fwmark", as_string(mark) + "/" + as_string(mark), "table", table, "priority", "105" ]) && !tproxy_marking_rule6_present(table, mark)) {
+        if (!run_args([ "ip", "-6", "rule", "add", "fwmark", mask, "table", table, "priority", "105" ]) && !tproxy_marking_rule6_present(table, mark)) {
             log_fatal("Failed to create IPv6 marking rule. Aborted.");
             return false;
         }
@@ -1344,6 +1419,12 @@ function ensure_tproxy_route_rule(table, mark, rt_tables_path) {
     else if (IPV6_TPROXY_ENABLED) {
         log_debug("IPv6 TPROXY marking rule already exists");
     }
+
+    // IPv6 has no source check of its own, so it needs no source-check rule.
+    if (IPV6_TPROXY_ENABLED && !ensure_ip_rule(() => tproxy_marking_rule6_present(table, ROUTER_MARK),
+        [ "ip", "-6", "rule", "add", "fwmark", router_mask, "table", table, "priority", "105" ],
+        "Failed to create IPv6 marking rule for router traffic. Aborted."))
+        return false;
 
     return true;
 }
@@ -1528,17 +1609,23 @@ function nft_apply_candidate_batch(path) {
     return nft_validate_candidate_batch(path) && nft_commit_candidate_batch(path);
 }
 
+function guard_drop_rule(table, mark) {
+    return "add rule inet " + as_string(table) + " " + NFT_TRANSITION_GUARD_CHAIN +
+        " meta mark & " + as_string(mark) + " == " + as_string(mark) + " counter drop\n";
+}
+
 function nft_transition_guard_batch(table, mark, remove) {
     let path = trim(command_output_from_args([ "mktemp" ]));
     if (path == "")
         return false;
 
+    // The router's own classified traffic carries the router mark and reaches
+    // this hook on loopback: it has to fail closed with the LAN's.
     let data = remove
         ? "delete chain inet " + as_string(table) + " " + NFT_TRANSITION_GUARD_CHAIN + "\n"
         : "add chain inet " + as_string(table) + " " + NFT_TRANSITION_GUARD_CHAIN +
             " { type filter hook prerouting priority -101; policy accept; }\n" +
-            "add rule inet " + as_string(table) + " " + NFT_TRANSITION_GUARD_CHAIN +
-            " meta mark & " + as_string(mark) + " == " + as_string(mark) + " counter drop\n";
+            guard_drop_rule(table, mark) + guard_drop_rule(table, ROUTER_MARK);
     let ok = fs.writefile(path, data) != null && run_args([ "nft", "-c", "-f", path ]) &&
         run_args([ "nft", "-f", path ]);
     fs.unlink(path);
@@ -1938,6 +2025,8 @@ else if (mode == "tproxy-route4-present")
     exit(tproxy_route4_present(ARGV[1]) ? 0 : 1);
 else if (mode == "tproxy-route6-present")
     exit(tproxy_route6_present(ARGV[1]) ? 0 : 1);
+else if (mode == "source-check-rule4-present")
+    exit(source_check_rule4_present(ARGV[1]) ? 0 : 1);
 else if (mode == "tproxy-marking-rule4-present")
     exit(tproxy_marking_rule4_present(ARGV[1], ARGV[2]) ? 0 : 1);
 else if (mode == "tproxy-marking-rule6-present")

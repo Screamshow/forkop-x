@@ -177,6 +177,7 @@ ops/deployed-nginx/
 !/tests/packages_installed_version.sh
 !/tests/installer_version_verification.sh
 !/tests/nft_reply_direction.sh
+!/tests/nft_router_mark.sh
 !/tests/latency_test_lock.sh
 !/tests/latency_probe_batches.sh
 !/tests/runtime_dir_lock.sh

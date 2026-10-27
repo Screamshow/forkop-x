@@ -149,10 +149,14 @@ FORKOP_NFT_BATCH_FILE="$WORK_DIR/outbound-mark.nft" \
 if grep -Eq '@(common6?|ports|ip_ports6?)( |$)' "$WORK_DIR/outbound-mark.nft"; then
   fail "obsolete common-set classifiers are still emitted"
 fi
-for chain in mangle mangle_output; do
-  grep -Fq "$chain ip daddr 198.18.0.0/15 meta l4proto tcp meta mark set 0x04000000" "$WORK_DIR/outbound-mark.nft" ||
+# A LAN client's packet carries the FakeIP mark, the router's own the router mark.
+for entry in "mangle 0x04000000" "mangle_output 0x10000000"; do
+  set -- $entry
+  chain=$1
+  mark=$2
+  grep -Fq "$chain ip daddr 198.18.0.0/15 meta l4proto tcp meta mark set $mark" "$WORK_DIR/outbound-mark.nft" ||
     fail "$chain lost FakeIP TCP capture"
-  grep -Fq "$chain ip daddr 198.18.0.0/15 meta l4proto udp meta mark set 0x04000000" "$WORK_DIR/outbound-mark.nft" ||
+  grep -Fq "$chain ip daddr 198.18.0.0/15 meta l4proto udp meta mark set $mark" "$WORK_DIR/outbound-mark.nft" ||
     fail "$chain lost FakeIP UDP capture"
 done
 cat >"$WORK_DIR/protocols.json" <<'JSON'

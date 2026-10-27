@@ -58,7 +58,7 @@ mangle_mark="$(rule_position mangle 'meta mark set 0x04000000')"
 
 output_reply="$(rule_position mangle_output 'ct direction reply return')"
 output_jump="$(rule_position mangle_output 'jump priority_output_rules')"
-output_mark="$(rule_position mangle_output 'meta mark set 0x04000000')"
+output_mark="$(rule_position mangle_output 'meta mark set 0x10000000')"
 [ "$output_jump" -gt 0 ] || fail 'mangle_output lost its section jump'
 [ "$output_mark" -gt 0 ] || fail 'mangle_output lost its FakeIP marking'
 [ "$output_reply" -lt "$output_jump" ] ||

@@ -1454,19 +1454,30 @@ function validate_list_update_settings(settings) {
 function validate_runtime_mark_ranges_context(context) {
     let fakeip_mark = parse_number(context.nft_fakeip_mark);
     let outbound_mark = parse_number(context.nft_outbound_mark);
+    let router_mark = parse_number(context.nft_router_mark);
 
-    if (fakeip_mark == null || outbound_mark == null)
+    if (fakeip_mark == null || outbound_mark == null || router_mark == null)
         fail_validation("Forkop marks contain invalid numeric constants. Aborted.");
     if ((fakeip_mark & TAILSCALE_FWMARK_MASK) != 0)
         fail_validation("FakeIP mark overlaps Tailscale fwmark mask 0x00ff0000. Aborted.");
     if ((outbound_mark & TAILSCALE_FWMARK_MASK) != 0)
         fail_validation("Outbound mark overlaps Tailscale fwmark mask 0x00ff0000. Aborted.");
+    if ((router_mark & TAILSCALE_FWMARK_MASK) != 0)
+        fail_validation("Router mark overlaps Tailscale fwmark mask 0x00ff0000. Aborted.");
+    if (fakeip_mark == outbound_mark)
+        fail_validation("FakeIP mark and outbound mark are the same value. Aborted.");
+    // The source-check rule reads the FakeIP mark alone, so a shared bit would
+    // send the router's own rerouting lookup to the main table.
+    if ((router_mark & (fakeip_mark | outbound_mark)) != 0)
+        fail_validation("Router mark shares bits with the FakeIP or outbound mark. Aborted.");
 
     let ranges = [
         [ "Zapret", context.zapret_route_mark_base, context.zapret_queue_range_size, fakeip_mark, "FakeIP mark " + context.nft_fakeip_mark ],
         [ "Zapret", context.zapret_route_mark_base, context.zapret_queue_range_size, outbound_mark, "outbound mark " + context.nft_outbound_mark ],
         [ "Zapret2", context.zapret2_route_mark_base, context.zapret2_queue_range_size, fakeip_mark, "FakeIP mark " + context.nft_fakeip_mark ],
         [ "Zapret2", context.zapret2_route_mark_base, context.zapret2_queue_range_size, outbound_mark, "outbound mark " + context.nft_outbound_mark ],
+        [ "Zapret", context.zapret_route_mark_base, context.zapret_queue_range_size, router_mark, "router mark " + context.nft_router_mark ],
+        [ "Zapret2", context.zapret2_route_mark_base, context.zapret2_queue_range_size, router_mark, "router mark " + context.nft_router_mark ],
         [ "Zapret", context.zapret_route_mark_base, context.zapret_queue_range_size, TAILSCALE_FWMARK_MASK, "Tailscale fwmark mask 0x00ff0000" ],
         [ "Zapret2", context.zapret2_route_mark_base, context.zapret2_queue_range_size, TAILSCALE_FWMARK_MASK, "Tailscale fwmark mask 0x00ff0000" ]
     ];
@@ -1543,6 +1554,7 @@ function context_from_runtime() {
         zapret2_queue_range_size: constant_value(constants, "ZAPRET2_QUEUE_RANGE_SIZE"),
         nft_fakeip_mark: constant_value(constants, "NFT_FAKEIP_MARK"),
         nft_outbound_mark: constant_value(constants, "NFT_OUTBOUND_MARK"),
+        nft_router_mark: constant_value(constants, "NFT_ROUTER_MARK"),
         sing_box_required_version: constant_value(constants, "SB_REQUIRED_VERSION"),
         sing_box_variant_state_file: constant_value(constants, "SB_VARIANT_STATE_FILE"),
         sing_box_version_state_file: constant_value(constants, "SB_VERSION_STATE_FILE"),
@@ -1859,7 +1871,8 @@ function context_from_json(value, defaults) {
         zapret2_route_mark_base: context_override_value(value, defaults, "zapret2_route_mark_base"),
         zapret2_queue_range_size: context_override_value(value, defaults, "zapret2_queue_range_size"),
         nft_fakeip_mark: context_override_value(value, defaults, "nft_fakeip_mark"),
-        nft_outbound_mark: context_override_value(value, defaults, "nft_outbound_mark")
+        nft_outbound_mark: context_override_value(value, defaults, "nft_outbound_mark"),
+        nft_router_mark: context_override_value(value, defaults, "nft_router_mark")
     };
 }
 

@@ -85,6 +85,9 @@ const NFT_IP_PORT6_SET_NAME = constant_value("NFT_IP_PORT6_SET_NAME", "forkop_ip
 const NFT_INTERFACE_SET_NAME = constant_value("NFT_INTERFACE_SET_NAME", "forkop_interfaces");
 const NFT_FAKEIP_MARK = constant_value("NFT_FAKEIP_MARK", "0x04000000");
 const NFT_OUTBOUND_MARK = constant_value("NFT_OUTBOUND_MARK", "0x08000000");
+const NFT_ROUTER_MARK = constant_value("NFT_ROUTER_MARK", "0x10000000");
+// 104 belongs to the Tailscale exit-node LAN rule; see nft/apply.uc.
+const NFT_SOURCE_CHECK_PRIORITY = "103";
 
 const SB_FAKEIP_INET4_RANGE = constant_value("SB_FAKEIP_INET4_RANGE", "198.18.0.0/15");
 const SB_FAKEIP_INET6_RANGE = constant_value("SB_FAKEIP_INET6_RANGE", "fc00::/18");
@@ -1160,6 +1163,12 @@ function stop_main(allow_process_conflict) {
         command_success_from_args([ "ip", "-4", "rule", "del", "fwmark", NFT_FAKEIP_MARK + "/" + NFT_FAKEIP_MARK, "table", RT_TABLE_NAME, "priority", "105" ]);
     if (module_success(NFT_UC, [ "tproxy-marking-rule6-present", RT_TABLE_NAME, NFT_FAKEIP_MARK ]))
         command_success_from_args([ "ip", "-6", "rule", "del", "fwmark", NFT_FAKEIP_MARK + "/" + NFT_FAKEIP_MARK, "table", RT_TABLE_NAME, "priority", "105" ]);
+    if (module_success(NFT_UC, [ "tproxy-marking-rule4-present", RT_TABLE_NAME, NFT_ROUTER_MARK ]))
+        command_success_from_args([ "ip", "-4", "rule", "del", "fwmark", NFT_ROUTER_MARK + "/" + NFT_ROUTER_MARK, "table", RT_TABLE_NAME, "priority", "105" ]);
+    if (module_success(NFT_UC, [ "tproxy-marking-rule6-present", RT_TABLE_NAME, NFT_ROUTER_MARK ]))
+        command_success_from_args([ "ip", "-6", "rule", "del", "fwmark", NFT_ROUTER_MARK + "/" + NFT_ROUTER_MARK, "table", RT_TABLE_NAME, "priority", "105" ]);
+    if (module_success(NFT_UC, [ "source-check-rule4-present", NFT_FAKEIP_MARK ]))
+        command_success_from_args([ "ip", "-4", "rule", "del", "iif", "lo", "fwmark", NFT_FAKEIP_MARK + "/" + NFT_FAKEIP_MARK, "lookup", "main", "priority", NFT_SOURCE_CHECK_PRIORITY ]);
 
     if (module_success(NFT_UC, [ "tproxy-route4-present", RT_TABLE_NAME ]))
         command_success_from_args([ "ip", "route", "flush", "table", RT_TABLE_NAME ]);
