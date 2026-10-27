@@ -28,6 +28,7 @@ const ROUTER_MARK = getenv("NFT_ROUTER_MARK") || "0x10000000";
 // 105. Upstream puts it at 104; here that priority belongs to the Tailscale
 // exit-node LAN rule, whose own setup refuses to run beside a foreign 104.
 const SOURCE_CHECK_PRIORITY = "103";
+const RT_TABLES_FILE = getenv("FORKOP_RT_TABLES_FILE") || "/etc/iproute2/rt_tables";
 
 const IPV6_TPROXY_ENABLED = core_ip.ipv6_tproxy_enabled();
 
@@ -1348,7 +1349,7 @@ function ensure_ip_rule(present, argv, message) {
 }
 
 function ensure_tproxy_route_rule(table, mark, rt_tables_path) {
-    rt_tables_path = as_string(rt_tables_path || "/etc/iproute2/rt_tables");
+    rt_tables_path = as_string(rt_tables_path || RT_TABLES_FILE);
     let mask = as_string(mark) + "/" + as_string(mark);
     let router_mask = ROUTER_MARK + "/" + ROUTER_MARK;
 
@@ -1630,6 +1631,10 @@ function nft_transition_guard_batch(table, mark, remove) {
         run_args([ "nft", "-f", path ]);
     fs.unlink(path);
     return ok;
+}
+
+function nft_transition_guard_present(table) {
+    return run_args_quiet([ "nft", "list", "chain", "inet", table, NFT_TRANSITION_GUARD_CHAIN ]);
 }
 
 function nft_install_transition_guard(table, mark) {
@@ -2037,6 +2042,8 @@ else if (mode == "nft-validate-candidate-batch")
     exit(nft_validate_candidate_batch(ARGV[1]) ? 0 : 1);
 else if (mode == "nft-commit-candidate-batch")
     exit(nft_commit_candidate_batch(ARGV[1]) ? 0 : 1);
+else if (mode == "transition-guard-present")
+    exit(nft_transition_guard_present(ARGV[1]) ? 0 : 1);
 else if (mode == "install-transition-guard")
     exit(nft_install_transition_guard(ARGV[1], ARGV[2]) ? 0 : 1);
 else if (mode == "remove-transition-guard")

@@ -178,6 +178,7 @@ ops/deployed-nginx/
 !/tests/installer_version_verification.sh
 !/tests/nft_reply_direction.sh
 !/tests/nft_router_mark.sh
+!/tests/wan_up_routing_restore.sh
 !/tests/latency_test_lock.sh
 !/tests/latency_probe_batches.sh
 !/tests/runtime_dir_lock.sh
