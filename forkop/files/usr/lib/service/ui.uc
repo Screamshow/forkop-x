@@ -1516,6 +1516,30 @@ function latency_worker(path, latency_type, tag, timeout) {
         write_finished_action_state(path, false, "Latency test failed", status);
 }
 
+// A lock whose owner is gone must not refuse the next test. The worker takes
+// over a stale lock when it acquires, so refusing here on the directory alone
+// let one killed worker block every manual test until the next automatic
+// sweep. Name the progress of the test that really is running, because the
+// bare sentence looks the same to the operator as a lock nobody holds.
+function running_latency_test_reason() {
+    if (fs.stat(LATENCY_TEST_LOCK_DIR) == null)
+        return "";
+    if (!pid_running(first_line(LATENCY_TEST_LOCK_DIR + "/pid")))
+        return "";
+
+    let message = "Another latency test is already running";
+    for (let value in action_state_from_dir(LATENCY_ACTION_DIR)) {
+        if (value.running !== true || type(value.progress) != "object")
+            continue;
+        let total = non_negative_number(value.progress.total);
+        if (total <= 0)
+            continue;
+        return message + " (" + non_negative_number(value.progress.completed) +
+            " of " + total + ")";
+    }
+    return message;
+}
+
 function latency_test_async(latency_type, section, tag, requested_timeout) {
     latency_type = as_string(latency_type);
     tag = as_string(tag);
@@ -1531,8 +1555,9 @@ function latency_test_async(latency_type, section, tag, requested_timeout) {
     // The automatic startup/subscription sweep and a user-requested test share
     // one runtime lock. Reject early so the UI can report the real reason
     // instead of briefly showing a second, doomed progress job.
-    if (fs.stat(LATENCY_TEST_LOCK_DIR) != null) {
-        action_start_response(false, "", "Another latency test is already running");
+    let running_reason = running_latency_test_reason();
+    if (running_reason != "") {
+        action_start_response(false, "", running_reason);
         exit(1);
     }
 
