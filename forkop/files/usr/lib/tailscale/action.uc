@@ -5,11 +5,30 @@ const AUTH = DIR + '/tailscale-auth';
 const STATUS = DIR + '/tailscale-status.json';
 const INIT = '/etc/init.d/forkop-tailscale';
 const STATE = '/etc/forkop-tailscale';
-let rust_selected = trim(fs.readfile('/etc/forkop/sing-box-variant') || '') == 'rust-x';
-let version_supported = system('ucode /usr/lib/forkop/tailscale/compat.uc check >/dev/null 2>&1') == 0;
-let available = version_supported && rust_selected && system('/usr/lib/rust-x/sing-box tailscale-native-capability >/dev/null 2>&1') == 0;
-let ssh_available = available && system('/usr/lib/rust-x/sing-box tailscale-ssh-capability >/dev/null 2>&1') == 0;
-let exit_available = available && system('/usr/lib/rust-x/sing-box tailscale-exit-capability >/dev/null 2>&1') == 0;
+// LuCI polls this every few seconds. The answers depend only on these files,
+// so the five processes behind them run again only when one changes.
+const CAPABILITIES = DIR + '/tailscale-capabilities.json';
+function stamp(path) { let s = fs.stat(path); return s ? join(':', [s.inode, s.size, s.mtime, s.ctime]) : '-'; }
+let capability_key = join('|', map(['/etc/forkop/sing-box-variant', '/usr/lib/rust-x/sing-box',
+    '/usr/lib/forkop/core/constants.uc', '/usr/lib/forkop/tailscale/compat.uc'], stamp));
+let capabilities = null;
+try { capabilities = json(fs.readfile(CAPABILITIES) || 'null'); } catch (e) {}
+if (type(capabilities) != 'object' || capabilities.key != capability_key) {
+    let rust = trim(fs.readfile('/etc/forkop/sing-box-variant') || '') == 'rust-x';
+    let version = system('ucode /usr/lib/forkop/tailscale/compat.uc check >/dev/null 2>&1') == 0;
+    let native = version && rust && system('/usr/lib/rust-x/sing-box tailscale-native-capability >/dev/null 2>&1') == 0;
+    capabilities = {key:capability_key, rust_selected:rust, version_supported:version, available:native,
+        ssh_available: native && system('/usr/lib/rust-x/sing-box tailscale-ssh-capability >/dev/null 2>&1') == 0,
+        exit_available: native && system('/usr/lib/rust-x/sing-box tailscale-exit-capability >/dev/null 2>&1') == 0};
+    fs.mkdir(DIR);
+    if (fs.writefile(CAPABILITIES + '.new', sprintf('%J', capabilities)) != null)
+        fs.rename(CAPABILITIES + '.new', CAPABILITIES);
+}
+let rust_selected = capabilities.rust_selected === true;
+let version_supported = capabilities.version_supported === true;
+let available = capabilities.available === true;
+let ssh_available = capabilities.ssh_available === true;
+let exit_available = capabilities.exit_available === true;
 let action = ARGV[0];
 const EVENTS = DIR + '/tailscale-events.json';
 function connection_events(data) {
