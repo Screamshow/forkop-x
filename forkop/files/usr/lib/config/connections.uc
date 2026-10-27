@@ -3,6 +3,7 @@
 let common = require("core.common");
 let uci_core = require("core.uci");
 let rule_config = require("config.rule");
+let core_url = require("core.url");
 
 let as_string = common.as_string;
 let object_or_empty = common.object_or_empty;
@@ -554,11 +555,24 @@ function subscription_auto_hwid(section, value) {
     return true;
 }
 
+// Flintnet's Xray JSON carries provider URLTest balancers whose members have
+// technical proxy tags: dashboard noise rather than a choice. A subscription
+// from that host therefore starts with the groups off, whenever it is added,
+// not only for the ones a past upgrade migrated.
+const PROVIDER_URLTEST_OFF_HOST = "sub.flintnet.pro";
+
+function flintnet_subscription_source(value) {
+    return lc(as_string(core_url.host(as_string(value)))) == PROVIDER_URLTEST_OFF_HOST;
+}
+
+// The host decides the default and nothing more: once the option carries a
+// value, that value wins either way, so turning the groups on keeps them on.
 function subscription_include_urltest_groups(section, value) {
+    let fallback = !flintnet_subscription_source(value);
     let child = child_item_by_value(section, "subscription_url", "url", value);
     if (child != null)
-        return child_bool(child, "include_urltest_groups", true);
-    return item_bool(section, "subscription_url_settings", value, "include_urltest_groups", true);
+        return child_bool(child, "include_urltest_groups", fallback);
+    return item_bool(section, "subscription_url_settings", value, "include_urltest_groups", fallback);
 }
 
 function subscription_hide_urltest_group_outbounds(section, value) {
@@ -1019,6 +1033,7 @@ return {
     subscription_dashboard_metadata_enabled,
     subscription_auto_user_agent,
     subscription_auto_hwid,
+    flintnet_subscription_source,
     subscription_include_urltest_groups,
     subscription_hide_urltest_group_outbounds,
     subscription_hide_detour_outbounds,

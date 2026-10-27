@@ -20,6 +20,8 @@ let outbound_reachability = require("singbox.outbound_reachability");
 let source_rulesets = require("routing.rulesets");
 let rule_config = require("config.rule");
 let connections = require("config.connections");
+// one definition of the host, shared with the default it decides
+let flintnet_subscription_source = connections.flintnet_subscription_source;
 let urltest_override = require("config.urltest_override");
 let subscription_share_link = require("subscription.share_link");
 let subscription_parser = require("subscription.parser");
@@ -230,10 +232,6 @@ function urltest_start_seed() {
             getenv("FORKOP_URLTEST_START_SEED") || fs.readfile("/proc/sys/kernel/random/uuid")
         ));
     return provider_urltest_start_seed;
-}
-
-function flintnet_subscription_source(source_entry) {
-    return lc(url_host(as_string(source_entry))) == "sub.flintnet.pro";
 }
 
 function subscription_outbound_tag(outbound) {
