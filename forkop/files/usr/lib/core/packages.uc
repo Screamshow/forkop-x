@@ -209,6 +209,16 @@ function opkg_version(package_name) {
     return "";
 }
 
+// Only a database that reads as the expected text may answer "not installed":
+// a file in some other format must not stand in for an empty one.
+function db_field_lines(text, prefix) {
+    let count = 0;
+    for (let line in split(as_string(text), "\n"))
+        if (substr(trim(as_string(line)), 0, length(prefix)) == prefix)
+            count++;
+    return count;
+}
+
 function opkg_status_entry_state(version, status) {
     status = as_string(status);
     if (index(status, "not-installed") >= 0 || index(status, " installed") < 0)
@@ -219,7 +229,7 @@ function opkg_status_entry_state(version, status) {
 function opkg_status_state(package_name, text) {
     package_name = as_string(package_name);
     text = as_string(text);
-    if (index(text, "Package: ") < 0)
+    if (db_field_lines(text, "Package: ") == 0 || db_field_lines(text, "Status: ") == 0)
         return error_state("");
 
     let name = "", version = "", status = "";
@@ -245,7 +255,7 @@ function opkg_status_state(package_name, text) {
 
 function apk_db_state(package_name, text) {
     text = as_string(text);
-    if (index(text, "P:") < 0)
+    if (db_field_lines(text, "P:") == 0 || db_field_lines(text, "V:") == 0)
         return error_state("");
 
     let version = apk_manifest_version(package_name, text);

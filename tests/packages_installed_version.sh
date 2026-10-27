@@ -101,6 +101,15 @@ run apk-bin 3 "missing" luci-app-forkop STUB_APK_LOCK=1 "$apk_env" FORKOP_APK_DB
 run apk-bin 2 "error ERROR: Unable to lock database" forkop STUB_APK_LOCK=1 "$apk_env" \
   FORKOP_APK_DB_PATH="$work/absent-apk-db"
 
+# A database in another format is not an empty database: a package that the
+# query could not confirm must never be reported as not installed.
+printf 'ADBd\nP:forkop\n' >"$work/apk-foreign"
+run apk-bin 2 "error ERROR: Unable to lock database" forkop STUB_APK_LOCK=1 "$apk_env" \
+  FORKOP_APK_DB_PATH="$work/apk-foreign"
+printf 'nothing that belongs to a package database\n' >"$work/foreign-status"
+run opkg-bin 2 "error opkg_conf_load: Could not lock" forkop STUB_OPKG_LOCK=1 "$opkg_env" \
+  FORKOP_OPKG_STATUS_PATH="$work/foreign-status"
+
 # No package manager at all is a failed query, not a missing package.
 run empty-bin 2 "error no supported package manager" forkop
 
