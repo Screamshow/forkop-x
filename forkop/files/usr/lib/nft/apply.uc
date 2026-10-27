@@ -16,6 +16,10 @@ const NFT_BATCH_FILE = getenv("FORKOP_NFT_BATCH_FILE") || "";
 // Test-only candidate failure injection. Empty in production.
 const NFT_CANDIDATE_FAIL_PHASE = getenv("FORKOP_NFT_CANDIDATE_FAIL_PHASE") || "";
 const NFT_TRANSITION_GUARD_CHAIN = "forkop_transition_guard";
+// A reply packet answers a connection the other side opened, or one the core
+// already holds. Marked and handed to TPROXY it finds no socket of its own,
+// so the connection dies; download traffic stops walking the chain here too.
+const REPLY_RETURN = [ "ct", "direction", "reply", "return" ];
 
 const IPV6_TPROXY_ENABLED = core_ip.ipv6_tproxy_enabled();
 
@@ -801,6 +805,9 @@ function nft_create_runtime_base(table, localv4_set, common_set, port_set, ip_po
         // Skip WAN replies before walking the section and destination sets.
         !nft_add_rule(table, "mangle", [ "iifname", "!=", "@" + as_string(interface_set), "return" ]) ||
         !nft_add_rule(table, "mangle", [ "ct", "status", "dnat", "return" ]) ||
+        // A fully routed LAN device answering an inbound connection, and every
+        // reply of a connection opened towards the LAN, arrive here.
+        !nft_add_rule(table, "mangle", REPLY_RETURN) ||
         !nft_add_rule(table, "mangle", [ "ip", "daddr", "@" + as_string(localv4_set), "return" ]) ||
         !nft_add_rule(table, "mangle", [ "ip6", "daddr", "@" + as_string(localv6_set), "ip6", "daddr", "!=", fakeip6_range, "return" ]) ||
         !nft_add_rule(table, "mangle", [ "jump", "priority_rules" ]) ||
@@ -817,6 +824,10 @@ function nft_create_runtime_base(table, localv4_set, common_set, port_set, ip_po
         !nft_add_rule(table, "proxy", [ "meta", "mark", "&", fakeip_mark, "==", fakeip_mark, "meta", "l4proto", "udp", "tproxy", "ip", "to", ":" + as_string(tproxy_port), "counter" ]) ||
         !nft_add_rule(table, "proxy", [ "meta", "mark", "&", fakeip_mark, "==", fakeip_mark, "meta", "l4proto", "tcp", "tproxy", "ip6", "to", core_ip.format_ipv6_tproxy_target(tproxy6_address, tproxy_port), "counter" ]) ||
         !nft_add_rule(table, "proxy", [ "meta", "mark", "&", fakeip_mark, "==", fakeip_mark, "meta", "l4proto", "udp", "tproxy", "ip6", "to", core_ip.format_ipv6_tproxy_target(tproxy6_address, tproxy_port), "counter" ]) ||
+        // A server on the router answering over WAN, and the core's own replies
+        // to a client it captured, leave through this chain in the reply
+        // direction; only what the router itself opens may be classified.
+        !nft_add_rule(table, "mangle_output", REPLY_RETURN) ||
         !nft_add_rule(table, "mangle_output", [ "ip", "daddr", "@" + as_string(localv4_set), "return" ]) ||
         !nft_add_rule(table, "mangle_output", [ "ip6", "daddr", "@" + as_string(localv6_set), "ip6", "daddr", "!=", fakeip6_range, "return" ]) ||
         !nft_add_rule(table, "mangle_output", [ "meta", "mark", "&", outbound_mark, "==", outbound_mark, "counter", "return" ]) ||
