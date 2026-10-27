@@ -58,10 +58,19 @@ for forbidden in start_impl stop_main restart reload_tracked start-managed-sing-
   grep -Fq "$forbidden" <<<"$lifecycle_body" && fail "the routing restore touches the core through $forbidden"
 done
 
-# A core the hook must find running: state.uc reads the exe name behind the pid.
-cp /bin/sleep "$WORK_DIR/sing-box"
-"$WORK_DIR/sing-box" 300 &
+# A core the hook must find running: state.uc reads the exe name behind the pid,
+# so the stand-in is a copy of a binary that does not dispatch on its own argv[0]
+# the way BusyBox does.
+cp "$(command -v ucode)" "$WORK_DIR/sing-box"
+chmod 0755 "$WORK_DIR/sing-box"
+"$WORK_DIR/sing-box" -e 'sleep(300000);' &
 SING_BOX_PID=$!
+waited=0
+until [ "$(basename "$(readlink "/proc/$SING_BOX_PID/exe" 2>/dev/null || true)")" = sing-box ]; do
+  [ "$waited" -lt 10 ] || fail 'the stand-in core never came up'
+  waited=$((waited + 1))
+  sleep 1
+done
 
 mkdir -p "$WORK_DIR/bin" "$WORK_DIR/state"
 export PATH="$WORK_DIR/bin:$PATH"
