@@ -9,11 +9,13 @@ command -v flock >/dev/null 2>&1 || { echo "flock is required (BusyBox flock app
 flock -x 9
 state=/etc/forkop-tailscale
 owned=/var/run/forkop/ui-state/tailscale-lan-owned
-constant() { ucode /usr/lib/forkop/core/constants.uc get "$1"; }
-table=$(constant NFT_TABLE_NAME)
-interfaces=$(constant NFT_INTERFACE_SET_NAME)
-mark=$(constant NFT_FAKEIP_MARK)
-tproxy=$(constant SB_TPROXY_INBOUND_PORT)
+# One ucode run for all constants; shell-env quotes every value.
+constants=$(ucode /usr/lib/forkop/core/constants.uc shell-env)
+eval "$constants"
+table=$NFT_TABLE_NAME
+interfaces=$NFT_INTERFACE_SET_NAME
+mark=$NFT_FAKEIP_MARK
+tproxy=$SB_TPROXY_INBOUND_PORT
 case "$table:$interfaces" in *[!a-zA-Z0-9_:]*) exit 1;; esac
 case "$mark" in 0x*[!0-9a-fA-F]*) exit 1;; esac
 case "$tproxy" in ''|*[!0-9]*) exit 1;; esac
