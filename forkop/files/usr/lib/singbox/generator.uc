@@ -33,7 +33,7 @@ let runtime_supports_certificate_pins = false;
 let runtime_supports_dns_response_matching = false;
 let runtime_supports_legacy_protocols = true;
 let runtime_supports_trojan = true;
-let runtime_supports_tls12_fingerprints = true;
+let runtime_supports_all_fingerprints = true;
 let runtime_supports_vless_encryption = true;
 let runtime_supports_reality_mldsa65 = true;
 let runtime_skipped_protocol_outbounds = {};
@@ -640,17 +640,18 @@ function skipped_protocol_summary(section_name) {
     return join(", ", parts);
 }
 
-// Xrust has these uTLS profiles only as TLS 1.2 ClientHellos, and its client
-// speaks TLS 1.3 only: a node with them never completes a handshake.
-const RUST_X_TLS12_FINGERPRINTS = { android: true, "360": true };
+// Xrust refuses these uTLS profiles: it had android and 360 only as TLS 1.2
+// ClientHellos while its client speaks TLS 1.3 only, and qq went with them.
+// A node that names one is rejected by its check, so put chrome in its place.
+const XRUST_UNSUPPORTED_FINGERPRINTS = { android: true, "360": true, qq: true };
 
 function use_supported_utls_fingerprint(outbound, source, name) {
-    if (runtime_supports_tls12_fingerprints || type(outbound) != "object" ||
+    if (runtime_supports_all_fingerprints || type(outbound) != "object" ||
         type(outbound.tls) != "object" || type(outbound.tls.utls) != "object" ||
         outbound.tls.utls.enabled === false)
         return;
     let fingerprint = lc(as_string(outbound.tls.utls.fingerprint || ""));
-    if (!RUST_X_TLS12_FINGERPRINTS[fingerprint])
+    if (!XRUST_UNSUPPORTED_FINGERPRINTS[fingerprint])
         return;
     // Replace the nested objects: subscription copies share them with the cache.
     let tls = {};
@@ -663,7 +664,7 @@ function use_supported_utls_fingerprint(outbound, source, name) {
     tls.utls = utls;
     outbound.tls = tls;
     warn(as_string(source), " '", as_string(name), "' uses uTLS fingerprint ", fingerprint,
-        ", which Xrust supports only for TLS 1.2; using chrome\n");
+        ", which Xrust does not support; using chrome\n");
 }
 
 function ensure_explicit_outbound_supported(outbound, source, name) {
@@ -3605,7 +3606,7 @@ function generate_config(output_path, service_address, mwan3_active, supports_xh
     // builds declaring outbound.trojan include the Trojan client.
     runtime_supports_legacy_protocols = !rust_x_core_version(sing_box_version);
     runtime_supports_trojan = cli_bool(supports_trojan);
-    runtime_supports_tls12_fingerprints = !rust_x_core_version(sing_box_version);
+    runtime_supports_all_fingerprints = !rust_x_core_version(sing_box_version);
     runtime_supports_vless_encryption = !rust_x_core_version(sing_box_version);
     runtime_supports_reality_mldsa65 = !rust_x_core_version(sing_box_version);
     runtime_supports_xhttp = supports_xhttp == null || as_string(supports_xhttp) == ""
