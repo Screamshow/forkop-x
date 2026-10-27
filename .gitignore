@@ -177,5 +177,6 @@ ops/deployed-nginx/
 !/tests/installer_version_verification.sh
 !/tests/latency_test_lock.sh
 !/tests/latency_probe_batches.sh
+!/tests/runtime_dir_lock.sh
 !/docs/releases/2.3.9.md
 !/docs/releases/2.4.2.md

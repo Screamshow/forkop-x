@@ -7,18 +7,18 @@ UI="$ROOT/forkop/files/usr/lib/service/ui.uc"
 {
 cat <<'UCODE'
 let lock_present = true;
-let lock_owner = "4242";
-let alive = [ "4242" ];
+let lock_held = true;
 let states = [];
+const STATE_UC = "service/state.uc";
 const LATENCY_TEST_LOCK_DIR = "/var/run/forkop/automatic-latency-test.lock";
 const LATENCY_ACTION_DIR = "/var/run/forkop/latency-actions";
 let fs = { stat: (path) => lock_present ? { type: "directory" } : null };
 function as_string(value) { return value == null ? "" : "" + value; }
-function first_line(path) {
-    assert(path == LATENCY_TEST_LOCK_DIR + "/pid", "unexpected lock owner path");
-    return lock_owner;
+function module_success(module_path, args) {
+    assert(module_path == STATE_UC && args[0] == "runtime-dir-lock-held" &&
+        args[1] == LATENCY_TEST_LOCK_DIR, "unexpected lock query");
+    return lock_held;
 }
-function pid_running(pid) { return index(alive, as_string(pid)) >= 0; }
 function action_state_from_dir(dir) {
     assert(dir == LATENCY_ACTION_DIR, "unexpected job directory");
     return states;
@@ -45,14 +45,12 @@ states = [ { running: false, kind: "latency", progress: { completed: 67, total: 
 assert(running_latency_test_reason() == "Another latency test is already running",
     "progress of a finished job reported");
 
-// The worker takes a stale lock over, so the request must not be refused here.
+// The worker takes an abandoned lock over, so the request must not be refused
+// here. Whether the lock is abandoned is state.uc's answer, which also keeps a
+// lock that is still being taken out of this hand.
 states = [];
-alive = [];
-assert(running_latency_test_reason() == "", "lock of a dead worker still refuses the test");
-
-alive = [ "4242" ];
-lock_owner = "";
-assert(running_latency_test_reason() == "", "lock without an owner still refuses the test");
+lock_held = false;
+assert(running_latency_test_reason() == "", "abandoned lock still refuses the test");
 print("latency test lock tests passed\n");
 UCODE
 } | ucode -

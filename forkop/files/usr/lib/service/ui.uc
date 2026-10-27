@@ -1524,7 +1524,9 @@ function latency_worker(path, latency_type, tag, timeout) {
 function running_latency_test_reason() {
     if (fs.stat(LATENCY_TEST_LOCK_DIR) == null)
         return "";
-    if (!pid_running(first_line(LATENCY_TEST_LOCK_DIR + "/pid")))
+    // What counts as a held lock is decided in one place, including a lock
+    // created moments ago whose owner is not written yet.
+    if (!module_success(STATE_UC, [ "runtime-dir-lock-held", LATENCY_TEST_LOCK_DIR ]))
         return "";
 
     let message = "Another latency test is already running";
