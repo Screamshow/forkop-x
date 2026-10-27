@@ -452,6 +452,28 @@ function source_dns_inbound_matcher() {
     return [ runtime_constants.SOURCE_DNS_INBOUND_TAG ];
 }
 
+// The names sysntpd dials, from /etc/config/system. A router without a clock of
+// its own boots months in the past, and DNS over TLS or HTTPS then refuses the
+// server's certificate as not yet valid: the names get no address, sysntpd never
+// sets the clock, and the next boot repeats it. Addresses need no lookup, and
+// nothing is collected while sysntpd is off.
+function ntp_server_names() {
+    let ntp = object_or_empty(uci_core.get_all("system", "ntp"));
+    if (!bool_option(ntp, "enabled", true))
+        return [];
+
+    let names = [];
+    let seen = {};
+    for (let value in list_option(ntp, "server")) {
+        value = trim(as_string(value));
+        if (value == "" || seen[value] || core_ip.valid_ip(value))
+            continue;
+        seen[value] = true;
+        push(names, value);
+    }
+    return names;
+}
+
 function base_config(settings, service_address, runtime_context) {
     let log_level = option(settings, "log_level", "warn");
     let rewrite_ttl = int_option(settings, "dns_rewrite_ttl", "60");
@@ -475,6 +497,18 @@ function base_config(settings, service_address, runtime_context) {
         }
     ])
         push(dns_rules, rule);
+
+    // The router's own lookups share dns-in with the clients dnsmasq forwards,
+    // so the rule cannot be narrowed to one listener. It stands ahead of the
+    // sections, so a FakeIP address cannot reach sysntpd either; the bootstrap
+    // servers are plain and answer with a clock months behind.
+    let ntp_servers = ntp_server_names();
+    if (length(ntp_servers) > 0)
+        push(dns_rules, {
+            action: "route",
+            server: runtime_constants.BOOTSTRAP_DNS_SERVER_TAG,
+            domain: ntp_servers
+        });
 
     let dns_servers = [];
     for (let server in dns_config.servers)
