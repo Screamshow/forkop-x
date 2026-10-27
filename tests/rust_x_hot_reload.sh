@@ -52,7 +52,8 @@ cat > "$WORK/current.json" <<'EOF'
 {"inbounds":[{"type":"mixed","tag":"in","listen":"127.0.0.1","listen_port":12080}],"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct"}}
 EOF
 cp "$WORK/current.json" "$WORK/next.json"
-"$CORE" reload-plan --current "$WORK/current.json" -c "$WORK/next.json" > "$WORK/plan.json"
+# Forkop always passes --skip-rule-set-payloads; every Xrust must accept it.
+"$CORE" reload-plan --current "$WORK/current.json" -c "$WORK/next.json" --skip-rule-set-payloads > "$WORK/plan.json"
 WORK="$WORK" ucode -e '
     let fs=require("fs"); let p=json(fs.readfile(getenv("WORK")+"/plan.json"));
     assert(p.schema == 1 && p.in_place && p.current_sha256 == p.config_sha256, "No-op reload plan");

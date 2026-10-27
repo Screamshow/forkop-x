@@ -146,7 +146,11 @@ function plan(stage_path) {
     if (!same_process(process, provenance()) || before == null || int(before.pid) != int(process.pid)) {
         print("cold\n"); return 0;
     }
-    let result = capture([ BINARY, "reload-plan", "--current", current_path, "-c", stage_path ]);
+    // Lists are left to the running core: it decodes every changed list
+    // before applying and reports a refusal, while a second full decode here
+    // would sit beside it in memory. Older Xrust ignores the flag.
+    let result = capture([ BINARY, "reload-plan", "--current", current_path, "-c", stage_path,
+        "--skip-rule-set-payloads" ]);
     let candidate = result.status == 0 ? parsed(result.output) : null;
     if (candidate == null || candidate.schema != 1) return 1;
     if (!candidate.in_place || candidate.current_sha256 != before.config_sha256) {
