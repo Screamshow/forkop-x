@@ -173,5 +173,7 @@ ops/deployed-nginx/
 !/tests/subscription_filter_selection.sh
 !/tests/subscription_filter_selection.uc
 !/tests/hysteria2_certificate_pins.sh
+!/tests/packages_installed_version.sh
+!/tests/installer_version_verification.sh
 !/docs/releases/2.3.9.md
 !/docs/releases/2.4.2.md

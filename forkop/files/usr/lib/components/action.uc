@@ -421,6 +421,64 @@ function installed_package_version(package_name) {
     return trim(module_output([ LIB_DIR + "/core/packages.uc", "opkg-version", package_name ]));
 }
 
+// installed_package_version() reports an unanswered query and a package that
+// is not installed as the same empty string. Verification after an upgrade
+// must tell them apart: opkg fails read-only queries while its global lock is
+// busy, and that is no reason to discard a good installation.
+function read_installed_package_version(package_name) {
+    package_name = as_string(package_name);
+    let output_file = make_tmp_file("version");
+    if (output_file == "")
+        output_file = "/tmp/forkop-updates-version." + owner_pid();
+
+    let state;
+    for (let attempt = 0; attempt <= 2; attempt++) {
+        let status = command_status(module_command([ LIB_DIR + "/core/packages.uc",
+            "installed-version", package_name ]) + " >" + shell_quote(output_file) + " 2>&1");
+        let line = trim(as_string(split(read_file(output_file), "\n")[0] || ""));
+        if (substr(line, 0, 6) == "found ")
+            state = { state: "found", version: trim(substr(line, 6)), error: "" };
+        else if (line == "missing")
+            state = { state: "missing", version: "", error: "" };
+        else
+            state = { state: "error", version: "", error:
+                substr(line, 0, 6) == "error " ? trim(substr(line, 6)) :
+                (line != "" ? line : "the version query failed with exit code " + status) };
+        if (state.state != "error" || attempt == 2)
+            break;
+        updates_log("Retrying the installed version query for " + package_name +
+            ": " + state.error, "warn");
+        command_success_from_args([ "sleep", "1" ]);
+    }
+    remove_file(output_file);
+    return state;
+}
+
+function forkop_installed_version_mismatch(expected, names) {
+    expected = as_string(expected);
+    let mismatched = [];
+    for (let name in names) {
+        name = as_string(name);
+        let state = read_installed_package_version(name);
+        if (state.state == "found" && state.version == expected)
+            continue;
+        if (state.state == "found")
+            push(mismatched, name + " " + state.version);
+        else if (state.state == "missing")
+            push(mismatched, name + " not installed");
+        else
+            // The release metadata was verified before the transaction and
+            // every install command reported success. Record why the version
+            // could not be read instead of rolling the installation back.
+            updates_log("Could not read the installed version of " + name +
+                " after installation: " + state.error, "warn");
+    }
+    if (length(mismatched) == 0)
+        return "";
+    return "Forkop package versions disagree after installation (expected " +
+        expected + ", installed " + join("; ", mismatched) + ")";
+}
+
 function opkg_package_version_from_list(package_name, output) {
     return trim(helper_output_input(output, "updates-opkg-package-version", [ package_name ]));
 }
@@ -2921,10 +2979,12 @@ function install_forkop(requested_version) {
     }
 
     let expected_package_version = forkop_package_version(latest_version);
-    if (installed_package_version("forkop") != expected_package_version ||
-        installed_package_version("luci-app-forkop") != expected_package_version ||
-        (i18n_file != "" && installed_package_version("luci-i18n-forkop-ru") != expected_package_version))
-        fail_forkop_package_install(rollback_packages, "Forkop package versions disagree after installation", latest_version);
+    let installed_names = [ "forkop", "luci-app-forkop" ];
+    if (i18n_file != "")
+        push(installed_names, "luci-i18n-forkop-ru");
+    let version_mismatch = forkop_installed_version_mismatch(expected_package_version, installed_names);
+    if (version_mismatch != "")
+        fail_forkop_package_install(rollback_packages, version_mismatch, latest_version);
 
     remove_file("/var/luci-indexcache");
     command_success("rm -f /var/luci-indexcache* /tmp/luci-indexcache* 2>/dev/null");

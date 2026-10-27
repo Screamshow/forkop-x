@@ -2,6 +2,10 @@
 
 let fs = require("fs");
 
+// The package databases answer without taking the package manager lock.
+const OPKG_STATUS_PATH = getenv("FORKOP_OPKG_STATUS_PATH") || "/usr/lib/opkg/status";
+const APK_DB_PATH = getenv("FORKOP_APK_DB_PATH") || "/lib/apk/db/installed";
+
 function as_string(value) {
     return value == null ? "" : "" + value;
 }
@@ -31,6 +35,37 @@ function command_output(args) {
     if (status != 0 || data == null)
         return "";
     return as_string(data);
+}
+
+function command_result(args) {
+    let pipe = fs.popen(command_from_args(args) + " 2>&1", "r");
+    if (!pipe)
+        return { status: -1, output: "" };
+
+    let data = pipe.read("all");
+    let status = pipe.close();
+    return { status: status == null ? -1 : status, output: as_string(data) };
+}
+
+function first_error_line(output) {
+    for (let line in split(as_string(output), "\n")) {
+        line = trim(as_string(line));
+        if (line != "")
+            return length(line) > 240 ? substr(line, 0, 240) : line;
+    }
+    return "";
+}
+
+function found_state(version) {
+    return { state: "found", version: as_string(version), error: "" };
+}
+
+function missing_state() {
+    return { state: "missing", version: "", error: "" };
+}
+
+function error_state(message) {
+    return { state: "error", version: "", error: as_string(message) };
 }
 
 function command_exists(name) {
@@ -174,6 +209,115 @@ function opkg_version(package_name) {
     return "";
 }
 
+function opkg_status_entry_state(version, status) {
+    status = as_string(status);
+    if (index(status, "not-installed") >= 0 || index(status, " installed") < 0)
+        return missing_state();
+    return as_string(version) != "" ? found_state(version) : error_state("");
+}
+
+function opkg_status_state(package_name, text) {
+    package_name = as_string(package_name);
+    text = as_string(text);
+    if (index(text, "Package: ") < 0)
+        return error_state("");
+
+    let name = "", version = "", status = "";
+    for (let line in split(text, "\n")) {
+        line = trim(as_string(line));
+        if (line == "") {
+            if (name == package_name)
+                return opkg_status_entry_state(version, status);
+            name = "";
+            version = "";
+            status = "";
+            continue;
+        }
+        if (substr(line, 0, 9) == "Package: ")
+            name = trim(substr(line, 9));
+        else if (substr(line, 0, 9) == "Version: ")
+            version = trim(substr(line, 9));
+        else if (substr(line, 0, 8) == "Status: ")
+            status = trim(substr(line, 8));
+    }
+    return name == package_name ? opkg_status_entry_state(version, status) : missing_state();
+}
+
+function apk_db_state(package_name, text) {
+    text = as_string(text);
+    if (index(text, "P:") < 0)
+        return error_state("");
+
+    let version = apk_manifest_version(package_name, text);
+    return version != "" ? found_state(version) : missing_state();
+}
+
+function opkg_installed_version_state(package_name) {
+    let result = command_result([ "opkg", "list-installed" ]);
+    if (result.status == 0) {
+        let prefix = package_name + " - ";
+        for (let line in split(result.output, "\n")) {
+            line = trim(as_string(line));
+            if (substr(line, 0, length(prefix)) == prefix)
+                return found_state(substr(line, length(prefix)));
+        }
+        return missing_state();
+    }
+
+    // opkg takes its global lock for every invocation, read-only queries
+    // included, and fails instead of waiting. The status database stays
+    // readable, so a busy lock does not hide an installed version.
+    let fallback = opkg_status_state(package_name, fs.readfile(OPKG_STATUS_PATH));
+    if (fallback.state != "error")
+        return fallback;
+
+    let message = first_error_line(result.output);
+    return error_state(message != "" ? message :
+        "opkg list-installed failed with exit code " + result.status);
+}
+
+function apk_installed_version_state(package_name) {
+    let failure = "";
+    for (let query in [
+        [ "list", [ "apk", "list", "--installed", package_name ] ],
+        [ "manifest", [ "apk", "list", "--installed", "--manifest", package_name ] ],
+        [ "info", [ "apk", "info", "-v", package_name ] ]
+    ]) {
+        let result = command_result(query[1]);
+        if (result.status != 0) {
+            if (failure == "")
+                failure = first_error_line(result.output);
+            continue;
+        }
+
+        let version = query[0] == "list" ? apk_list_version(package_name, result.output) :
+            query[0] == "manifest" ? apk_manifest_version(package_name, result.output) :
+            apk_info_version(package_name, result.output);
+        if (version != "")
+            return found_state(version);
+    }
+
+    // Every query answered and none reported the package: it is not installed.
+    if (failure == "")
+        return missing_state();
+
+    let fallback = apk_db_state(package_name, fs.readfile(APK_DB_PATH));
+    return fallback.state != "error" ? fallback : error_state(failure);
+}
+
+// Keeps "the package manager could not answer" apart from "the package is not
+// installed", which the version modes above report as the same empty string.
+function installed_version_state(package_name) {
+    package_name = as_string(package_name);
+    if (package_name == "")
+        return error_state("no package name was given");
+    if (command_exists("apk"))
+        return apk_installed_version_state(package_name);
+    if (command_exists("opkg"))
+        return opkg_installed_version_state(package_name);
+    return error_state("no supported package manager is available");
+}
+
 function version(package_name) {
     let value = apk_version(package_name);
     return value != "" ? value : opkg_version(package_name);
@@ -195,7 +339,20 @@ else if (mode == "apk-available-version")
     print(apk_available_version(ARGV[1]), "\n");
 else if (mode == "opkg-version")
     print(opkg_version(ARGV[1]), "\n");
+else if (mode == "installed-version") {
+    let state = installed_version_state(ARGV[1]);
+    if (state.state == "found")
+        print("found ", state.version, "\n");
+    else if (state.state == "missing") {
+        print("missing\n");
+        exit(3);
+    }
+    else {
+        print("error ", state.error, "\n");
+        exit(2);
+    }
+}
 else {
-    warn("Usage: core/packages.uc <installed|apk-installed|opkg-installed|version|apk-version|apk-available-version|opkg-version> <package>\n");
+    warn("Usage: core/packages.uc <installed|apk-installed|opkg-installed|version|apk-version|apk-available-version|opkg-version|installed-version> <package>\n");
     exit(1);
 }
