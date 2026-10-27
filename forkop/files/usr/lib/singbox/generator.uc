@@ -642,8 +642,11 @@ function skipped_protocol_summary(section_name) {
 
 // Xrust refuses these uTLS profiles: it had android and 360 only as TLS 1.2
 // ClientHellos while its client speaks TLS 1.3 only, and qq went with them.
-// A node that names one is rejected by its check, so put chrome in its place.
+// A node that names one is rejected by its check, so put firefox in its
+// place: of the profiles Xrust keeps, firefox is the one verified byte for
+// byte against the reference, and its own `random` resolves to it too.
 const XRUST_UNSUPPORTED_FINGERPRINTS = { android: true, "360": true, qq: true };
+const XRUST_FINGERPRINT_REPLACEMENT = "firefox";
 
 function use_supported_utls_fingerprint(outbound, source, name) {
     if (runtime_supports_all_fingerprints || type(outbound) != "object" ||
@@ -660,11 +663,11 @@ function use_supported_utls_fingerprint(outbound, source, name) {
     let utls = {};
     for (let key, value in outbound.tls.utls)
         utls[key] = value;
-    utls.fingerprint = "chrome";
+    utls.fingerprint = XRUST_FINGERPRINT_REPLACEMENT;
     tls.utls = utls;
     outbound.tls = tls;
     warn(as_string(source), " '", as_string(name), "' uses uTLS fingerprint ", fingerprint,
-        ", which Xrust does not support; using chrome\n");
+        ", which Xrust does not support; using ", XRUST_FINGERPRINT_REPLACEMENT, "\n");
 }
 
 function ensure_explicit_outbound_supported(outbound, source, name) {

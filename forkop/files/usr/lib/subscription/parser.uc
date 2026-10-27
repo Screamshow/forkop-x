@@ -648,7 +648,10 @@ function normalize_utls_fingerprint(value) {
     if (value == "randomizedalpn" || value == "randomizednoalpn")
         return "randomized";
 
-    return allowed[value] ? value : "chrome";
+    // An unknown name (`qq` among them) becomes firefox: of the profiles the
+    // cores agree on, it is the one verified byte for byte against the
+    // reference, and Xrust's own `random` resolves to it as well.
+    return allowed[value] ? value : "firefox";
 }
 
 function add_certificate_pins(tls, value) {
