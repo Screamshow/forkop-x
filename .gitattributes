@@ -1,1 +1,6 @@
 * text=auto eol=lf
+# Every test and document has to be allowlisted past /tests/* and /docs/*, so a
+# conflict resolved by taking one side drops the other side's entries and the
+# files they cover disappear from the package with git status saying nothing.
+# A union merge keeps both sets of lines; a duplicate is harmless here.
+.gitignore merge=union
