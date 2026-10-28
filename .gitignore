@@ -185,3 +185,4 @@ ops/deployed-nginx/
 !/docs/releases/2.3.9.md
 !/docs/releases/2.4.2.md
 !/tests/bytecode_cache.sh
+!/tests/flintnet_urltest_default.sh
