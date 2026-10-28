@@ -2,7 +2,7 @@
 
 [![Releases](https://img.shields.io/github/v/release/Screamshow/forkop-x?label=releases)](https://github.com/Screamshow/forkop-x/releases)
 
-> **Forkop — это бывший Podkop Plus.** Проект переименован и продолжает развиваться как независимый форк [Podkop](https://github.com/itdoginfo/podkop).
+> **Forkop X — независимый форк [Forkop](https://github.com/ushan0v/forkop) от [ushan0v](https://github.com/ushan0v).** Оригинальный Forkop — это бывший Podkop Plus, основанный на [Podkop](https://github.com/itdoginfo/podkop).
 
 ### Установка
 
