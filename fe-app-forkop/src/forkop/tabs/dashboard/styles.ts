@@ -99,15 +99,7 @@ export const styles = `
 
 .fkp_dashboard-page__widgets-section__item__title {}
 
-/* Keys left, values flush against the card edge, so the column of values is
-   straight whatever the keys are called. A value that no longer fits takes a
-   line of its own and stays on the right. */
-.fkp_dashboard-page__widgets-section__item__row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    column-gap: 8px;
-}
+.fkp_dashboard-page__widgets-section__item__row {}
 
 .fkp_dashboard-page__widgets-section__item__row--nested .fkp_dashboard-page__widgets-section__item__row__key {
     padding-left: 6px;
@@ -124,10 +116,7 @@ export const styles = `
 
 .fkp_dashboard-page__widgets-section__item__row__key {}
 
-.fkp_dashboard-page__widgets-section__item__row__value {
-    margin-left: auto;
-    text-align: right;
-}
+.fkp_dashboard-page__widgets-section__item__row__value {}
 
 .fkp_dashboard-page__outbound-section {
     margin-top: 10px;
