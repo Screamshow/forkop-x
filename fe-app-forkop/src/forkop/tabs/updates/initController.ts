@@ -826,7 +826,7 @@ function getComponentCards(): ComponentCard[] {
     },
     {
       component: 'zapret_manager',
-      column: 1,
+      column: 2,
       title: 'Zapret-Manager-Stressozz',
       version: zapretManagerInstalled
         ? _('Installed (Mirror edition)')
@@ -837,7 +837,7 @@ function getComponentCards(): ComponentCard[] {
     },
     {
       component: 'packet_steering',
-      column: 2,
+      column: 1,
       title: 'Packet Steering',
       description:
         'Распределяет обработку сетевого трафика между ядрами процессора. Может повысить скорость на многоядерных роутерах. Эффект зависит от устройства и нагрузки.',
@@ -862,12 +862,12 @@ function getComponentCards(): ComponentCard[] {
     },
     {
       component: 'direct_proxy',
-      column: 2,
+      column: 1,
       title: _('Direct Proxy'),
       description:
         'Позволяет приложениям и устройствам подключаться к прокси Forkop X по HTTP или SOCKS5 уходя в Direct. Рекомендуется для торрентов.',
       version: directProxyEnabled
-        ? `HTTP/SOCKS5 Â· ${directProxyEndpoint || _('Enabled')}`
+        ? `HTTP/SOCKS5 · ${directProxyEndpoint || _('Enabled')}`
         : _('Disabled'),
       copyValue: directProxyEnabled ? directProxyEndpoint : undefined,
       actions: [
@@ -890,7 +890,7 @@ function getComponentCards(): ComponentCard[] {
     },
     {
       component: 'torrserver_direct',
-      column: 2,
+      column: 1,
       title: _('TorrServer Direct'),
       description:
         'Позволяет TorrServer обходить правила маршрутизации Forkop X.',
