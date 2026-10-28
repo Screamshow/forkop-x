@@ -151,6 +151,43 @@ without_added="$(resolve)"
 [ ! -e "$without_added/core/added.uc" ] ||
   fail "a removed module must not survive in the rebuilt cache"
 
+# Two processes starting at once must not both compile the library: the second
+# one takes the sources for this call rather than waiting for the first to
+# finish, because a router command that blocks on a build is worse than one that
+# parses. A lock left behind by a killed build has to time out instead of
+# wedging the cache forever.
+current="$(resolve)"
+libraries_before="$(find "$CACHE_DIR" -maxdepth 1 -name 'lib.*' | wc -l)"
+mkdir -p "$CACHE_DIR/build.lock"
+cat >"$SOURCE_DIR/config/domain.uc" <<'UCODE'
+#!/usr/bin/env ucode
+return { marker: "domain-while-a-build-holds-the-lock" };
+UCODE
+locked="$(resolve)"
+[ "$locked" = "$SOURCE_DIR" ] ||
+  fail "a build already running must leave the caller on the sources, got '$locked'"
+[ "$(find "$CACHE_DIR" -maxdepth 1 -name 'lib.*' | wc -l)" = "$libraries_before" ] ||
+  fail "a caller that found the build lock held must not publish a library"
+rmdir "$CACHE_DIR/build.lock"
+unlocked="$(resolve)"
+[ "$unlocked" != "$current" ] ||
+  fail "the rebuild must happen once the build lock is released"
+
+lock_max_age="$(sed -n 's/^const BUILD_LOCK_MAX_AGE = \([0-9]*\);$/\1/p' "$LIB_SRC/core/bytecode.uc")"
+[ -n "$lock_max_age" ] ||
+  fail "core/bytecode.uc must name a build lock age limit"
+mkdir -p "$CACHE_DIR/build.lock"
+touch -d "@$(( $(date +%s) - lock_max_age - 60 ))" "$CACHE_DIR/build.lock"
+cat >"$SOURCE_DIR/config/domain.uc" <<'UCODE'
+#!/usr/bin/env ucode
+return { marker: "domain-after-a-stale-lock-was-taken-over" };
+UCODE
+stale_lock="$(resolve)"
+[ "$stale_lock" != "$unlocked" ] && [ "$stale_lock" != "$SOURCE_DIR" ] ||
+  fail "a build lock older than its age limit must be taken over, got '$stale_lock'"
+[ ! -e "$CACHE_DIR/build.lock" ] ||
+  fail "a finished build must release the build lock"
+
 # A newer interpreter writes a bytecode format the running one refuses, so the
 # recorded interpreter identity has to invalidate the cache as well.
 FAKE_UCODE_DIR="$WORK_DIR/bin"
