@@ -94,7 +94,7 @@ grep -Fq 'selected_rust_x_release(requested_version)' "$ACTION" ||
   fail 'the selected version is not taken from the release catalog'
 grep -Fq 'rust_x_releases: [ "components/action.uc", "rust-x-releases", 0 ]' "$ROOT/forkop/files/usr/bin/forkop" ||
   fail 'forkop rust_x_releases command is missing'
-for args in 'sing_box install_x 0.0.25' 'sing_box install_rust_x 0.0' 'sing_box install 0.0.25' 'zapret install 0.0.25'; do
+for args in 'sing_box install_x 0.0.25' 'sing_box install_rust_x 0.0' 'sing_box install 0.0.25' 'zapret_manager install 0.0.25'; do
     # shellcheck disable=SC2086
     if FORKOP_LIB="$LIB" ucode -L "$LIB" "$LIB/components/updates.uc" component-action-async $args >"$work/async.json" 2>&1; then
         fail "version accepted for: $args"

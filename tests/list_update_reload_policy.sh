@@ -45,8 +45,8 @@ base_signature="$(list_signature "$WORK_DIR/base.json")"
   fail "a changed list URL did not change the list source signature"
 
 plan_output="$(ucode "$RELOAD_UC" plan \
-  svc dns sb nft-old zq zr z2q z2r list cron 1 sections \
-  svc dns sb nft-new zq zr z2q z2r list cron sections 0 \
+  svc dns sb nft-old list cron 1 sections \
+  svc dns sb nft-new list cron sections 0 \
   0 0 1 1 0)"
 printf '%s\n' "$plan_output" | awk -F '\t' '$1 == "needs_nft_rebuild" && $2 == "1" { found = 1 } END { exit found ? 0 : 1 }' ||
   fail "local nft change did not request an nft rebuild"

@@ -215,20 +215,20 @@ generate_config_with_subscription_cache() {
 }
 
 check_section="$(printf '%s\n' '[
-  {".name":"youtube-zapret","action":"zapret"},
-  {".name":"legacy-zapret2","action":"zapret2"},
+  {".name":"direct-rule","action":"bypass"},
+  {".name":"blocked","action":"block"},
   {".name":"Flint","action":"connection"},
   {".name":"later-proxy","action":"connection"}
 ]' | ucode -L "$FORKOP_LIB" "$SINGBOX_GENERATOR_UC" service-route-check-section-fixture)"
 [ "$check_section" = "Flint" ] ||
-  fail "public-IP control route must skip DPI bypass providers and select the first connection"
+  fail "public-IP control route must skip route-only actions and select the first connection"
 
 no_proxy_check_section="$(printf '%s\n' '[
-  {".name":"youtube-zapret","action":"zapret"},
-  {".name":"legacy-zapret2","action":"zapret2"}
+  {".name":"direct-rule","action":"bypass"},
+  {".name":"blocked","action":"block"}
 ]' | ucode -L "$FORKOP_LIB" "$SINGBOX_GENERATOR_UC" service-route-check-section-fixture)"
 [ -z "$no_proxy_check_section" ] ||
-  fail "public-IP control route must not treat a DPI bypass provider as a remote proxy"
+  fail "public-IP control route must not treat a route-only action as a remote proxy"
 
 cat >"$WORK_DIR/fakeip-comparison-proxy.json" <<'JSON'
 {"route":{"rules":[{"action":"route","outbound":"Flint-out","domain":"ip.podkop.fyi"}]}}
@@ -592,22 +592,6 @@ cat >"$WORK_DIR/manual-http-fixture.json" <<'JSON'
       "action": "connection",
       "selector_proxy_links": [ "http://127.0.0.1:8080" ]
     }
-  ]
-}
-JSON
-
-cat >"$WORK_DIR/provider-actions-fixture.json" <<'JSON'
-{
-  "settings": {
-    ".name": "settings",
-    ".type": "settings",
-    "config_path": "/tmp/sing-box/config.json",
-    "dns_server": "1.1.1.1",
-    "service_listen_address": "127.0.0.1"
-  },
-  "section": [
-    { ".name": "zap", ".type": "section", "enabled": "1", "action": "zapret", "domain_suffix": [ "zap.example" ] },
-    { ".name": "zap2", ".type": "section", "enabled": "1", "action": "zapret2", "domain_suffix": [ "zap2.example" ] }
   ]
 }
 JSON
@@ -1182,7 +1166,6 @@ if generate_config "$WORK_DIR/manual-http-fixture.json" "$WORK_DIR/manual-http.j
 fi
 grep -Fxq 'manual proxy link scheme is not supported by sing-box config generation yet' "$WORK_DIR/manual-http.stderr" ||
   fail "native HTTP connection URL failure should identify the unsupported scheme"
-generate_config "$WORK_DIR/provider-actions-fixture.json" "$WORK_DIR/providers.json"
 generate_config "$WORK_DIR/manual-transport-fixture.json" "$WORK_DIR/manual.json"
 generate_config "$WORK_DIR/vpn-interface-fixture.json" "$WORK_DIR/vpn.json"
 mkdir -p "$WORK_DIR/download.json.rulesets"
@@ -1513,10 +1496,6 @@ let urltest_out = outbound(urltest, "proxy-urltest-out");
 assert(urltest_out && length(urltest_out.outbounds) == 1 && urltest_out.outbounds[0] == "Keep", "URLTest include filter");
 assert(outbound(urltest, "Keep").type == "http", "HTTP JSON outbound remains supported");
 assert(outbound(urltest, "proxy-out").default == "proxy-urltest-out", "selector defaults to URLTest");
-
-let providers = cfg("providers");
-assert(outbound(providers, "zap-out").routing_mark == 0x01000001, "Zapret mark");
-assert(outbound(providers, "zap2-out").routing_mark == 0x02000001, "Zapret2 mark");
 
 let manual = cfg("manual");
 let vless = outbound(manual, "proxy-1-out");

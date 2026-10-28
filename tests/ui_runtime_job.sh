@@ -303,7 +303,7 @@ mkdir -p "$FORKOP_UI_COMPONENT_ACTION_DIR"
 printf '%s\n' '{"running":true,"component":"sing_box","started_at":100}' >"$component_job"
 ui_ucode component-action-running-for sing_box >/dev/null ||
   fail "component-action-running-for should detect running sing-box component action"
-if ui_ucode component-action-running-for zapret >/dev/null 2>&1; then
+if ui_ucode component-action-running-for forkop >/dev/null 2>&1; then
   fail "component-action-running-for should ignore other components"
 fi
 

@@ -35,26 +35,6 @@ async function checkInitialRender() {
   assert.equal(calls, 1, 'capability probe starts in background');
 }
 
-async function checkRuleEditor() {
-  const source = fs.readFileSync(dir + 'section.js', 'utf8');
-  const start = source.indexOf('  o.load = function (section_id)', source.indexOf('  populateActionOptionValues(o);'));
-  const end = source.indexOf('\n\n  o = section.taboption', start);
-  let release, probes = 0, widgets = 0;
-  const ready = new Promise(resolve => { release = resolve; });
-  const option = { cfgvalue: id => id, renderWidget: (...args) => { widgets++; return args.join(':'); } };
-  vm.runInNewContext(source.slice(start, end), {
-    o: option, populateActionOptionValues() {},
-    ensureActionProvidersAvailabilityLoaded() { probes++; return ready; },
-  });
-  assert.equal(option.load('rule1'), 'rule1');
-  assert.equal(probes, 0, 'map loading does not probe providers');
-  const widget = option.renderWidget('rule1', 0, 'zapret');
-  assert.equal(probes, 1);
-  assert.equal(widgets, 0, 'editor waits for accurate provider choices');
-  release();
-  assert.equal(await widget, 'rule1:0:zapret');
-}
-
 function checkDownloadChoices() {
   const source = fs.readFileSync(dir + 'settings.js', 'utf8');
   const start = source.indexOf('function isDownloadSectionAction(');
@@ -62,24 +42,24 @@ function checkDownloadChoices() {
   const listeners = {};
   let value = 'edited-selection', choices;
   const widget = { clearChoices() {}, addChoices(keys) { choices = [...keys]; } };
+  const sections = {
+    proxy: { '.type': 'section', action: 'connection' },
+    tunnel: { '.type': 'section', action: 'vpn' },
+    direct: { '.type': 'section', action: 'bypass' },
+  };
   const option = {
-    map: { data: { state: { values: { forkop: {
-      proxy: { '.type': 'section', action: 'connection' },
-      zapret: { '.type': 'section', action: 'zapret' },
-    } } } } },
+    map: { data: { state: { values: { forkop: sections } } } },
     value(key, label) { this.keylist.push(key); this.vallist.push(label); },
     renderWidget: () => ({ addEventListener: (event, fn) => { listeners[event] = fn; } }),
     getUIElement: () => widget,
   };
-  const capabilities = { loaded: false };
   const context = vm.createContext({ UCI_PACKAGE: 'forkop', uci: { get: () => value }, _: v => v });
   vm.runInContext(source.slice(start, end), context);
-  context.configureDownloadSectionOption(option, 'download_section', capabilities);
+  context.configureDownloadSectionOption(option, 'download_section');
   assert.equal(option.load('settings'), value);
-  assert.deepEqual([...option.keylist], ['proxy', 'zapret']);
+  assert.deepEqual([...option.keylist], ['proxy', 'tunnel'], 'only outbound-capable sections are offered');
   option.renderWidget('settings');
-  capabilities.loaded = true;
-  capabilities.zapretInstalled = false;
+  sections.tunnel.enabled = '0';
   listeners.mousedown();
   assert.deepEqual(choices, ['proxy']);
   assert.equal(option.cfgvalue('settings'), 'edited-selection', 'refresh does not rewrite selection');
@@ -87,7 +67,6 @@ function checkDownloadChoices() {
 
 (async () => {
   await checkInitialRender();
-  await checkRuleEditor();
   checkDownloadChoices();
-  console.log('Initial rendering with stalled RPC, deferred rule editor and live download choices: PASS');
+  console.log('Initial rendering with stalled RPC and live download choices: PASS');
 })().catch(error => { console.error(error); process.exitCode = 1; });

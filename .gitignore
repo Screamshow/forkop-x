@@ -41,6 +41,7 @@ ops/deployed-nginx/
 !/tests/clash_api_auth.uc
 !/tests/sing_box_runtime.sh
 !/tests/zapret_manager_detection.sh
+!/tests/zapret_removed.sh
 !/tests/sing_box_manual_version.sh
 !/tests/release_queue_vm.sh
 !/tests/release_update_vm.sh
@@ -135,8 +136,6 @@ ops/deployed-nginx/
 /scripts/__pycache__/
 /scripts/tests/__pycache__/
 
-!/tests/provider_shutdown.sh
-!/tests/provider_shutdown_vm.sh
 !/tests/subscription_base64.sh
 !/tests/native_process_identity.sh
 !/tests/version_deadline.sh

@@ -39,7 +39,7 @@ cat >"$WORK/byedpi.json" <<'JSON'
  "section":[
   {".name":"dpi",".type":"section","enabled":"1","action":"byedpi","byedpi_cmd_opts":"-o 2 -d 2",
    "community_lists":["youtube"]},
-  {".name":"was_dpi",".type":"section","enabled":"1","action":"zapret","byedpi_cmd_opts":"-d 1"},
+  {".name":"was_dpi",".type":"section","enabled":"1","action":"block","byedpi_cmd_opts":"-d 1"},
   {".name":"vpn",".type":"section","enabled":"1","action":"connection"}],
  "subscription_url":[
   {".name":"sub1",".type":"subscription_url","section":"vpn","value":"https://sub.test/a",
@@ -56,7 +56,7 @@ for (let x in c.subscription_url) sub[x[".name"]] = x;
 assert(s.dpi.enabled == "0" && s.dpi.action == "bypass", "ByeDPI rule is not disabled as a direct rule");
 assert(s.dpi.byedpi_cmd_opts == null, "ByeDPI strategy kept");
 assert(length(s.dpi.community_lists) == 1, "ByeDPI rule lost its lists");
-assert(s.was_dpi.action == "zapret" && s.was_dpi.enabled == "1" && s.was_dpi.byedpi_cmd_opts == null, "stale strategy on another rule");
+assert(s.was_dpi.action == "block" && s.was_dpi.enabled == "1" && s.was_dpi.byedpi_cmd_opts == null, "stale strategy on another rule");
 assert(c.settings.download_lists_via_proxy == "0" && c.settings.download_lists_via_proxy_section == null, "lists still download through the ByeDPI rule");
 assert(c.settings.download_components_via_proxy == "0", "components still fall back to the ByeDPI rule");
 assert(sub.sub1.download_via_proxy_enabled == "0" && sub.sub1.download_via_proxy_section == null, "subscription still downloads through the ByeDPI rule");
