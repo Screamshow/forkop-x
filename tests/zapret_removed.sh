@@ -50,7 +50,8 @@ cat >"$WORK/zapret.json" <<'JSON'
   "download_components_via_proxy":"1","dns_detour_enabled":"1","dns_detour_section":"dpi2"},
  "section":[
   {".name":"dpi",".type":"section","enabled":"1","action":"zapret","nfqws_opt":"--dpi-desync=fake",
-   "community_lists":["youtube"]},
+   "community_lists":["youtube"],"mixed_proxy_enabled":"1","mixed_proxy_port":"4545",
+   "mixed_proxy_auth_enabled":"1","mixed_proxy_username":"u","mixed_proxy_password":"p"},
   {".name":"dpi2",".type":"section","enabled":"1","action":"zapret2","nfqws2_opt":"--filter-tcp=80"},
   {".name":"was_dpi",".type":"section","enabled":"1","action":"block","nfqws_opt":"--dpi-desync=fake"},
   {".name":"dnsrule",".type":"section","enabled":"1","action":"dns","dns_server":"1.1.1.1",
@@ -72,6 +73,9 @@ assert(s.dpi.enabled == "0" && s.dpi.action == "bypass", "Zapret rule is not dis
 assert(s.dpi2.enabled == "0" && s.dpi2.action == "bypass", "Zapret2 rule is not disabled as a direct rule");
 assert(s.dpi.nfqws_opt == null && s.dpi2.nfqws2_opt == null, "NFQWS strategy kept");
 assert(length(s.dpi.community_lists) == 1, "Zapret rule lost its lists");
+assert(s.dpi.mixed_proxy_enabled == null && s.dpi.mixed_proxy_port == null &&
+    s.dpi.mixed_proxy_auth_enabled == null && s.dpi.mixed_proxy_username == null &&
+    s.dpi.mixed_proxy_password == null, "a direct rule kept the mixed proxy it can no longer serve");
 assert(s.was_dpi.action == "block" && s.was_dpi.enabled == "1" && s.was_dpi.nfqws_opt == null, "stale strategy on another rule");
 assert(c.settings.download_lists_via_proxy == "0" && c.settings.download_lists_via_proxy_section == null, "lists still download through the Zapret rule");
 assert(c.settings.download_components_via_proxy == "0", "components still fall back to the Zapret rule");
@@ -100,6 +104,19 @@ fi
 grep -Fq "unsupported action 'zapret'" "$WORK/validation.log" ||
   fail "validation does not report the removed action: $(cat "$WORK/validation.log")"
 echo 'A leftover Zapret action is rejected by configuration validation'
+
+# Re-enabling a rolled-back rule must still generate a configuration.
+cat >"$WORK/reenabled.json" <<'JSON'
+{"settings":{".name":"settings",".type":"settings","dns_server":"1.1.1.1"},
+ "section":[{".name":"dpi",".type":"section","enabled":"1","action":"bypass",
+  "domain_suffix":["zap.example"]}]}
+JSON
+mkdir -p "$WORK/reenabled-out.json.section-cache" "$WORK/reenabled-out.json.rulesets"
+ucode -L "$LIB" "$LIB/singbox/generator.uc" generate-config-fixture \
+    "$WORK/reenabled.json" "$WORK/reenabled-out.json" 127.0.0.1 0 1 '' 1.14.2-x-1.0.4 \
+    >"$WORK/reenabled.log" 2>&1 ||
+  { cat "$WORK/reenabled.log" >&2; fail "a re-enabled rolled-back rule does not generate"; }
+echo 'A re-enabled rolled-back rule generates a configuration'
 
 # Mixed Proxy survives the removal on the actions that can provide an outbound.
 cat >"$WORK/mixed.json" <<'JSON'

@@ -1413,6 +1413,12 @@ function migrate_retired_zapret(ctx) {
             retired[section_name(section)] = true;
             set_option(ctx, section, "enabled", "0");
             set_option(ctx, section, "action", "bypass");
+            // A direct rule has no outbound to expose, and generation refuses
+            // a mixed proxy inbound for it. Drop the local proxy with the
+            // action that backed it.
+            for (let key in [ "mixed_proxy_enabled", "mixed_proxy_port", "mixed_proxy_auth_enabled",
+                    "mixed_proxy_username", "mixed_proxy_password" ])
+                delete_option(ctx, section, key);
         }
         delete_option(ctx, section, "nfqws_opt");
         delete_option(ctx, section, "nfqws2_opt");
