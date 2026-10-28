@@ -7,8 +7,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: FORKOP\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-16 14:58+0300\n"
-"PO-Revision-Date: 2026-09-16 14:58+0300\n"
+"POT-Creation-Date: 2026-10-28 09:43+0000\n"
+"PO-Revision-Date: 2026-10-28 09:43+0000\n"
 "Last-Translator: Screamshow\n"
 "Language-Team: none\n"
 "Language: ru\n"
@@ -37,6 +37,15 @@ msgstr "✔ Работает"
 
 msgid "✘ Stopped"
 msgstr "✘ Остановлен"
+
+msgid "A configuration backup will be saved in /etc/forkop-backups. Older versions may not support all current settings."
+msgstr "Резервная копия конфигурации будет сохранена в /etc/forkop-backups. Старые версии могут не поддерживать все текущие настройки."
+
+msgid "A required list could not be downloaded or validated. The previous working configuration is still active. Check the list source and apply the settings again."
+msgstr ""
+
+msgid "A separate temporary Tailscale connection. Temporarily installs the support SSH public key. No LAN routes are advertised."
+msgstr "Отдельное временное подключение Tailscale. На время сеанса добавляется публичный SSH-ключ поддержки. Маршруты в домашнюю сеть не публикуются."
 
 msgid "A startup attempt was interrupted. Forkop will retry automatically; no action is needed yet."
 msgstr "Попытка запуска была прервана. Forkop X повторит запуск автоматически."
@@ -107,8 +116,14 @@ msgstr "Добавляет все серверы, которые не попал
 msgid "All servers"
 msgstr "Все серверы"
 
+msgid "All traffic from device"
+msgstr ""
+
 msgid "All traffic from these IP addresses will be routed through the section unconditionally, ignoring all other conditions."
 msgstr "Весь трафик с этих IP-адресов будет направлен через секцию безусловно, игнорируя остальные условия."
+
+msgid "Allow for 30 minutes"
+msgstr "Разрешить на 30 минут"
 
 msgid "Allowed domain prefixes are full:, keyword:, and regex:"
 msgstr "Разрешённые префиксы доменов: full:, keyword: и regex:"
@@ -118,6 +133,12 @@ msgstr "Обеспечивает доступ к YACD из WAN. Убедитес
 
 msgid "Allows limiting the list of servers for URLTest"
 msgstr "Позволяет ограничить список серверов для URLTest"
+
+msgid "An existing Tailscale service is running. Its settings are preserved."
+msgstr "Основной Tailscale уже работает. Его настройки сохраняются."
+
+msgid "Another service action is already running"
+msgstr "Уже выполняется другое действие с сервисом. Дождитесь его завершения."
 
 msgid "Apply section rules only to the specified local IP addresses"
 msgstr "Применять правила секции только к указанным локальным IP-адресам"
@@ -140,6 +161,12 @@ msgstr "Автообновление"
 msgid "Automatic component update checks"
 msgstr "Автоматическая проверка обновлений компонентов"
 
+msgid "Automatic recovery failed. Check the startup error in the logs."
+msgstr "Не удалось автоматически восстановить работу. Проверьте ошибку запуска в журнале."
+
+msgid "Automatic restart is paused. Check the configuration and the startup error in the logs."
+msgstr "Автоматический перезапуск приостановлен. Проверьте настройки и ошибку запуска в журнале."
+
 msgid "Automatically add text to the name of each server from this subscription for convenient filtering."
 msgstr "Автоматически добавлять текст к имени каждого сервера из этой подписки для удобной фильтрации."
 
@@ -152,17 +179,20 @@ msgstr "Автовыбор самого быстрого узла уровня"
 msgid "Available actions"
 msgstr "Доступные действия"
 
-msgid "Backend validation failed: %s"
-msgstr "Backend-проверка завершилась ошибкой: %s"
+msgid "Block QUIC in intercepted traffic and UDP/443 in direct Internet traffic from client interfaces. Local services and port forwards are excluded. Overrides the VPN-only setting while enabled."
+msgstr ""
+
+msgid "Block QUIC only when a routing rule sends traffic through a proxy or VPN. Earlier DIRECT rules and source exclusions are preserved. This setting remains selected when global blocking is toggled."
+msgstr ""
 
 msgid "Bootstrap DNS"
 msgstr "Bootstrap DNS"
 
-msgid "Bootstrap DNS Servers"
-msgstr "Bootstrap DNS-серверы"
-
 msgid "Bootstrap DNS must use an IPv4 or IPv6 address"
 msgstr "Для Bootstrap DNS укажите адрес IPv4 или IPv6"
+
+msgid "Bootstrap DNS Servers"
+msgstr "Bootstrap DNS-серверы"
 
 msgid "Both built-in lists are enabled. Broad Cloudflare ranges may route unrelated traffic, including torrents, through a proxy or VPN depending on section order."
 msgstr "Оба встроенных списка включены. Из-за широких диапазонов Cloudflare посторонний трафик, в том числе торрент-трафик, может идти через прокси или VPN в зависимости от порядка секций."
@@ -178,6 +208,9 @@ msgstr "Браузер использует FakeIP"
 
 msgid "Built-in rule sets"
 msgstr "Встроенные наборы правил"
+
+msgid "Built-in subnets"
+msgstr ""
 
 msgid "By flag emoji from name"
 msgstr "По эмодзи флага из названия"
@@ -199,6 +232,9 @@ msgstr "Не удалось сохранить настройки"
 
 msgid "Cascade connection"
 msgstr "Каскадное подключение"
+
+msgid "Change Forkop X interface language"
+msgstr "Смена языка интерфейса Forkop X"
 
 msgid "Check interval"
 msgstr "Интервал проверки"
@@ -226,6 +262,15 @@ msgstr "Проверки пройдены"
 
 msgid "Checks passed with manual DHCP"
 msgstr "Проверки пройдены с ручным DHCP"
+
+msgid "Choose Forkop X version"
+msgstr "Выбор версии Forkop X"
+
+msgid "Choose version"
+msgstr "Выбрать версию"
+
+msgid "Choose Xrust version"
+msgstr "Выбор версии Xrust"
 
 msgid "CIDR must be between 0 and 32 for IPv4 or 0 and 128 for IPv6"
 msgstr "CIDR должен быть от 0 до 32 для IPv4 или от 0 до 128 для IPv6"
@@ -263,17 +308,35 @@ msgstr "Путь к файлу конфигурации"
 msgid "Configure User-Agent in the item settings"
 msgstr "Настройте User-Agent в настройках элемента"
 
+msgid "Confirm version change"
+msgstr "Подтверждение смены версии"
+
 msgid "Connect through"
 msgstr "Подключаться через"
 
+msgid "Connected"
+msgstr "Подключено"
+
+msgid "Connecting"
+msgstr "Подключение"
+
+msgid "Connection details"
+msgstr "Данные подключения"
+
 msgid "Connection URL"
 msgstr "URL подключения"
+
+msgid "Connections"
+msgstr ""
 
 msgid "Connections are unavailable"
 msgstr "Подключения недоступны"
 
 msgid "Connectivity probe failed"
 msgstr "Проверка соединения не прошла"
+
+msgid "Control connection lost"
+msgstr "Потеряна связь с сервером управления"
 
 msgid "Copied"
 msgstr "Скопировано"
@@ -284,11 +347,38 @@ msgstr "Копировать"
 msgid "Copy address"
 msgstr "Копировать адрес"
 
+msgid "Copy IP"
+msgstr "Скопировать IP"
+
+msgid "Core traffic since the last core restart."
+msgstr ""
+
+msgid "Core traffic; excludes traffic forwarded directly by the kernel."
+msgstr ""
+
+msgid "Could not change language. Please try again."
+msgstr ""
+
 msgid "Could not compare FakeIP and control public IPs"
 msgstr "Не удалось сравнить публичные IP FakeIP и контрольной проверки"
 
 msgid "Could not confirm completion. Check the removal log before retrying."
 msgstr "Не удалось подтвердить завершение. Перед повторной попыткой проверьте журнал удаления."
+
+msgid "Could not confirm the sing-box process state. Check the logs before trying again."
+msgstr "Не удалось подтвердить состояние процесса sing-box. Посмотрите журнал перед повторной попыткой."
+
+msgid "Could not load available versions"
+msgstr "Не удалось загрузить доступные версии"
+
+msgid "Could not prepare the updated configuration."
+msgstr ""
+
+msgid "Could not restart the auxiliary services."
+msgstr ""
+
+msgid "Could not save the previous configuration."
+msgstr ""
 
 msgid "Could not start removal. Another component action may be running."
 msgstr "Не удалось начать удаление. Возможно, выполняется другая операция с компонентами."
@@ -316,6 +406,9 @@ msgstr "Отдельная cgroup недоступна"
 
 msgid "Default address for checking server availability and latency. URLTest uses its own address."
 msgstr "Адрес по умолчанию для проверки доступности и задержки серверов. Для URLTest используется собственный адрес."
+
+msgid "Default route"
+msgstr ""
 
 msgid "Delay in milliseconds before reloading Forkop after interface UP"
 msgstr "Задержка в миллисекундах перед перезапуском Forkop после поднятия интерфейса"
@@ -356,17 +449,20 @@ msgstr "Отключить"
 msgid "Disable autostart"
 msgstr "Отключить автостарт"
 
-msgid "Disable QUIC"
-msgstr "Отключить QUIC"
+msgid "Disable QUIC for VPN traffic"
+msgstr ""
 
-msgid "Disable the QUIC protocol to improve compatibility or fix issues with video streaming"
-msgstr "Отключить QUIC протокол для улучшения совместимости или исправления видео стриминга"
+msgid "Disable QUIC globally"
+msgstr ""
 
 msgid "Disabled"
 msgstr "Выключен"
 
-msgid "Disabling interception is incompatible with action=zapret2 because Forkop sends matched traffic through NFQUEUE."
-msgstr "Отключение перехвата несовместимо с action=zapret2, потому что Forkop отправляет совпавший трафик через NFQUEUE."
+msgid "Disconnect now"
+msgstr "Отключить сейчас"
+
+msgid "Disconnected"
+msgstr "Отключено"
 
 msgid "Discord and Cloudflare lists overlap"
 msgstr "Списки Discord и Cloudflare пересекаются"
@@ -575,6 +671,15 @@ msgstr "Укажите корректный адрес DNS-сервера"
 msgid "Enter the subscription URL"
 msgstr "Введите URL подписки"
 
+msgid "Error details"
+msgstr "Подробности ошибки"
+
+msgid "Estimated storage required, including reserve"
+msgstr "Оценка необходимого места с запасом"
+
+msgid "Exact match unavailable"
+msgstr "Точное совпадение недоступно"
+
 msgid "Exclude by proxy parameters"
 msgstr "Исключить по параметрам прокси"
 
@@ -614,11 +719,8 @@ msgstr "Истекает"
 msgid "Expose this section as a local HTTP+SOCKS proxy"
 msgstr "Открыть эту секцию как локальный HTTP+SOCKS прокси"
 
-msgid "External nfqws config files bypass Forkop queue management and explicit validation."
-msgstr "Внешние конфиги nfqws обходят управление очередями и явную валидацию Forkop."
-
-msgid "External nfqws2 config files bypass Forkop queue management and explicit validation."
-msgstr "Внешние конфиги nfqws2 обходят управление очередями и явную валидацию Forkop."
+msgid "Failed"
+msgstr "Ошибка"
 
 msgid "Failed to close connection"
 msgstr "Не удалось закрыть подключение"
@@ -671,12 +773,6 @@ msgstr "Ошибка Forkop"
 msgid "Forkop is restarting automatically"
 msgstr "Forkop X перезапускается автоматически"
 
-msgid "Forkop manages the nfqws process lifecycle itself, so daemon mode is not allowed here."
-msgstr "Forkop сам управляет жизненным циклом nfqws, поэтому режим daemon здесь запрещён."
-
-msgid "Forkop manages the nfqws2 process lifecycle itself, so daemon mode is not allowed here."
-msgstr "Forkop сам управляет жизненным циклом nfqws2, поэтому режим daemon здесь запрещён."
-
 msgid "Forkop recovered automatically"
 msgstr "Работа Forkop X восстановлена автоматически"
 
@@ -695,32 +791,23 @@ msgstr "Forkop не будет изменять вашу конфигураци�
 msgid "Forkop X has been removed. Original repositories have been restored."
 msgstr "Forkop X удалён. Исходные репозитории восстановлены."
 
+msgid "Forkop X is applying changes. Please wait."
+msgstr "Forkop X применяет изменения. Пожалуйста, подождите."
+
+msgid "Forkop X is busy updating data or applying settings. Wait for the operation to finish, then try restarting again."
+msgstr "Forkop X обновляет данные или применяет настройки. Дождитесь завершения операции и повторите перезапуск."
+
 msgid "Forkop X Settings"
 msgstr "Настройки Forkop X"
 
-msgid "Forkop-managed nfqws runtime is not ready"
-msgstr "NFQWS Forkop не готов"
+msgid "Forkop: remote support"
+msgstr "Forkop: удалённая помощь"
 
-msgid "Forkop-managed nfqws runtime is not running"
-msgstr "NFQWS Forkop не запущен"
-
-msgid "Forkop-managed nfqws runtime is ready"
-msgstr "NFQWS Forkop готов"
-
-msgid "Forkop-managed nfqws2 runtime is not ready"
-msgstr "NFQWS2 Forkop не готов"
-
-msgid "Forkop-managed nfqws2 runtime is not running"
-msgstr "NFQWS2 Forkop не запущен"
-
-msgid "Forkop-managed nfqws2 runtime is ready"
-msgstr "NFQWS2 Forkop готов"
+msgid "Free storage"
+msgstr "Свободное место"
 
 msgid "Full removal"
 msgstr "Полное удаление"
-
-msgid "Fuzzing is not supported here because Forkop needs deterministic runtime validation."
-msgstr "Fuzzing здесь не поддерживается, потому что Forkop нужна предсказуемая runtime-валидация."
 
 msgid "Get global check"
 msgstr "Получить глобальную проверку"
@@ -758,6 +845,9 @@ msgstr "Как часто проверять, восстановился ли DN
 msgid "HTTP error"
 msgstr "Ошибка HTTP"
 
+msgid "I allow access to local router services for 30 minutes."
+msgstr "Разрешаю доступ к локальным сервисам роутера на 30 минут."
+
 msgid "Idle timeout"
 msgstr "Таймаут простоя"
 
@@ -788,11 +878,26 @@ msgstr "Установить"
 msgid "Install another build:"
 msgstr "Установить другую сборку:"
 
+msgid "Install selected version"
+msgstr "Установить выбранную версию"
+
+msgid "Install Tailscale Lite"
+msgstr "Установить Tailscale Lite"
+
+msgid "Installed"
+msgstr ""
+
 msgid "Installed (Mirror edition)"
 msgstr "Установлен (Mirror edition)"
 
 msgid "Installed version is newer than release"
 msgstr "Установлена версия новее релиза"
+
+msgid "Installing"
+msgstr "Установка"
+
+msgid "Interface language"
+msgstr "Язык интерфейса"
 
 msgid "Interface Monitoring"
 msgstr "Мониторинг интерфейса"
@@ -877,9 +982,6 @@ msgstr "Неверный IP-адрес"
 
 msgid "Invalid JSON format"
 msgstr "Неверный формат JSON"
-
-msgid "Invalid NFQWS2 strategy"
-msgstr "Некорректная стратегия NFQWS2"
 
 msgid "Invalid path format. Path must start with \"/\" and contain valid characters"
 msgstr "Неверный формат пути. Путь должен начинаться с \"/\" и содержать допустимые символы"
@@ -1025,11 +1127,20 @@ msgstr "Уровень"
 msgid "Level name"
 msgstr "Название уровня"
 
+msgid "List changes were not applied"
+msgstr ""
+
 msgid "List must be an HTTP(S) URL or a local .lst path"
 msgstr "Список должен быть HTTP(S) URL или локальным путём .lst"
 
 msgid "List Update Frequency"
 msgstr "Частота обновления списков"
+
+msgid "Loading"
+msgstr ""
+
+msgid "Loading available versions…"
+msgstr "Загрузка доступных версий…"
 
 msgid "Loading connections"
 msgstr "Загрузка подключений"
@@ -1058,8 +1169,14 @@ msgstr "Максимальное время ожидания разрешени�
 msgid "Memory Usage"
 msgstr "Использование памяти"
 
+msgid "Meta subnet lists for WhatsApp are missing. Download the Meta lists and apply again, or turn off real IPs for WhatsApp."
+msgstr "Для работы опции «Отключить fake-ip для Whatsapp» нужны загруженные подсети Meta. Загрузите списки Meta и примените настройки повторно либо выключите опцию."
+
 msgid "Minimum latency difference in milliseconds that triggers switching to a faster server."
 msgstr "Минимальная разница задержки в миллисекундах, при которой произойдет переключение на более быстрый сервер."
+
+msgid "minutes"
+msgstr "мин."
 
 msgid "Mixed Proxy Password"
 msgstr "Пароль смешанного прокси"
@@ -1100,24 +1217,6 @@ msgstr "Настройки сетевого интерфейса"
 msgid "New version %s is available for %s"
 msgstr "Доступна новая версия %s для %s"
 
-msgid "NFQUEUE range is available"
-msgstr "Диапазон NFQUEUE свободен"
-
-msgid "NFQUEUE range overlaps with another rule"
-msgstr "Диапазон NFQUEUE пересекается с другим правилом"
-
-msgid "NFQWS Strategy"
-msgstr "Стратегия NFQWS"
-
-msgid "NFQWS strategy cannot be empty"
-msgstr "Стратегия NFQWS не может быть пустой"
-
-msgid "NFQWS2 Strategy"
-msgstr "Стратегия NFQWS2"
-
-msgid "NFQWS2 strategy cannot be empty"
-msgstr "Стратегия NFQWS2 не может быть пустой"
-
 msgid "No"
 msgstr "Нет"
 
@@ -1127,14 +1226,11 @@ msgstr "Нет активных подключений"
 msgid "No closed connections"
 msgstr "Нет закрытых подключений"
 
+msgid "No compatible releases available"
+msgstr "Нет совместимых релизов"
+
 msgid "No other marking rules found"
 msgstr "Другие правила маркировки не найдены"
-
-msgid "No rules use Zapret"
-msgstr "Нет правил, использующих Zapret"
-
-msgid "No rules use Zapret2"
-msgstr "Нет правил, использующих Zapret2"
 
 msgid "Node list is empty"
 msgstr "Список узлов пуст"
@@ -1144,6 +1240,18 @@ msgstr "Узлы"
 
 msgid "Normal mode"
 msgstr "Обычный режим"
+
+msgid "Not available"
+msgstr ""
+
+msgid "Not enough storage for Forkop update and rollback. Required reserve: %s KiB; available: %s KiB."
+msgstr "Недостаточно места для обновления Forkop X и отката. Требуемый запас: %s КиБ; доступно: %s КиБ."
+
+msgid "Not enough storage for sing-box installation. Required reserve: %s KiB; available: %s KiB."
+msgstr "Недостаточно места для установки sing-box. Требуемый запас: %s КиБ; доступно: %s КиБ."
+
+msgid "Not enough temporary memory. Required: %s KiB; available: %s KiB."
+msgstr "Недостаточно временной памяти. Требуется: %s КиБ; доступно: %s КиБ."
 
 msgid "Not implement yet"
 msgstr "Ещё не реализовано"
@@ -1156,6 +1264,15 @@ msgstr "Не отвечает"
 
 msgid "Not running"
 msgstr "Не запущено"
+
+msgid "Older Xrust versions may not support all current settings. If the installation fails, the previous core is restored."
+msgstr "Старые версии Xrust могут не поддерживать все текущие настройки. Если установка не удастся, будет восстановлено прежнее ядро."
+
+msgid "One of"
+msgstr ""
+
+msgid "One-time Tailscale auth key"
+msgstr "Одноразовый ключ Tailscale"
 
 msgid "Only from the specified countries."
 msgstr "Только из указанных стран."
@@ -1198,12 +1315,6 @@ msgstr "Время ожидания истекло"
 
 msgid "Option \"%s\" contains an invalid input value."
 msgstr "Параметр \"%s\" содержит некорректное значение."
-
-msgid "Optional values must be attached with '=' here; a separate token would be ignored by nfqws."
-msgstr "Необязательное значение здесь нужно передавать только через '='; отдельный токен nfqws проигнорирует."
-
-msgid "Optional values must be attached with '=' here; a separate token would be ignored by nfqws2."
-msgstr "Необязательные значения здесь должны задаваться через '='; отдельный токен будет проигнорирован nfqws2."
 
 msgid "Original repositories could not be restored. Removal was cancelled before deleting packages."
 msgstr "Не удалось восстановить исходные репозитории. Удаление отменено до удаления пакетов."
@@ -1301,20 +1412,29 @@ msgstr "Обновление дашборда…"
 msgid "Regular expression must not contain spaces or commas"
 msgstr "Регулярное выражение не должно содержать пробелы или запятые"
 
+msgid "Remaining time"
+msgstr "Осталось"
+
+msgid "Remote support"
+msgstr "Удалённая помощь"
+
 msgid "Removal did not finish. See the removal log in /tmp/forkop-uninstall.*/output.log."
 msgstr "Удаление не завершено. Подробности в журнале /tmp/forkop-uninstall.*/output.log."
 
+msgid "Removal is unavailable while the existing Tailscale service is running or enabled, or when the package is not managed by OpenWrt."
+msgstr "Удаление недоступно, пока основной Tailscale работает или включён его автозапуск, а также если пакет не установлен средствами OpenWrt."
+
 msgid "Remove"
 msgstr "Удалить"
-
-msgid "Remove Forkop X with its settings and restore the original device repositories."
-msgstr "Удалить Forkop X вместе с настройками и восстановить исходные репозитории устройства."
 
 msgid "Remove Forkop X completely"
 msgstr "Полностью удалить Forkop X"
 
 msgid "Remove Forkop X with its settings and cache, and restore the original device repositories?"
 msgstr "Удалить Forkop X вместе с настройками и кэшем и восстановить исходные репозитории устройства?"
+
+msgid "Remove Forkop X with its settings and restore the original device repositories."
+msgstr "Удалить Forkop X вместе с настройками и восстановить исходные репозитории устройства."
 
 msgid "Remove matching nodes from every current and future subscription before sing-box, URLTest, Priority, and the dashboard are generated."
 msgstr "Удалять совпадающие узлы из всех текущих и будущих подписок до формирования sing-box, URLTest, Priority и дашборда."
@@ -1328,8 +1448,17 @@ msgstr "Исключить из уровня серверы из указанн�
 msgid "Remove servers whose names match the expression from this level."
 msgstr "Исключить из уровня серверы, имена которых соответствуют выражению."
 
+msgid "Remove Tailscale"
+msgstr "Удалить Tailscale"
+
+msgid "Remove Tailscale Lite"
+msgstr "Удалить Tailscale Lite"
+
 msgid "Remove the specified servers from this level."
 msgstr "Исключить из уровня указанные серверы."
+
+msgid "Removing"
+msgstr "Удаление"
 
 msgid "Removing Forkop X…"
 msgstr "Удаление Forkop X…"
@@ -1340,29 +1469,29 @@ msgstr "Удаление пользовательских настроек…"
 msgid "Require a username and password for the local mixed proxy"
 msgstr "Требовать логин и пароль для локального смешанного прокси"
 
+msgid "Requires downloaded Meta subnet lists in an enabled routing section without source or port filters. Keeps existing routes and explicit DNS rules. Devices must use the router DNS. Custom DNS rules may override this setting."
+msgstr "Нужны загруженные подсети Meta во включённой секции без фильтров устройств и портов. Сохраняет существующие маршруты и явные DNS-правила. Устройства должны использовать DNS роутера. Собственные DNS-правила могут переопределять эту настройку."
+
+msgid "Resident memory (RSS) of the core process."
+msgstr ""
+
 msgid "Resolve domain names before routing so sing-box can use real destination IPs."
 msgstr "Разрешать доменные имена перед маршрутизацией, чтобы sing-box использовал реальные IP-адреса назначения."
 
 msgid "Resolve real IP for routing"
 msgstr "Разрешать реальный IP для маршрутизации"
 
-msgid "Resource selection by hostname inside nfqws is not supported here; sing-box selects resources before NFQUEUE."
-msgstr "Выбор ресурсов по hostname внутри nfqws здесь не поддерживается; ресурсы выбирает sing-box до NFQUEUE."
-
-msgid "Resource selection by hostname inside nfqws2 is not supported here; sing-box selects resources before NFQUEUE."
-msgstr "Выбор ресурсов по hostname внутри nfqws2 здесь не поддерживается; sing-box выбирает ресурсы до NFQUEUE."
-
-msgid "Resource selection by IP or CIDR inside nfqws is not supported here; sing-box selects resources before NFQUEUE."
-msgstr "Выбор ресурсов по IP или CIDR внутри nfqws здесь не поддерживается; ресурсы выбирает sing-box до NFQUEUE."
-
-msgid "Resource selection by IP or CIDR inside nfqws2 is not supported here; sing-box selects resources before NFQUEUE."
-msgstr "Выбор ресурсов по IP или CIDR внутри nfqws2 здесь не поддерживается; sing-box выбирает ресурсы до NFQUEUE."
-
 msgid "Restart Forkop X"
 msgstr "Перезапустить Forkop X"
 
+msgid "Restart temporarily unavailable"
+msgstr "Перезапуск временно недоступен"
+
 msgid "Restore normal mode"
 msgstr "Вернуть обычный режим"
+
+msgid "Restoring control connection"
+msgstr "Восстановление связи с сервером управления"
 
 msgid "Resume updates"
 msgstr "Продолжить обновление"
@@ -1423,6 +1552,9 @@ msgstr "Секция"
 
 msgid "Section name"
 msgstr "Имя секции"
+
+msgid "Section: %s"
+msgstr ""
 
 msgid "Sections"
 msgstr "Секции"
@@ -1487,6 +1619,9 @@ msgstr "Выбран"
 msgid "Selector and URLTest outbounds must contain a non-empty outbounds array"
 msgstr "Selector и URLTest outbound должны содержать непустой массив outbounds"
 
+msgid "Send these details to support so they can connect to your router."
+msgstr "Передайте эти данные поддержке для подключения к роутеру."
+
 msgid "Server filtering"
 msgstr "Фильтрация серверов"
 
@@ -1508,17 +1643,11 @@ msgstr "server_port должен быть числом от 1 до 65535"
 msgid "Service action failed"
 msgstr "Действие сервиса не выполнено"
 
-msgid "Service restart failed"
-msgstr "Не удалось перезапустить Forkop X"
-
-msgid "Another service action is already running"
-msgstr "Уже выполняется другое действие с сервисом. Дождитесь его завершения."
-
-msgid "Forkop X is busy updating data or applying settings. Wait for the operation to finish, then try restarting again."
-msgstr "Forkop X обновляет данные или применяет настройки. Дождитесь завершения операции и повторите перезапуск."
-
 msgid "Service list"
 msgstr "Список сервисов"
+
+msgid "Service restart failed"
+msgstr "Не удалось перезапустить Forkop X"
 
 msgid "Services info"
 msgstr "Информация о сервисах"
@@ -1565,29 +1694,11 @@ msgstr "Источник"
 msgid "Source Network Interface"
 msgstr "Сетевой интерфейс источника"
 
-msgid "Standalone Zapret is active together with Forkop Zapret rules"
-msgstr "Отдельная служба Zapret активна вместе с правилами Zapret в Forkop"
-
-msgid "Standalone Zapret service is active"
-msgstr "Отдельная служба Zapret активна"
-
-msgid "Standalone Zapret service is inactive"
-msgstr "Отдельная служба Zapret неактивна"
-
-msgid "Standalone Zapret2 autostart is enabled"
-msgstr "Автозапуск отдельной службы Zapret2 включён"
-
-msgid "Standalone Zapret2 is active together with Forkop Zapret2 rules"
-msgstr "Отдельная служба Zapret2 активна вместе с правилами Zapret2 в Forkop"
-
-msgid "Standalone Zapret2 service is active"
-msgstr "Отдельная служба Zapret2 активна"
-
-msgid "Standalone Zapret2 service is inactive"
-msgstr "Отдельная служба Zapret2 неактивна"
-
 msgid "Start Forkop X"
 msgstr "Запустить Forkop X"
+
+msgid "Startup phase %s failed (exit code %s)."
+msgstr "Ошибка на этапе запуска %s (код завершения %s)."
 
 msgid "Stop checking when URLTest group is not used. Use sing-box duration format like 1d, 12h or 30m."
 msgstr "Останавливать проверку если URLTest группа не используется. Используйте формат длительности sing-box, например 1d, 12h или 30m."
@@ -1610,6 +1721,9 @@ msgstr "Обновление подписки завершилось ошибк�
 msgid "Subscription update interval"
 msgstr "Интервал обновления подписки"
 
+msgid "Subscription update: recovery failed"
+msgstr ""
+
 msgid "Subscription URL"
 msgstr "URL подписки"
 
@@ -1622,17 +1736,26 @@ msgstr "Подписки обновлены"
 msgid "Support"
 msgstr "Поддержка"
 
+msgid "Support access is open"
+msgstr "Доступ для поддержки открыт"
+
+msgid "Support operation failed. Refresh the status and check the installation and auth key."
+msgstr "Операция не выполнена. Обновите статус и проверьте установку и ключ авторизации."
+
 msgid "Support report contains confidential information. Do not share it in public chats."
 msgstr "Отчёт содержит конфиденциальную информацию. Не публикуйте его в открытых чатах."
-
-msgid "System info"
-msgstr "Системная информация"
 
 msgid "System information"
 msgstr "Системная информация"
 
 msgid "Table exist"
 msgstr "Таблица существует"
+
+msgid "Tailscale is not installed"
+msgstr "Tailscale не установлен"
+
+msgid "Technical details"
+msgstr "Технические детали"
 
 msgid "Test latency"
 msgstr "Тестирование задержки"
@@ -1658,38 +1781,29 @@ msgstr "Тестировать серверы, имена которых сов�
 msgid "Testing URL"
 msgstr "URL проверки"
 
-msgid "The desync fwmark is managed by Forkop for loop prevention and must not be overridden here."
-msgstr "Desync fwmark управляется Forkop для защиты от циклов и не должен переопределяться здесь."
+msgid "The core did not confirm the updated configuration."
+msgstr ""
 
-msgid "The NFQUEUE number is assigned by Forkop for each rule and must not be overridden here."
-msgstr "Номер NFQUEUE назначается Forkop для каждого правила и не должен переопределяться здесь."
+msgid "The generated sing-box configuration is invalid. See technical details for the validation error."
+msgstr "Сформированная конфигурация sing-box некорректна. Причина указана в технических деталях."
+
+msgid "The previous working configuration could not be restored."
+msgstr ""
+
+msgid "The previous working configuration is still active."
+msgstr ""
 
 msgid "The rule applies to the domain and all its subdomains. Use full:, keyword:, or regex: prefixes for exact match, keyword match, or regular expression."
 msgstr "Правило применяется к домену и всем его поддоменам. Для полного совпадения, совпадению по слову или регулярному выражению используйте префиксы full:, keyword: или regex:."
 
-msgid "There are rules using Zapret"
-msgstr "Есть правила использующие Zapret"
+msgid "The updated configuration could not be applied."
+msgstr ""
 
-msgid "There are rules using Zapret2"
-msgstr "Есть правила, использующие Zapret2"
+msgid "The updated configuration was rejected."
+msgstr ""
 
-msgid "This field must start a working nfqws strategy; --dry-run exits immediately and is not allowed here."
-msgstr "Это поле должно запускать рабочую стратегию nfqws; --dry-run сразу завершает процесс и здесь запрещён."
-
-msgid "This field must start a working nfqws strategy; --version exits immediately and is not allowed here."
-msgstr "Это поле должно запускать рабочую стратегию nfqws; --version сразу завершает процесс и здесь запрещён."
-
-msgid "This field must start a working nfqws2 strategy; --dry-run exits immediately and is not allowed here."
-msgstr "Это поле должно запускать рабочую стратегию nfqws2; --dry-run сразу завершает работу и здесь запрещён."
-
-msgid "This field must start a working nfqws2 strategy; --version exits immediately and is not allowed here."
-msgstr "Это поле должно запускать рабочую стратегию nfqws2; --version сразу завершает работу и здесь запрещён."
-
-msgid "This flag does not accept a value."
-msgstr "Этот флаг не принимает значение."
-
-msgid "This option requires a value."
-msgstr "Этой опции требуется значение."
+msgid "The updated core configuration is active, but auxiliary services reported an error."
+msgstr ""
 
 msgid "This permanently deletes saved sections and subscriptions. Other components remain installed."
 msgstr "Сохранённые секции и подписки будут удалены безвозвратно. Остальные компоненты останутся установленными."
@@ -1742,23 +1856,11 @@ msgstr "Тип"
 msgid "UDP (Unprotected DNS)"
 msgstr "UDP (Незащищённый DNS)"
 
-msgid "Unable to validate the NFQWS strategy through the backend parser."
-msgstr "Не удалось проверить стратегию NFQWS через backend-парсер."
-
-msgid "Unable to validate the NFQWS2 strategy through the backend parser."
-msgstr "Не удалось проверить стратегию NFQWS2 через backend-парсер."
+msgid "Unable to read remote support status"
+msgstr "Не удалось получить статус удалённой помощи"
 
 msgid "Unavailability timeout"
 msgstr "Таймаут недоступности"
-
-msgid "Unexpected Forkop-managed nfqws runtime is running"
-msgstr "Обнаружен лишний NFQWS Forkop"
-
-msgid "Unexpected Forkop-managed nfqws2 runtime is running"
-msgstr "Обнаружен лишний NFQWS2 Forkop"
-
-msgid "Unexpected standalone token. Use explicit flags such as --name or --name=value."
-msgstr "Неожиданный отдельный токен. Используйте явные флаги вида --имя или --имя=значение."
 
 msgid "unique UCI identifier"
 msgstr "уникальный идентификатор UCI"
@@ -1772,26 +1874,20 @@ msgstr "Неизвестная страна"
 msgid "Unknown error"
 msgstr "Неизвестная ошибка"
 
-msgid "Unknown NFQWS flag."
-msgstr "Неизвестный флаг NFQWS."
-
-msgid "Unknown NFQWS2 flag."
-msgstr "Неизвестный флаг NFQWS2."
-
 msgid "Unspecified IP address is not allowed"
 msgstr "Неуказанный IP-адрес не разрешён"
 
 msgid "Update"
 msgstr "Обновить"
 
+msgid "Update all subscriptions"
+msgstr ""
+
 msgid "Update is available"
 msgstr "Доступно обновление"
 
 msgid "Update is available:"
 msgstr "Доступна новая версия:"
-
-msgid "Update subscriptions"
-msgstr "Обновить подписки"
 
 msgid "Update this subscription automatically"
 msgstr "Автоматически обновлять эту подписку"
@@ -1835,6 +1931,9 @@ msgstr "Настройки URLTest сохранены"
 msgid "Use another section as an intermediate hop to connect to servers in this section. Does not apply to network interfaces or JSON outbounds."
 msgstr "Использовать другую секцию как промежуточный узел подключения к серверам этой секции. Не применяется к сетевым интерфейсам и JSON outbound."
 
+msgid "Use real IP addresses for WhatsApp"
+msgstr "Использовать реальные IP для WhatsApp"
+
 msgid "Use sing-box duration format like 10s, 1m or 2m30s"
 msgstr "Используйте формат длительности sing-box, например 10s, 1m или 2m30s"
 
@@ -1843,6 +1942,9 @@ msgstr "Используйте формат длительности sing-box, �
 
 msgid "Use source values"
 msgstr "Использовать исходные значения"
+
+msgid "Used for support"
+msgstr "Для поддержки используется"
 
 msgid "Username cannot be empty"
 msgstr "Логин не может быть пустым"
@@ -1874,8 +1976,23 @@ msgstr "Ожидание TorrServer"
 msgid "What Forkop should do when this section matches"
 msgstr "Что Forkop должен делать при совпадении этой секции"
 
+msgid "WhatsApp DNS settings need attention"
+msgstr "Проверьте настройки DNS для WhatsApp"
+
+msgid "WhatsApp real IPs require an enabled routing section with Meta and no device or port filters. Restore Meta or turn off real IPs for WhatsApp before saving. Otherwise Forkop cannot start after a reboot."
+msgstr "Для работы опции «Отключить fake-ip для Whatsapp» нужна хотя бы одна включённая секция маршрутизации со списком Meta без фильтров устройств и портов. Верните Meta в такую секцию или выключите опцию перед сохранением."
+
 msgid "When switching to another level, test every server and select the fastest instead of the first working one."
 msgstr "При переходе на другой уровень тестировать все сервера и выбирать самый быстрый, а не первый работающий."
+
+msgid "Xrust (experimental)"
+msgstr "Xrust (экспериментальный)"
+
+msgid "Xrust configuration compatibility confirmed"
+msgstr "Совместимость конфигурации Xrust подтверждена"
+
+msgid "Xrust version"
+msgstr "Версия Xrust"
 
 msgid "YACD Secret Key"
 msgstr "Секретный ключ YACD"
@@ -1885,327 +2002,3 @@ msgstr "Да"
 
 msgid "You can select Output Network Interface, by default autodetect"
 msgstr "Вы можете выбрать выходной сетевой интерфейс, по умолчанию он определяется автоматически."
-
-msgid "Zapret hostlist templates are not supported here because Forkop does not expand them for per-rule NFQWS strategies."
-msgstr "Шаблоны hostlist zapret здесь не поддерживаются, потому что Forkop не разворачивает их для per-rule стратегий NFQWS."
-
-msgid "Zapret package is installed"
-msgstr "Пакет Zapret установлен"
-
-msgid "Zapret package is not installed"
-msgstr "Пакет Zapret не установлен"
-
-msgid "Zapret provider binary is available"
-msgstr "Бинарник провайдера Zapret доступен"
-
-msgid "Zapret provider binary is not available"
-msgstr "Бинарник провайдера Zapret недоступен"
-
-msgid "Zapret sing-box outbound is configured"
-msgstr "sing-box outbound для Zapret настроен"
-
-msgid "Zapret sing-box outbound is not configured"
-msgstr "sing-box outbound для Zapret не настроен"
-
-msgid "Zapret2 hostlist templates are not supported here because Forkop does not expand them for per-rule NFQWS2 strategies."
-msgstr "Шаблоны hostlist Zapret2 здесь не поддерживаются, потому что Forkop не разворачивает их для per-rule стратегий NFQWS2."
-
-msgid "Zapret2 package is installed"
-msgstr "Пакет Zapret2 установлен"
-
-msgid "Zapret2 package is not installed"
-msgstr "Пакет Zapret2 не установлен"
-
-msgid "Zapret2 provider binary is available"
-msgstr "Бинарник провайдера Zapret2 доступен"
-
-msgid "Zapret2 provider binary is not available"
-msgstr "Бинарник провайдера Zapret2 недоступен"
-
-msgid "Zapret2 sing-box outbound is configured"
-msgstr "sing-box outbound для Zapret2 настроен"
-
-msgid "Zapret2 sing-box outbound is not configured"
-msgstr "sing-box outbound для Zapret2 не настроен"
-
-msgid "Choose version"
-msgstr "Выбрать версию"
-
-msgid "Choose Forkop X version"
-msgstr "Выбор версии Forkop X"
-
-msgid "Choose Xrust version"
-msgstr "Выбор версии Xrust"
-
-msgid "Xrust version"
-msgstr "Версия Xrust"
-
-msgid "Older Xrust versions may not support all current settings. If the installation fails, the previous core is restored."
-msgstr "Старые версии Xrust могут не поддерживать все текущие настройки. Если установка не удастся, будет восстановлено прежнее ядро."
-
-msgid "Loading available versions…"
-msgstr "Загрузка доступных версий…"
-
-msgid "Could not load available versions"
-msgstr "Не удалось загрузить доступные версии"
-
-msgid "No compatible releases available"
-msgstr "Нет совместимых релизов"
-
-msgid "Install selected version"
-msgstr "Установить выбранную версию"
-
-msgid "Confirm version change"
-msgstr "Подтверждение смены версии"
-
-msgid "A configuration backup will be saved in /etc/forkop-backups. Older versions may not support all current settings."
-msgstr "Резервная копия конфигурации будет сохранена в /etc/forkop-backups. Старые версии могут не поддерживать все текущие настройки."
-
-msgid "Cannot restart Forkop X"
-msgstr "Не удаётся перезапустить Forkop X"
-
-msgid "Multiple sing-box processes were found or their ownership is unclear. Restart is unavailable; traffic routing was not changed. To stop all sing-box processes, use Stop Forkop X, then start Forkop X again."
-msgstr "Обнаружено несколько процессов sing-box или их принадлежность неясна. Перезапуск недоступен. Маршрутизация не изменена. Чтобы завершить все процессы sing-box, нажмите «Остановить Forkop X», затем запустите Forkop X снова."
-
-msgid "Forkop X is applying changes. Please wait."
-msgstr "Forkop X применяет изменения. Пожалуйста, подождите."
-
-msgid "Restart temporarily unavailable"
-msgstr "Перезапуск временно недоступен"
-
-msgid "Could not confirm the sing-box process state. Check the logs before trying again."
-msgstr "Не удалось подтвердить состояние процесса sing-box. Посмотрите журнал перед повторной попыткой."
-
-msgid "Exact match unavailable"
-msgstr "Точное совпадение недоступно"
-
-msgid "Remote support"
-msgstr "Удалённая помощь"
-
-msgid "One-time Tailscale auth key"
-msgstr "Одноразовый ключ Tailscale"
-
-msgid "I allow access to local router services for 30 minutes."
-msgstr "Разрешаю доступ к локальным сервисам роутера на 30 минут."
-
-msgid "A separate temporary Tailscale connection. Temporarily installs the support SSH public key. No LAN routes are advertised."
-msgstr "Отдельное временное подключение Tailscale. На время сеанса добавляется публичный SSH-ключ поддержки. Маршруты в домашнюю сеть не публикуются."
-
-msgid "Support operation failed. Refresh the status and check the installation and auth key."
-msgstr "Операция не выполнена. Обновите статус и проверьте установку и ключ авторизации."
-
-msgid "An existing Tailscale service is running. Its settings are preserved."
-msgstr "Основной Tailscale уже работает. Его настройки сохраняются."
-
-msgid "Tailscale is not installed"
-msgstr "Tailscale не установлен"
-
-msgid "Remaining time"
-msgstr "Осталось"
-
-msgid "minutes"
-msgstr "мин."
-
-msgid "Allow for 30 minutes"
-msgstr "Разрешить на 30 минут"
-
-msgid "Disconnect now"
-msgstr "Отключить сейчас"
-
-msgid "Install Tailscale"
-msgstr "Установить Tailscale"
-
-msgid "Unable to read remote support status"
-msgstr "Не удалось получить статус удалённой помощи"
-
-msgid "Disconnected"
-msgstr "Отключено"
-
-msgid "Connecting"
-msgstr "Подключение"
-
-msgid "Installing"
-msgstr "Установка"
-
-msgid "Connected"
-msgstr "Подключено"
-
-msgid "Failed"
-msgstr "Ошибка"
-
-msgid "Missing temporary auth key"
-msgstr "Отсутствует временный ключ авторизации"
-
-msgid "Tailscale failed to start"
-msgstr "Не удалось запустить Tailscale"
-
-msgid "Tailscale startup timed out"
-msgstr "Истекло время запуска Tailscale"
-
-msgid "Tailscale authorization failed or timed out"
-msgstr "Ошибка авторизации Tailscale или истекло время ожидания"
-
-msgid "Tailscale connection process exited"
-msgstr "Процесс подключения Tailscale завершился"
-
-msgid "Tailscale installation failed"
-msgstr "Не удалось установить Tailscale"
-
-msgid "An existing Tailscale installation needs manual repair"
-msgstr "Существующая установка Tailscale требует ручного восстановления"
-
-msgid "Removing"
-msgstr "Удаление"
-
-msgid "Remove Tailscale"
-msgstr "Удалить Tailscale"
-
-msgid "Remove the Tailscale package from this router? It will no longer be available for other applications."
-msgstr "Удалить пакет Tailscale с этого роутера? Он станет недоступен другим приложениям."
-
-msgid "Removal is unavailable while the existing Tailscale service is running or enabled, or when the package is not managed by OpenWrt."
-msgstr "Удаление недоступно, пока основной Tailscale работает или включён его автозапуск, а также если пакет не установлен средствами OpenWrt."
-
-msgid "Stop and disable the existing Tailscale service before removing it"
-msgstr "Перед удалением остановите основной Tailscale и отключите его автозапуск"
-
-msgid "Tailscale removal failed"
-msgstr "Не удалось удалить Tailscale"
-
-msgid "Temporary SSH authorization failed"
-msgstr "Не удалось временно разрешить SSH-доступ"
-
-msgid "Forkop: remote support"
-msgstr "Forkop: удалённая помощь"
-
-msgid "Send these details to support so they can connect to your router."
-msgstr "Передайте эти данные поддержке для подключения к роутеру."
-
-msgid "Copy IP"
-msgstr "Скопировать IP"
-
-msgid "Support access is open"
-msgstr "Доступ для поддержки открыт"
-
-msgid "Connection details"
-msgstr "Данные подключения"
-
-msgid "Not enough free storage to install Tailscale"
-msgstr "Недостаточно свободного места для установки Tailscale"
-
-msgid "Unable to check free storage"
-msgstr "Не удалось проверить свободное место"
-
-msgid "Free storage"
-msgstr "Свободное место"
-
-msgid "Estimated storage required, including reserve"
-msgstr "Оценка необходимого места с запасом"
-
-msgid "Package manager details"
-msgstr "Подробности пакетного менеджера"
-
-msgid "Install Tailscale Lite"
-msgstr "Установить Tailscale Lite"
-
-msgid "Remove Tailscale Lite"
-msgstr "Удалить Tailscale Lite"
-
-msgid "Remove the separate Tailscale Lite support installation?"
-msgstr "Удалить отдельную сборку Tailscale Lite для поддержки?"
-
-msgid "Tailscale Lite is unavailable for this architecture"
-msgstr "Tailscale Lite недоступен для этой архитектуры"
-
-msgid "Unable to check free memory"
-msgstr "Не удалось проверить свободную память"
-
-msgid "Not enough free memory to download Tailscale Lite"
-msgstr "Недостаточно свободной памяти для загрузки Tailscale Lite"
-
-msgid "The Tailscale Lite directory already exists"
-msgstr "Каталог Tailscale Lite уже существует"
-
-msgid "Tailscale Lite download failed"
-msgstr "Не удалось загрузить Tailscale Lite"
-
-msgid "Tailscale Lite verification failed"
-msgstr "Проверка Tailscale Lite не пройдена"
-
-msgid "Cannot create Tailscale Lite directory"
-msgstr "Не удалось создать каталог Tailscale Lite"
-
-msgid "Tailscale Lite installation failed"
-msgstr "Не удалось установить Tailscale Lite"
-
-msgid "Tailscale Lite removal failed"
-msgstr "Не удалось удалить Tailscale Lite"
-
-msgid "Error details"
-msgstr "Подробности ошибки"
-
-msgid "Used for support"
-msgstr "Для поддержки используется"
-
-msgid "Control connection lost"
-msgstr "Потеряна связь с сервером управления"
-
-msgid "Restoring control connection"
-msgstr "Восстановление связи с сервером управления"
-
-msgid "Tailscale control connection is unhealthy"
-msgstr "Нарушена связь Tailscale с сервером управления"
-
-msgid "Not enough storage for sing-box installation. Required reserve: %s KiB; available: %s KiB."
-msgstr "Недостаточно места для установки sing-box. Требуемый запас: %s КиБ; доступно: %s КиБ."
-
-msgid "Not enough storage for Forkop update and rollback. Required reserve: %s KiB; available: %s KiB."
-msgstr "Недостаточно места для обновления Forkop X и отката. Требуемый запас: %s КиБ; доступно: %s КиБ."
-
-msgid "Not enough temporary memory. Required: %s KiB; available: %s KiB."
-msgstr "Недостаточно временной памяти. Требуется: %s КиБ; доступно: %s КиБ."
-
-msgid "Automatic restart is paused. Check the configuration and the startup error in the logs."
-msgstr "Автоматический перезапуск приостановлен. Проверьте настройки и ошибку запуска в журнале."
-
-msgid "The generated sing-box configuration is invalid. See technical details for the validation error."
-msgstr "Сформированная конфигурация sing-box некорректна. Причина указана в технических деталях."
-
-msgid "Startup phase %s failed (exit code %s)."
-msgstr "Ошибка на этапе запуска %s (код завершения %s)."
-
-msgid "Automatic recovery failed. Check the startup error in the logs."
-msgstr "Не удалось автоматически восстановить работу. Проверьте ошибку запуска в журнале."
-
-msgid "Technical details"
-msgstr "Технические детали"
-
-msgid "Xrust (experimental)"
-msgstr "Xrust (экспериментальный)"
-
-msgid "Xrust configuration compatibility confirmed"
-msgstr "Совместимость конфигурации Xrust подтверждена"
-
-msgid "WhatsApp DNS settings need attention"
-msgstr "Проверьте настройки DNS для WhatsApp"
-
-msgid "WhatsApp real IPs require an enabled routing section with Meta and no device or port filters. Restore Meta or turn off real IPs for WhatsApp before saving. Otherwise Forkop cannot start after a reboot."
-msgstr "Для работы опции «Отключить fake-ip для Whatsapp» нужна хотя бы одна включённая секция маршрутизации со списком Meta без фильтров устройств и портов. Верните Meta в такую секцию или выключите опцию перед сохранением."
-
-msgid "Meta subnet lists for WhatsApp are missing. Download the Meta lists and apply again, or turn off real IPs for WhatsApp."
-msgstr "Для работы опции «Отключить fake-ip для Whatsapp» нужны загруженные подсети Meta. Загрузите списки Meta и примените настройки повторно либо выключите опцию."
-
-msgid "Use real IP addresses for WhatsApp"
-msgstr "Использовать реальные IP для WhatsApp"
-
-msgid "Requires downloaded Meta subnet lists in an enabled routing section without source or port filters. Keeps existing routes and explicit DNS rules. Devices must use the router DNS. Custom DNS rules may override this setting."
-msgstr "Нужны загруженные подсети Meta во включённой секции без фильтров устройств и портов. Сохраняет существующие маршруты и явные DNS-правила. Устройства должны использовать DNS роутера. Собственные DNS-правила могут переопределять эту настройку."
-
-msgid "Only changes Forkop in this browser. LuCI keeps its language."
-msgstr "Меняет только язык Forkop в этом браузере. Язык LuCI сохраняется."
-
-msgid "Change Forkop X interface language"
-msgstr "Смена языка интерфейса Forkop X"
-
-msgid "Interface language"
-msgstr "Язык интерфейса"

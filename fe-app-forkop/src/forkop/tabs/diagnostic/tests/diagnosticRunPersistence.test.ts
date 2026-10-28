@@ -41,7 +41,6 @@ describe('diagnostic run persistence', () => {
     savePersistedDiagnosticRun(
       {
         nextRunnerIndex: 2,
-        providerOptions: { includeZapret: true },
         diagnosticsChecks: [
           {
             order: 1,
@@ -58,7 +57,6 @@ describe('diagnostic run persistence', () => {
 
     expect(readPersistedDiagnosticRun(storage)).toMatchObject({
       nextRunnerIndex: 2,
-      providerOptions: { includeZapret: true },
       diagnosticsChecks: [
         {
           code: 'DNS',
@@ -76,7 +74,6 @@ describe('diagnostic run persistence', () => {
     savePersistedDiagnosticRun(
       {
         nextRunnerIndex: 0,
-        providerOptions: {},
         diagnosticsChecks: [],
       },
       storage,
@@ -91,7 +88,7 @@ describe('diagnostic run persistence', () => {
 
   it('removes invalid snapshots', () => {
     const storage = new MemoryStorage();
-    storage.setItem('forkop:diagnostic-run:v1', '{broken');
+    storage.setItem('forkop:diagnostic-run:v2', '{broken');
 
     expect(readPersistedDiagnosticRun(storage)).toBeNull();
     expect(storage.length).toBe(0);
@@ -103,7 +100,6 @@ describe('diagnostic run persistence', () => {
     savePersistedDiagnosticRun(
       {
         nextRunnerIndex: 0,
-        providerOptions: {},
         diagnosticsChecks: [],
       },
       storage,
@@ -118,10 +114,9 @@ describe('diagnostic run persistence', () => {
     const storage = new MemoryStorage();
 
     storage.setItem(
-      'forkop:diagnostic-run:v1',
+      'forkop:diagnostic-run:v2',
       JSON.stringify({
         nextRunnerIndex: 0,
-        providerOptions: {},
         diagnosticsChecks: [
           {
             order: 1,
@@ -144,10 +139,9 @@ describe('diagnostic run persistence', () => {
     const storage = new MemoryStorage();
 
     storage.setItem(
-      'forkop:diagnostic-run:v1',
+      'forkop:diagnostic-run:v2',
       JSON.stringify({
         nextRunnerIndex: 0,
-        providerOptions: {},
         diagnosticsChecks: [
           {
             order: Number.NaN,

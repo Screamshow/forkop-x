@@ -4,11 +4,6 @@ import {
 } from './checks/contstants';
 import { IDiagnosticsChecksStoreItem, StoreType } from '../../services';
 
-export interface DiagnosticsProviderOptions {
-  includeZapret?: boolean;
-  includeZapret2?: boolean;
-}
-
 function createDiagnosticCheck(
   code: DIAGNOSTICS_CHECKS,
   description: string,
@@ -27,30 +22,24 @@ function createDiagnosticCheck(
 
 export function getDiagnosticsChecks(
   description: string,
-  options: DiagnosticsProviderOptions = {},
 ): Array<IDiagnosticsChecksStoreItem> {
-  const checks = [DIAGNOSTICS_CHECKS.DNS, DIAGNOSTICS_CHECKS.SINGBOX];
-
-  checks.push(DIAGNOSTICS_CHECKS.NFT);
-
-  if (options.includeZapret) {
-    checks.push(DIAGNOSTICS_CHECKS.ZAPRET);
-  }
-
-  if (options.includeZapret2) {
-    checks.push(DIAGNOSTICS_CHECKS.ZAPRET2);
-  }
-
-  checks.push(DIAGNOSTICS_CHECKS.OUTBOUNDS, DIAGNOSTICS_CHECKS.FAKEIP);
+  const checks = [
+    DIAGNOSTICS_CHECKS.DNS,
+    DIAGNOSTICS_CHECKS.SINGBOX,
+    DIAGNOSTICS_CHECKS.NFT,
+    DIAGNOSTICS_CHECKS.OUTBOUNDS,
+    DIAGNOSTICS_CHECKS.FAKEIP,
+  ];
 
   return checks.map((code) => createDiagnosticCheck(code, description));
 }
 
-export function getLoadingDiagnosticsChecks(
-  options: DiagnosticsProviderOptions = {},
-): Pick<StoreType, 'diagnosticsChecks'> {
+export function getLoadingDiagnosticsChecks(): Pick<
+  StoreType,
+  'diagnosticsChecks'
+> {
   return {
-    diagnosticsChecks: getDiagnosticsChecks(_('Pending'), options),
+    diagnosticsChecks: getDiagnosticsChecks(_('Pending')),
   };
 }
 
@@ -75,10 +64,6 @@ export const initialDiagnosticStore: Pick<
     sing_box_tiny: 0,
     sing_box_compressed: 0,
     sing_box_tailscale: 1,
-    zapret_version: 'loading',
-    zapret_installed: 0,
-    zapret2_version: 'loading',
-    zapret2_installed: 0,
     zapret_manager_installed: 0,
     packet_steering_mode: '',
     direct_proxy_enabled: 0,
@@ -131,12 +116,6 @@ export const initialDiagnosticStore: Pick<
     singBoxInstallX: { loading: false },
     singBoxInstallRustX: { loading: false },
     singBoxInstallStable: { loading: false },
-    zapretCheck: { loading: false },
-    zapretInstall: { loading: false },
-    zapretRemove: { loading: false },
-    zapret2Check: { loading: false },
-    zapret2Install: { loading: false },
-    zapret2Remove: { loading: false },
     zapretManagerInstall: { loading: false },
     zapretManagerRemove: { loading: false },
     packetSteeringEnable: { loading: false },
@@ -149,8 +128,6 @@ export const initialDiagnosticStore: Pick<
   updatesChecks: {
     forkop: { status: null, latest_version: '', release_url: '' },
     sing_box: { status: null, latest_version: '', release_url: '' },
-    zapret: { status: null, latest_version: '', release_url: '' },
-    zapret2: { status: null, latest_version: '', release_url: '' },
     zapret_manager: { status: null, latest_version: '', release_url: '' },
     packet_steering: { status: null, latest_version: '', release_url: '' },
     direct_proxy: { status: null, latest_version: '', release_url: '' },

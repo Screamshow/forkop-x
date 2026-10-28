@@ -25,12 +25,6 @@ function getEmptyUpdatesActions(): StoreType['updatesActions'] {
     singBoxInstallX: { loading: false },
     singBoxInstallRustX: { loading: false },
     singBoxInstallStable: { loading: false },
-    zapretCheck: { loading: false },
-    zapretInstall: { loading: false },
-    zapretRemove: { loading: false },
-    zapret2Check: { loading: false },
-    zapret2Install: { loading: false },
-    zapret2Remove: { loading: false },
     zapretManagerInstall: { loading: false },
     zapretManagerRemove: { loading: false },
     packetSteeringEnable: { loading: false },
@@ -96,8 +90,6 @@ function applyServiceState(uiState: Forkop.UiState) {
   const nextSystemInfo = {
     ...currentSystemInfo,
     providerInfoLoaded: true,
-    zapret_installed: uiState.capabilities.zapret_installed,
-    zapret2_installed: uiState.capabilities.zapret2_installed,
   };
 
   nextSystemInfo.sing_box_extended = uiState.capabilities.sing_box_extended;

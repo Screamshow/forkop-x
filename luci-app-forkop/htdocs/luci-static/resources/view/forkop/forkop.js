@@ -27,7 +27,6 @@
 "require view.forkop.updates as updates";
 const _ = main.translateForkop;
 
-
 // Keep LuCI's apply/confirm/rollback protocol, but skip its network settling
 // delay when the complete set of staged changes belongs to Forkop alone.
 function configureForkopApplyHoldoff() {
@@ -193,23 +192,10 @@ const EntryPoint = {
       singBoxExtended: false,
       singBoxTiny: false,
       singBoxTailscale: true,
-      zapretInstalled: false,
-      zapret2Installed: false,
     };
     let uiCapabilitiesPromise = null;
 
     const applyUiCapabilities = function () {
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(
-          new CustomEvent(main.FORKOP_ACTION_PROVIDERS_AVAILABILITY_EVENT, {
-            detail: {
-              zapretInstalled: uiCapabilities.zapretInstalled,
-              zapret2Installed: uiCapabilities.zapret2Installed,
-            },
-          }),
-        );
-      }
-
       if (main.store && typeof main.store.set === "function") {
         const currentSystemInfo = main.store.get().diagnosticsSystemInfo;
         main.store.set({
@@ -219,14 +205,6 @@ const EntryPoint = {
             sing_box_extended: uiCapabilities.singBoxExtended ? 1 : 0,
             sing_box_tiny: uiCapabilities.singBoxTiny ? 1 : 0,
             sing_box_tailscale: uiCapabilities.singBoxTailscale ? 1 : 0,
-            zapret_installed: uiCapabilities.zapretInstalled ? 1 : 0,
-            zapret2_installed: uiCapabilities.zapret2Installed ? 1 : 0,
-            zapret_version: uiCapabilities.zapretInstalled
-              ? currentSystemInfo.zapret_version
-              : "not installed",
-            zapret2_version: uiCapabilities.zapret2Installed
-              ? currentSystemInfo.zapret2_version
-              : "not installed",
           },
         });
       }
@@ -242,12 +220,6 @@ const EntryPoint = {
         typeof data?.sing_box_tailscale === "undefined"
           ? true
           : Boolean(Number(data.sing_box_tailscale) === 1);
-      uiCapabilities.zapretInstalled = Boolean(
-        Number(data?.zapret_installed) === 1,
-      );
-      uiCapabilities.zapret2Installed = Boolean(
-        Number(data?.zapret2_installed) === 1,
-      );
       applyUiCapabilities();
 
       return uiCapabilities;
@@ -280,34 +252,6 @@ const EntryPoint = {
       return result;
     };
 
-    const loadFallbackUiCapabilities = function () {
-      return Promise.allSettled([
-        main.ForkopShellMethods.checkZapretRuntime(),
-        main.ForkopShellMethods.checkZapret2Runtime(),
-      ]).then(([zapretRuntimeResult, zapret2RuntimeResult]) => {
-        const zapretRuntime =
-          zapretRuntimeResult.status === "fulfilled"
-            ? zapretRuntimeResult.value
-            : null;
-        const zapret2Runtime =
-          zapret2RuntimeResult.status === "fulfilled"
-            ? zapret2RuntimeResult.value
-            : null;
-        return updateUiCapabilities({
-          zapret_installed:
-            zapretRuntime?.success &&
-            Number(zapretRuntime.data?.zapret_installed) === 1
-              ? 1
-              : 0,
-          zapret2_installed:
-            zapret2Runtime?.success &&
-            Number(zapret2Runtime.data?.zapret2_installed) === 1
-              ? 1
-              : 0,
-        });
-      });
-    };
-
     const loadUiCapabilities = function () {
       if (uiCapabilities.loaded) {
         return Promise.resolve(uiCapabilities);
@@ -337,7 +281,7 @@ const EntryPoint = {
             })
             .catch((fallbackError) => {
               console.warn("Failed to load Forkop UI state", fallbackError);
-              return loadFallbackUiCapabilities();
+              return uiCapabilities;
             });
         })
         .finally(() => {
@@ -362,9 +306,7 @@ const EntryPoint = {
       _("Section"),
       _("Add a section"),
     );
-    section.configureSectionSection(rulesSection, {
-      loadActionProvidersAvailability: loadUiCapabilities,
-    });
+    section.configureSectionSection(rulesSection);
     section.createSectionContent(rulesSection);
 
     const settingsSection = forkopMap.section(
@@ -377,7 +319,7 @@ const EntryPoint = {
     settingsSection.cfgsections = function () {
       return ["settings"];
     };
-    settings.createSettingsContent(settingsSection, uiCapabilities);
+    settings.createSettingsContent(settingsSection);
 
     const diagnosticSection = forkopMap.section(
       form.TypedSection,

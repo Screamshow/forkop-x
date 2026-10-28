@@ -30,8 +30,7 @@ function componentDisplayName(component: string) {
     forkop: 'Forkop X',
     sing_box: 'sing-box',
     rust_x: 'Xrust',
-    zapret: 'Zapret',
-    zapret2: 'Zapret2',
+    zapret_manager: 'Zapret-Manager',
   };
 
   return names[component] || component;

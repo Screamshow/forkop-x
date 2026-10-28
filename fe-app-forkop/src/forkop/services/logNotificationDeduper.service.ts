@@ -87,7 +87,7 @@ export function getForkopLogNotification(
   }
 
   const update = line.match(
-    /\[component-update\]\s+(forkop|sing_box|rust_x|zapret|zapret2|zapret_manager)\s+(\S+)/i,
+    /\[component-update\]\s+(forkop|sing_box|rust_x|zapret_manager)\s+(\S+)/i,
   );
 
   if (!update) {

@@ -1,15 +1,13 @@
 import type { StoreType } from '../../services';
-import type { DiagnosticsProviderOptions } from './diagnostic.store';
 import { DIAGNOSTICS_CHECKS } from './checks/contstants';
 
-const DIAGNOSTIC_RUN_STORAGE_KEY = 'forkop:diagnostic-run:v1';
+const DIAGNOSTIC_RUN_STORAGE_KEY = 'forkop:diagnostic-run:v2';
 const DIAGNOSTIC_RUN_TTL_MS = 30 * 60 * 1000;
 const CHECK_STATES = ['loading', 'warning', 'success', 'error', 'skipped'];
 const CHECK_ITEM_STATES = ['error', 'warning', 'success'];
 
 export interface PersistedDiagnosticRun {
   nextRunnerIndex: number;
-  providerOptions: DiagnosticsProviderOptions;
   diagnosticsChecks: StoreType['diagnosticsChecks'];
   updatedAt: number;
 }
@@ -28,23 +26,6 @@ function getSessionStorage(): Storage | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
-}
-
-function isOptionalBoolean(value: unknown) {
-  return value === undefined || typeof value === 'boolean';
-}
-
-function isDiagnosticsProviderOptions(
-  value: unknown,
-): value is DiagnosticsProviderOptions {
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  return (
-    isOptionalBoolean(value.includeZapret) &&
-    isOptionalBoolean(value.includeZapret2)
-  );
 }
 
 function isDiagnosticCheckItem(value: unknown) {
@@ -82,7 +63,6 @@ function isPersistedDiagnosticRun(
     typeof value.nextRunnerIndex === 'number' &&
     Number.isInteger(value.nextRunnerIndex) &&
     value.nextRunnerIndex >= 0 &&
-    isDiagnosticsProviderOptions(value.providerOptions) &&
     Array.isArray(value.diagnosticsChecks) &&
     value.diagnosticsChecks.every(isDiagnosticCheck) &&
     Number.isFinite(value.updatedAt)

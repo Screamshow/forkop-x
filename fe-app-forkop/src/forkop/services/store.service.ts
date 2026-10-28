@@ -205,10 +205,6 @@ export interface StoreType {
     sing_box_tiny: number;
     sing_box_compressed: number;
     sing_box_tailscale: number;
-    zapret_version: string;
-    zapret_installed: number;
-    zapret2_version: string;
-    zapret2_installed: number;
     zapret_manager_installed: number;
     packet_steering_mode: string;
     direct_proxy_enabled: number;
@@ -230,12 +226,6 @@ export interface StoreType {
     singBoxInstallX: { loading: boolean };
     singBoxInstallRustX: { loading: boolean };
     singBoxInstallStable: { loading: boolean };
-    zapretCheck: { loading: boolean };
-    zapretInstall: { loading: boolean };
-    zapretRemove: { loading: boolean };
-    zapret2Check: { loading: boolean };
-    zapret2Install: { loading: boolean };
-    zapret2Remove: { loading: boolean };
     zapretManagerInstall: { loading: boolean };
     zapretManagerRemove: { loading: boolean };
     packetSteeringEnable: { loading: boolean };

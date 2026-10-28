@@ -6,7 +6,6 @@
 "require view.forkop.main as main";
 const _ = main.translateForkop;
 
-
 const UCI_PACKAGE = main.FORKOP_UCI_PACKAGE;
 
 function isSingBoxDuration(value) {
@@ -37,23 +36,11 @@ function validateRegex(_sectionId, value) {
   }
 }
 
-function isDownloadSectionAction(action, capabilities) {
-  switch (action) {
-    case "connection":
-    case "proxy":
-    case "outbound":
-    case "vpn":
-      return true;
-    case "zapret":
-      return !capabilities?.loaded || Boolean(capabilities.zapretInstalled);
-    case "zapret2":
-      return !capabilities?.loaded || Boolean(capabilities.zapret2Installed);
-    default:
-      return false;
-  }
+function isDownloadSectionAction(action) {
+  return ["connection", "proxy", "outbound", "vpn"].includes(action);
 }
 
-function refreshDownloadSectionChoices(option, capabilities) {
+function refreshDownloadSectionChoices(option) {
   const sections = option.map?.data?.state?.values?.[UCI_PACKAGE] ?? {};
 
   option.keylist = [];
@@ -64,21 +51,21 @@ function refreshDownloadSectionChoices(option, capabilities) {
     if (
       sec[".type"] === "section" &&
       sec.enabled !== "0" &&
-      isDownloadSectionAction(sec.action, capabilities)
+      isDownloadSectionAction(sec.action)
     ) {
       option.value(secName, sec.label || secName);
     }
   }
 }
 
-function configureDownloadSectionOption(option, sectionOption, capabilities) {
+function configureDownloadSectionOption(option, sectionOption) {
   option.default = "";
   option.rmempty = false;
   option.cfgvalue = function (section_id) {
     return uci.get(UCI_PACKAGE, section_id, sectionOption) || "";
   };
   option.load = function (section_id) {
-    refreshDownloadSectionChoices(this, capabilities);
+    refreshDownloadSectionChoices(this);
     return this.cfgvalue(section_id);
   };
   const renderDownloadWidget = option.renderWidget;
@@ -90,7 +77,7 @@ function configureDownloadSectionOption(option, sectionOption, capabilities) {
     const refreshChoices = () => {
       const widget = this.getUIElement(section_id);
       if (!widget || typeof widget.clearChoices !== "function") return;
-      refreshDownloadSectionChoices(this, capabilities);
+      refreshDownloadSectionChoices(this);
       const nextSignature = JSON.stringify([this.keylist, this.vallist]);
       if (nextSignature === choiceSignature) return;
       choiceSignature = nextSignature;
@@ -197,7 +184,7 @@ function configureDnsDuration(
   configureDnsFailoverVisibility(option, dnsOption, bootstrapOption);
 }
 
-function createSettingsContent(section, capabilities) {
+function createSettingsContent(section) {
   const renderSettings = section.render;
   section.render = function () {
     return Promise.resolve(renderSettings.apply(this, arguments)).then(
@@ -347,7 +334,7 @@ function createSettingsContent(section, capabilities) {
     _("DNS requests through section"),
   );
   o.depends("dns_detour_enabled", "1");
-  configureDownloadSectionOption(o, "dns_detour_section", capabilities);
+  configureDownloadSectionOption(o, "dns_detour_section");
 
   o = section.option(
     widgets.DeviceSelect,
@@ -542,7 +529,9 @@ function createSettingsContent(section, capabilities) {
     form.Flag,
     "disable_quic_vpn",
     _("Disable QUIC for VPN traffic"),
-    _("Block QUIC only when a routing rule sends traffic through a proxy or VPN. Earlier DIRECT rules and source exclusions are preserved. This setting remains selected when global blocking is toggled."),
+    _(
+      "Block QUIC only when a routing rule sends traffic through a proxy or VPN. Earlier DIRECT rules and source exclusions are preserved. This setting remains selected when global blocking is toggled.",
+    ),
   );
   o.default = "0";
   o.rmempty = false;
@@ -551,7 +540,9 @@ function createSettingsContent(section, capabilities) {
     form.Flag,
     "whatsapp_real_dns",
     _("Use real IP addresses for WhatsApp"),
-    _("Requires downloaded Meta subnet lists in an enabled routing section without source or port filters. Keeps existing routes and explicit DNS rules. Devices must use the router DNS. Custom DNS rules may override this setting."),
+    _(
+      "Requires downloaded Meta subnet lists in an enabled routing section without source or port filters. Keeps existing routes and explicit DNS rules. Devices must use the router DNS. Custom DNS rules may override this setting.",
+    ),
   );
   o.default = "0";
   o.rmempty = false;
@@ -686,11 +677,7 @@ function createSettingsContent(section, capabilities) {
     _("Download lists through"),
   );
   o.depends("download_lists_via_proxy", "1");
-  configureDownloadSectionOption(
-    o,
-    "download_lists_via_proxy_section",
-    capabilities,
-  );
+  configureDownloadSectionOption(o, "download_lists_via_proxy_section");
 
   o = section.option(
     form.Flag,
@@ -706,11 +693,7 @@ function createSettingsContent(section, capabilities) {
     _("Download components through"),
   );
   o.depends("download_components_via_proxy", "1");
-  configureDownloadSectionOption(
-    o,
-    "download_components_via_proxy_section",
-    capabilities,
-  );
+  configureDownloadSectionOption(o, "download_components_via_proxy_section");
 
   o = section.option(
     form.Flag,

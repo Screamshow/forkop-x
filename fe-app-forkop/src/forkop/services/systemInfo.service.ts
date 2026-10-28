@@ -15,10 +15,6 @@ const UNKNOWN_SYSTEM_INFO: StoreType['diagnosticsSystemInfo'] = {
   sing_box_tiny: 0,
   sing_box_compressed: 0,
   sing_box_tailscale: 1,
-  zapret_version: _('unknown'),
-  zapret_installed: 0,
-  zapret2_version: _('unknown'),
-  zapret2_installed: 0,
   zapret_manager_installed: 0,
   packet_steering_mode: '',
   direct_proxy_enabled: 0,
@@ -104,8 +100,6 @@ export async function ensureSystemInfo({
         loading: false,
         loaded: false,
         providerInfoLoaded: latestSystemInfo.providerInfoLoaded,
-        zapret_installed: latestSystemInfo.zapret_installed,
-        zapret2_installed: latestSystemInfo.zapret2_installed,
       };
 
       store.set({

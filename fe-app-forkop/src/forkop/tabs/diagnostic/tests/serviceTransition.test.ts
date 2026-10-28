@@ -127,9 +127,15 @@ describe('diagnostic service transitions', () => {
       stopLoading: false,
     };
     expect(shouldShowRestartAction(unhealthy)).toBe(true);
-    expect(shouldShowRestartAction({ ...unhealthy, restartBlocked: true })).toBe(false);
-    expect(shouldShowRestartAction({ ...unhealthy, startLoading: true })).toBe(false);
-    expect(shouldShowRestartAction({ ...unhealthy, stopLoading: true })).toBe(false);
+    expect(
+      shouldShowRestartAction({ ...unhealthy, restartBlocked: true }),
+    ).toBe(false);
+    expect(shouldShowRestartAction({ ...unhealthy, startLoading: true })).toBe(
+      false,
+    );
+    expect(shouldShowRestartAction({ ...unhealthy, stopLoading: true })).toBe(
+      false,
+    );
   });
 
   it('does not show restart from transient running state while start or stop is active', () => {
@@ -183,7 +189,7 @@ describe('diagnostic service transitions', () => {
     expect(
       hasComponentActionLoading({
         forkopCheck: { loading: false },
-        zapretInstall: { loading: true },
+        singBoxInstall: { loading: true },
       }),
     ).toBe(true);
   });

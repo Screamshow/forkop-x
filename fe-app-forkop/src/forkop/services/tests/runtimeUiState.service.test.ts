@@ -39,8 +39,6 @@ function createUiState(
       sing_box_tiny: 0,
       sing_box_compressed: 0,
       sing_box_tailscale: 1,
-      zapret_installed: 1,
-      zapret2_installed: 1,
     },
     actions: {
       service: [],

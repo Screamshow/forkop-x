@@ -4,8 +4,6 @@ export enum DIAGNOSTICS_CHECKS {
   DNS = 'DNS',
   SINGBOX = 'SINGBOX',
   NFT = 'NFT',
-  ZAPRET = 'ZAPRET',
-  ZAPRET2 = 'ZAPRET2',
   FAKEIP = 'FAKEIP',
   OUTBOUNDS = 'OUTBOUNDS',
 }
@@ -28,16 +26,6 @@ export const DIAGNOSTICS_CHECKS_MAP: Record<
     order: 4,
     title: getCheckTitle('Nftables'),
     code: DIAGNOSTICS_CHECKS.NFT,
-  },
-  [DIAGNOSTICS_CHECKS.ZAPRET]: {
-    order: 5,
-    title: getCheckTitle('Zapret'),
-    code: DIAGNOSTICS_CHECKS.ZAPRET,
-  },
-  [DIAGNOSTICS_CHECKS.ZAPRET2]: {
-    order: 6,
-    title: getCheckTitle('Zapret2'),
-    code: DIAGNOSTICS_CHECKS.ZAPRET2,
   },
   [DIAGNOSTICS_CHECKS.OUTBOUNDS]: {
     order: 8,

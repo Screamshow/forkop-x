@@ -232,14 +232,6 @@ export const ForkopShellMethods = {
     callBaseMethod<Forkop.NftRulesCheckResult>(
       Forkop.AvailableMethods.CHECK_NFT_RULES,
     ),
-  checkZapretRuntime: async () =>
-    callBaseMethod<Forkop.ZapretCheckResult>(
-      Forkop.AvailableMethods.CHECK_ZAPRET_RUNTIME,
-    ),
-  checkZapret2Runtime: async () =>
-    callBaseMethod<Forkop.Zapret2CheckResult>(
-      Forkop.AvailableMethods.CHECK_ZAPRET2_RUNTIME,
-    ),
   getStatus: async () =>
     callBaseMethod<Forkop.GetStatus>(Forkop.AvailableMethods.GET_STATUS),
   getOutboundMetadata: async (section: string) =>
@@ -259,14 +251,6 @@ export const ForkopShellMethods = {
   getSingBoxStatus: async () =>
     callBaseMethod<Forkop.GetSingBoxStatus>(
       Forkop.AvailableMethods.GET_SING_BOX_STATUS,
-    ),
-  getZapretStatus: async () =>
-    callBaseMethod<Forkop.GetZapretStatus>(
-      Forkop.AvailableMethods.GET_ZAPRET_STATUS,
-    ),
-  getZapret2Status: async () =>
-    callBaseMethod<Forkop.GetZapret2Status>(
-      Forkop.AvailableMethods.GET_ZAPRET2_STATUS,
     ),
   getClashApiProxies: async () =>
     callBaseMethod<ClashAPI.Proxies>(Forkop.AvailableMethods.CLASH_API, [
