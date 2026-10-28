@@ -81,6 +81,33 @@ if grep -n -E 'pgrep.*sing-box|service-list-instance-running' "$UI_UC" >/dev/nul
   fail "service/ui.uc must not use transient sing-box process probes for visible status"
 fi
 
+# The dashboard reads this one on every refresh, and a module that stops
+# exporting a helper it uses breaks it without failing any grep. Run it.
+ui_state_output="$(ui_ucode get-ui-state)" ||
+  fail "get-ui-state must answer instead of failing at runtime"
+UI_STATE="$ui_state_output" node - <<'NODE' || fail "get-ui-state does not describe every service"
+const value = JSON.parse(process.env.UI_STATE);
+for (const name of ['forkop', 'sing_box']) {
+  if (!value.service?.[name] || typeof value.service[name].running !== 'number') {
+    console.error(`missing service ${name}`);
+    process.exit(1);
+  }
+}
+// Named on their own so the dashboard can show what each occupies. Null is a
+// service procd does not know, which is a component that is not installed.
+for (const name of ['tailscale', 'torrserver_direct']) {
+  if (!(name in value.service)) {
+    console.error(`missing per-service entry ${name}`);
+    process.exit(1);
+  }
+  const state = value.service[name];
+  if (state !== null && typeof state.running !== 'number') {
+    console.error(`per-service entry ${name} has no running flag`);
+    process.exit(1);
+  }
+}
+NODE
+
 for mode in \
   get-ui-capabilities \
   get-ui-state \

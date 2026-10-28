@@ -136,6 +136,7 @@ function service_group_rss_bytes(service_names) {
 
 
 return {
+    ubus_services,
     service_rss_bytes,
     service_group_rss_bytes,
     services_rss_bytes,
