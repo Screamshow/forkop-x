@@ -98,17 +98,6 @@ const SB_SERVICE_MIXED_INBOUND_PORT = constant_value("SB_SERVICE_MIXED_INBOUND_P
 const SB_VARIANT_STATE_FILE = constant_value("SB_VARIANT_STATE_FILE", "/etc/forkop/sing-box-variant");
 const SB_VERSION_STATE_FILE = constant_value("SB_VERSION_STATE_FILE", "/etc/forkop/sing-box-version");
 
-const ZAPRET_PROVIDER_NFQWS_BIN = constant_value("ZAPRET_PROVIDER_NFQWS_BIN", "/opt/zapret/nfq/nfqws");
-const ZAPRET_ROUTE_MARK_BASE = constant_value("ZAPRET_ROUTE_MARK_BASE", "0x01000000");
-const ZAPRET_QUEUE_BASE = constant_value("ZAPRET_QUEUE_BASE", "4000");
-const ZAPRET_DESYNC_MARK = constant_value("ZAPRET_DESYNC_MARK", "0x40000000");
-const ZAPRET_DESYNC_MARK_POSTNAT = constant_value("ZAPRET_DESYNC_MARK_POSTNAT", "0x20000000");
-const ZAPRET2_PROVIDER_NFQWS2_BIN = constant_value("ZAPRET2_PROVIDER_NFQWS2_BIN", "/opt/zapret2/nfq2/nfqws2");
-const ZAPRET2_ROUTE_MARK_BASE = constant_value("ZAPRET2_ROUTE_MARK_BASE", "0x02000000");
-const ZAPRET2_QUEUE_BASE = constant_value("ZAPRET2_QUEUE_BASE", "4300");
-const ZAPRET2_DESYNC_MARK = constant_value("ZAPRET2_DESYNC_MARK", "0x40000000");
-const ZAPRET2_DESYNC_MARK_POSTNAT = constant_value("ZAPRET2_DESYNC_MARK_POSTNAT", "0x20000000");
-
 const DNS_APPLY_UC = LIB_DIR + "/dns/apply.uc";
 const VALIDATOR_UC = LIB_DIR + "/config/validator.uc";
 const NFT_UC = LIB_DIR + "/nft/apply.uc";
@@ -123,8 +112,6 @@ const RELOAD_UC = LIB_DIR + "/service/reload.uc";
 const UI_UC = LIB_DIR + "/service/ui.uc";
 const DIAGNOSTICS_UC = LIB_DIR + "/diagnostics/runtime.uc";
 const AUTOMATIC_LATENCY_PENDING_FILE = getenv("FORKOP_AUTOMATIC_LATENCY_PENDING_FILE") || "/etc/forkop/automatic-latency-test.pending";
-const ZAPRET_UC = LIB_DIR + "/providers/zapret/runtime.uc";
-const ZAPRET2_UC = LIB_DIR + "/providers/zapret2/runtime.uc";
 const PACKAGES_UC = LIB_DIR + "/core/packages.uc";
 
 let start_subscription_update_lock_held = false;
@@ -311,8 +298,6 @@ function lifecycle_env() {
         SB_SERVICE_MIXED_INBOUND_PORT: SB_SERVICE_MIXED_INBOUND_PORT,
         SB_VARIANT_STATE_FILE: SB_VARIANT_STATE_FILE,
         SB_VERSION_STATE_FILE: SB_VERSION_STATE_FILE,
-        ZAPRET_PROVIDER_NFQWS_BIN: ZAPRET_PROVIDER_NFQWS_BIN,
-        ZAPRET2_PROVIDER_NFQWS2_BIN: ZAPRET2_PROVIDER_NFQWS2_BIN,
         FORKOP_RULE_CONDITION_CACHE_ENABLED: as_string(rule_condition_cache_enabled)
     };
 
@@ -685,16 +670,6 @@ function nft_rebuild_runtime() {
         NFT_OUTBOUND_MARK,
         SB_FAKEIP_INET4_RANGE,
         SB_TPROXY_INBOUND_PORT,
-        ZAPRET_PROVIDER_NFQWS_BIN,
-        ZAPRET_ROUTE_MARK_BASE,
-        ZAPRET_QUEUE_BASE,
-        ZAPRET_DESYNC_MARK,
-        ZAPRET_DESYNC_MARK_POSTNAT,
-        ZAPRET2_PROVIDER_NFQWS2_BIN,
-        ZAPRET2_ROUTE_MARK_BASE,
-        ZAPRET2_QUEUE_BASE,
-        ZAPRET2_DESYNC_MARK,
-        ZAPRET2_DESYNC_MARK_POSTNAT,
         NFT_LOCALV6_SET_NAME,
         NFT_COMMON6_SET_NAME,
         NFT_IP_PORT6_SET_NAME,
@@ -1053,8 +1028,6 @@ function start_main() {
         return status;
 
     release_start_subscription_update_lock();
-    module_success(ZAPRET_UC, [ "start-runtime" ]);
-    module_success(ZAPRET2_UC, [ "start-runtime" ]);
 
     return 0;
 }
@@ -1152,9 +1125,6 @@ function stop_main(allow_process_conflict) {
     // in-boot service reload; a real reboot clears both /tmp and its marker.
     if (!module_success(UPDATES_UC, [ "runtime-list-cache-active" ]))
         command_success_from_args([ "find", TMP_RULESET_FOLDER, "-mindepth", "1", "-maxdepth", "1", "-type", "f", "-delete" ]);
-
-    module_success(ZAPRET_UC, [ "stop-runtime" ]);
-    module_success(ZAPRET2_UC, [ "stop-runtime" ]);
 
     if (command_success_from_args([ "nft", "list", "table", "inet", NFT_TABLE_NAME ]))
         command_success_from_args([ "nft", "delete", "table", "inet", NFT_TABLE_NAME ]);
@@ -1531,16 +1501,10 @@ function parse_reload_plan(output) {
         changed_dnsmasq: 0,
         changed_sing_box: 0,
         changed_nft: 0,
-        changed_zapret_queue: 0,
-        changed_zapret_runtime: 0,
-        changed_zapret2_queue: 0,
-        changed_zapret2_runtime: 0,
         changed_cron: 0,
         changed_list: 0,
         needs_sing_box_reload: 0,
         needs_nft_rebuild: 0,
-        needs_zapret_restart: 0,
-        needs_zapret2_restart: 0,
         needs_dnsmasq_configure: 0,
         needs_dnsmasq_restore: 0,
         needs_cron_refresh: 0,
@@ -1573,8 +1537,6 @@ function reload_actions_summary(plan) {
     let actions = "";
     actions = append_reload_action(actions, plan.needs_sing_box_reload, "sing-box");
     actions = append_reload_action(actions, plan.needs_nft_rebuild, "nftables");
-    actions = append_reload_action(actions, plan.needs_zapret_restart, "Zapret");
-    actions = append_reload_action(actions, plan.needs_zapret2_restart, "Zapret2");
     actions = append_reload_action(actions, plan.needs_dnsmasq_configure || plan.needs_dnsmasq_restore, "dnsmasq");
     actions = append_reload_action(actions, plan.needs_cron_refresh, "scheduled jobs");
     actions = append_reload_action(actions, plan.needs_list_update, "remote lists");
@@ -1833,11 +1795,6 @@ function reload(reason) {
             return abort_reload(status, false);
     }
 
-    if (plan.needs_zapret_restart == 1)
-        module_success(ZAPRET_UC, [ "stop-runtime" ]);
-    if (plan.needs_zapret2_restart == 1)
-        module_success(ZAPRET2_UC, [ "stop-runtime" ]);
-
     // A staged config and a checked nft batch must both exist before the
     // first live transition. The old sing-box process keeps its in-memory
     // config while this preparation runs.
@@ -2015,11 +1972,6 @@ function reload(reason) {
             return status;
         }
     }
-
-    if (plan.needs_zapret_restart == 1)
-        module_success(ZAPRET_UC, [ "start-runtime" ]);
-    if (plan.needs_zapret2_restart == 1)
-        module_success(ZAPRET2_UC, [ "start-runtime" ]);
 
     if (plan.needs_dnsmasq_configure == 1) {
         status = dnsmasq_configure(true);

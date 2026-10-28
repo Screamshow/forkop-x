@@ -102,10 +102,6 @@ function show_help() {
     print("    check_logs              Show Forkop logs from system journal\n");
     print("    check_sing_box_logs     Show sing-box logs\n");
     print("    check_fakeip            Test sing-box FakeIP DNS\n");
-    print("    check_zapret_runtime    Check external zapret provider state\n");
-    print("    check_zapret2_runtime   Check external zapret2 provider state\n");
-    print("    neutralize_zapret_defaults\n");
-    print("                            Compatibility no-op; Forkop does not manage standalone zapret\n");
     print("    clash_api               Clash API interface for managing proxies and groups\n");
     print("    show_config             Display current Forkop configuration\n");
     print("    show_version            Show Forkop version\n");
@@ -116,8 +112,6 @@ function show_help() {
     print("    get_subscription_metadata\n");
     print("                            Get UI-only metadata for a subscription rule\n");
     print("    get_sing_box_status     Get sing-box service status\n");
-    print("    get_zapret_status       Get zapret provider and Forkop-managed nfqws status\n");
-    print("    get_zapret2_status      Get zapret2 provider and Forkop-managed nfqws2 status\n");
     print("    get_system_info         Get system information in JSON format\n");
     print("    get_ui_capabilities     Get lightweight UI capabilities in JSON format\n");
     print("    get_ui_state            Get lightweight UI service/action state in JSON format\n");
@@ -126,7 +120,7 @@ function show_help() {
     print("    latency_test_async      Start a dashboard latency test in the background\n");
     print("    latency_test_status     Get background latency test status\n");
     print("    ui_action_ack           Acknowledge a finished UI action state\n");
-    print("    component_action        Manage Forkop, sing-box, zapret, and zapret2 components\n");
+    print("    component_action        Manage Forkop and sing-box components\n");
     print("    component_action_async  Start a component action in the background\n");
     print("    component_action_status Get background component action status\n");
     print("    forkop_releases         List mirrored releases available for GUI installation\n");
@@ -136,10 +130,6 @@ function show_help() {
     print("    check_dns_available     Check DNS server availability\n");
     print("    global_check            Run global system check\n");
     print("    support_report          Create a complete unmasked support report\n");
-    print("    validate_nfqws_strategy_json\n");
-    print("                            Validate an NFQWS strategy and print JSON result\n");
-    print("    validate_nfqws2_strategy_json\n");
-    print("                            Validate an NFQWS2 strategy and print JSON result\n");
 }
 
 function command_spec(command) {
@@ -171,9 +161,6 @@ function command_spec(command) {
         check_logs: [ "diagnostics/runtime.uc", "check-logs", 0 ],
         check_sing_box_logs: [ "diagnostics/runtime.uc", "check-sing-box-logs", 0 ],
         check_fakeip: [ "diagnostics/runtime.uc", "check-fakeip", 0 ],
-        check_zapret_runtime: [ "diagnostics/runtime.uc", "check-zapret-runtime", 0 ],
-        check_zapret2_runtime: [ "diagnostics/runtime.uc", "check-zapret2-runtime", 0 ],
-        neutralize_zapret_defaults: [ "diagnostics/runtime.uc", "neutralize-zapret-defaults", 0 ],
         clash_api: [ "diagnostics/runtime.uc", "clash-api", 4 ],
         show_config: [ "diagnostics/runtime.uc", "show-config", 1 ],
         show_version: [ "diagnostics/runtime.uc", "show-version", 0 ],
@@ -183,8 +170,6 @@ function command_spec(command) {
         get_outbound_metadata: [ "diagnostics/runtime.uc", "get-outbound-metadata", 1 ],
         get_subscription_metadata: [ "diagnostics/runtime.uc", "get-subscription-metadata", 1 ],
         get_sing_box_status: [ "diagnostics/runtime.uc", "get-sing-box-status", 0 ],
-        get_zapret_status: [ "diagnostics/runtime.uc", "get-zapret-status", 0 ],
-        get_zapret2_status: [ "diagnostics/runtime.uc", "get-zapret2-status", 0 ],
         get_system_info: [ "diagnostics/runtime.uc", "get-system-info", 0 ],
         get_ui_capabilities: [ "service/ui.uc", "get-ui-capabilities", 0 ],
         get_ui_state: [ "service/ui.uc", "get-ui-state", 0 ],
@@ -209,8 +194,6 @@ function command_spec(command) {
         tailscale_native_ssh: [ "tailscale/action.uc", "ssh", 1 ],
         tailscale_native_lan: [ "tailscale/action.uc", "lan", 1 ],
         tailscale_native_exit: [ "tailscale/action.uc", "exit", 1 ],
-        validate_nfqws_strategy_json: [ "diagnostics/runtime.uc", "validate-nfqws-strategy-json", 1 ],
-        validate_nfqws2_strategy_json: [ "diagnostics/runtime.uc", "validate-nfqws2-strategy-json", 1 ],
         package_prerm: [ "service/package.uc", "prerm", 1 ],
         package_postinst: [ "service/package.uc", "postinst", 0 ],
         luci_postinst: [ "service/package.uc", "luci-postinst", 0 ],

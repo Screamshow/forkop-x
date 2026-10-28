@@ -8,15 +8,11 @@ let runtime_health = require("core.runtime_health");
 let core_ip = require("core.ip");
 let rule_config = require("config.rule");
 let connections = require("config.connections");
-let zapret_validator = require("providers.zapret.validator");
-let zapret2_validator = require("providers.zapret2.validator");
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
 const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
 const DEFAULT_PENDING_RELOAD_FILE = getenv("FORKOP_PENDING_RELOAD_FILE") || "/var/run/forkop/reload.pending";
 const DEFAULT_SERVICE_INIT = getenv("FORKOP_SERVICE_INIT") || "/etc/init.d/forkop";
 const SING_BOX_INIT = getenv("FORKOP_SING_BOX_INIT") || "/etc/init.d/sing-box";
-const ZAPRET_DEFAULT_NFQWS_OPT = getenv("ZAPRET_DEFAULT_NFQWS_OPT") || "";
-const ZAPRET2_DEFAULT_NFQWS2_OPT = getenv("ZAPRET2_DEFAULT_NFQWS2_OPT") || "";
 const SB_DNS_INBOUND_ADDRESS = getenv("SB_DNS_INBOUND_ADDRESS") || "127.0.0.42";
 const SB_TPROXY_INBOUND_PORT = getenv("SB_TPROXY_INBOUND_PORT") || "1602";
 const SB_TPROXY_INBOUND6_ADDRESS = getenv("SB_TPROXY_INBOUND6_ADDRESS") || "::1";
@@ -146,10 +142,6 @@ const RELOAD_STATE_FIELDS = [
     "dnsmasq_signature",
     "sing_box_signature",
     "nft_signature",
-    "zapret_queue_signature",
-    "zapret_runtime_signature",
-    "zapret2_queue_signature",
-    "zapret2_runtime_signature",
     "list_signature",
     "cron_signature",
     "urltest_enabled_sections",
@@ -1614,9 +1606,6 @@ function append_sing_box_rule_signature_body(body, section, sections) {
         body = signature_add_mixed_proxy_body(body, section, prefix);
         body = signature_add_value(body, prefix + ".resolve_real_ip_for_routing", bool_option_value(section, "resolve_real_ip_for_routing", false));
     }
-    else if (action == "zapret" || action == "zapret2") {
-        body = signature_add_mixed_proxy_body(body, section, prefix);
-    }
     else if (action == "dns") {
         body = signature_add_value(body, prefix + ".dns_type", option(section, "dns_type", "udp"));
         body = signature_add_value(body, prefix + ".dns_server", option(section, "dns_server", ""));
@@ -1703,93 +1692,6 @@ function sing_box_signature_body(settings, sections, mwan3_active) {
     return body;
 }
 
-function section_action_is_enabled(section, action) {
-    return section_name(section) != "" &&
-        bool_option(section, "enabled", true) &&
-        option(section, "action", "") == as_string(action);
-}
-
-function action_queue_signature_body(sections, action, signature_key) {
-    let body = "";
-
-    for (let section in sections) {
-        section = object_or_empty(section);
-        if (section_action_is_enabled(section, action))
-            body = signature_add_value(body, signature_key, section_name(section));
-    }
-
-    return body;
-}
-
-function section_user_domains_for_list_type(section) {
-    let list_type = option(section, "user_domain_list_type", "disabled");
-
-    if (list_type == "dynamic")
-        return option(section, "user_domains", "");
-    if (list_type == "text")
-        return option(section, "user_domains_text", "");
-    return "";
-}
-
-function append_zapret_runtime_signature_body(body, section, signature_prefix, opt_key, normalized_opt) {
-    let name = section_name(section);
-    let user_domain_list_type = option(section, "user_domain_list_type", "disabled");
-
-    body = signature_add_value(body, signature_prefix + "." + name + "." + opt_key, normalized_opt);
-    body = signature_add_value(body, signature_prefix + "." + name + ".domain", section_rule_condition_csv(section, "domain", "domains"));
-    body = signature_add_value(body, signature_prefix + "." + name + ".domain_suffix", section_rule_condition_csv(section, "domain_suffix", "domains"));
-    body = signature_add_value(body, signature_prefix + "." + name + ".community_lists", connections.community_lists_value(section));
-    body = signature_add_value(body, signature_prefix + "." + name + ".rule_set", connections.rule_sets_value(section));
-    body = signature_add_value(body, signature_prefix + "." + name + ".rule_set_with_subnets", connections.rule_sets_with_subnets_value(section));
-    body = signature_add_value(body, signature_prefix + "." + name + ".domain_ip_lists", option(section, "domain_ip_lists", ""));
-    body = signature_add_value(body, signature_prefix + "." + name + ".user_domain_list_type", user_domain_list_type);
-    body = signature_add_value(body, signature_prefix + "." + name + ".local_domain_lists", option(section, "local_domain_lists", ""));
-    body = signature_add_value(body, signature_prefix + "." + name + ".remote_domain_lists", option(section, "remote_domain_lists", ""));
-    body = signature_add_value(body, signature_prefix + "." + name + ".user_domains", section_user_domains_for_list_type(section));
-
-    return body;
-}
-
-function zapret_runtime_signature_body(sections) {
-    let body = "";
-
-    for (let section in sections) {
-        section = object_or_empty(section);
-        if (!section_action_is_enabled(section, "zapret"))
-            continue;
-
-        body = append_zapret_runtime_signature_body(
-        body,
-        section,
-        "zapret",
-        "nfqws_opt",
-            zapret_validator.strategy_or_default(option(section, "nfqws_opt", ""), ZAPRET_DEFAULT_NFQWS_OPT)
-        );
-    }
-
-    return body;
-}
-
-function zapret2_runtime_signature_body(sections) {
-    let body = "";
-
-    for (let section in sections) {
-        section = object_or_empty(section);
-        if (!section_action_is_enabled(section, "zapret2"))
-            continue;
-
-        body = append_zapret_runtime_signature_body(
-        body,
-        section,
-        "zapret2",
-        "nfqws2_opt",
-            zapret2_validator.strategy_or_default(option(section, "nfqws2_opt", ""), ZAPRET2_DEFAULT_NFQWS2_OPT)
-        );
-    }
-
-    return body;
-}
-
 function reload_state_values_from_sources(format, settings, sections, dnsmasq, legacy_dnsmasq_present, mwan3_active_value) {
     return {
         format: as_string(format),
@@ -1797,10 +1699,6 @@ function reload_state_values_from_sources(format, settings, sections, dnsmasq, l
         dnsmasq_signature: signature_hash(dnsmasq_signature_body(settings, dnsmasq, legacy_dnsmasq_present)),
         sing_box_signature: signature_hash(sing_box_signature_body(settings, sections, mwan3_active_value)),
         nft_signature: signature_hash(nft_runtime_signature_body(settings, sections)),
-        zapret_queue_signature: signature_hash(action_queue_signature_body(sections, "zapret", "zapret_queue.section")),
-        zapret_runtime_signature: signature_hash(zapret_runtime_signature_body(sections)),
-        zapret2_queue_signature: signature_hash(action_queue_signature_body(sections, "zapret2", "zapret2_queue.section")),
-        zapret2_runtime_signature: signature_hash(zapret2_runtime_signature_body(sections)),
         list_signature: signature_hash(list_update_signature_body(sections)),
         cron_signature: signature_hash(cron_signature_body(settings, sections)),
         urltest_enabled_sections: urltest_enabled_sections_value(sections),

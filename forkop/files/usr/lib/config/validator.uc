@@ -4,8 +4,6 @@ let fs = require("fs");
 let uci_core = require("core.uci");
 let fixture_uci_data = null;
 let subscription_parser_module = null;
-let zapret_validator_module = null;
-let zapret2_validator_module = null;
 let constants_module = null;
 let core_url = require("core.url");
 let core_ip = require("core.ip");
@@ -228,24 +226,6 @@ function fail_requirement(message, level) {
     exit(1);
 }
 
-function mkdir_p(paths) {
-    let args = [ "mkdir", "-p" ];
-
-    for (let path in array_or_empty(paths))
-        if (as_string(path) != "")
-            push(args, path);
-
-    return length(args) <= 2 || run_args(args);
-}
-
-function safe_rm_rf(path) {
-    path = as_string(path);
-    if (path == "" || substr(path, 0, length("/var/run/forkop/")) != "/var/run/forkop/")
-        return true;
-
-    return run_args([ "rm", "-rf", path ]);
-}
-
 function first_line_last_field(data) {
     let newline = index(as_string(data), "\n");
     let line = newline >= 0 ? substr(data, 0, newline) : data;
@@ -400,11 +380,6 @@ function plain_domain_ip_list_reference_valid(reference) {
         absolute_reference_with_extension(reference, ".lst", null);
 }
 
-function bool_flag(value) {
-    value = as_string(value);
-    return value == "1" || value == "true";
-}
-
 function outbound_detour_source_action(action) {
     action = as_string(action);
     return connections.is_connections_action(action);
@@ -500,19 +475,11 @@ function validate_outbound_detours_rows(rows) {
     }
 }
 
-function download_section_action_available(action, zapret_installed, zapret2_installed) {
-    action = as_string(action);
-    if (connections.is_connections_action(action))
-        return true;
-    if (action == "zapret")
-        return bool_flag(zapret_installed);
-    if (action == "zapret2")
-        return bool_flag(zapret2_installed);
-
-    return false;
+function download_section_action_available(action) {
+    return connections.is_connections_action(as_string(action));
 }
 
-function validate_download_section_rows(target_section, zapret_installed, zapret2_installed, rows) {
+function validate_download_section_rows(target_section, rows) {
     target_section = as_string(target_section);
 
     if (target_section == "")
@@ -533,7 +500,7 @@ function validate_download_section_rows(target_section, zapret_installed, zapret
             continue;
 
         enabled = true;
-        if (download_section_action_available(row.action, zapret_installed, zapret2_installed))
+        if (download_section_action_available(row.action))
             outbound = true;
     }
 
@@ -547,7 +514,7 @@ function validate_download_section_rows(target_section, zapret_installed, zapret
 
     if (!outbound)
         fail_validation("Downloading external resources through a section references rule '" + target_section +
-            "', but it cannot provide an outbound. Select an enabled Connection, Zapret, or Zapret2 rule with its provider installed, or disable the option. Aborted.");
+            "', but it cannot provide an outbound. Select an enabled Connection rule, or disable the option. Aborted.");
 
     if (connections.is_connections_action(target.action) && !target.has_sources)
         fail_validation("Downloading external resources through section '" + target_section +
@@ -616,18 +583,6 @@ function subscription_parser() {
     return subscription_parser_module;
 }
 
-function zapret_validator() {
-    if (zapret_validator_module == null)
-        zapret_validator_module = require("providers.zapret.validator");
-    return zapret_validator_module;
-}
-
-function zapret2_validator() {
-    if (zapret2_validator_module == null)
-        zapret2_validator_module = require("providers.zapret2.validator");
-    return zapret2_validator_module;
-}
-
 function runtime_constants() {
     if (constants_module == null)
         constants_module = require("core.constants");
@@ -694,7 +649,7 @@ function rule_action(section) {
 }
 
 function rule_action_supported(action) {
-    return contains([ "connection", "proxy", "outbound", "vpn", "bypass", "block", "dns", "zapret", "zapret2" ], as_string(action));
+    return contains([ "connection", "proxy", "outbound", "vpn", "bypass", "block", "dns" ], as_string(action));
 }
 
 function duration_to_seconds_value(value) {
@@ -847,8 +802,8 @@ function validate_dns_settings(settings, sections, context) {
         fail_validation("DNS through a section references missing rule '" + target_name + "'. Aborted.");
     if (!target.enabled)
         fail_validation("DNS through a section references disabled rule '" + target_name + "'. Aborted.");
-    if (!download_section_action_available(target.action, context.zapret_installed, context.zapret2_installed))
-        fail_validation("DNS through a section references rule '" + target_name + "' with unsupported action '" + target.action + "'. Select an enabled Connection, VPN, Zapret, or Zapret2 section. Aborted.");
+    if (!download_section_action_available(target.action))
+        fail_validation("DNS through a section references rule '" + target_name + "' with unsupported action '" + target.action + "'. Select an enabled Connection or VPN section. Aborted.");
 }
 
 function normalize_port_number_value(value) {
@@ -1179,26 +1134,6 @@ function validate_subscription_request_profile(section, entry) {
     fail_validation("Subscription source in rule '" + section_name(section) + "' has manual HWID enabled but HWID is empty. Fill HWID or enable auto-generation. Aborted.");
 }
 
-function validate_provider_strategy(kind, section, context) {
-    let name = section_name(section);
-
-    if (kind == "zapret") {
-        let raw = zapret_validator().strategy_or_default(option(section, "nfqws_opt", ""), context.zapret_default_nfqws_opt);
-        let result = zapret_validator().validate_strategy("nfqws", raw, context.zapret_legacy_default_nfqws_opt);
-        if (!result.valid)
-            fail_validation("Zapret rule '" + name + "' uses invalid NFQWS strategy: " + result.message + " Aborted.");
-        return;
-    }
-
-    if (kind == "zapret2") {
-        let raw = zapret2_validator().strategy_or_default(option(section, "nfqws2_opt", ""), context.zapret2_default_nfqws2_opt);
-        let result = zapret2_validator().validate_strategy("nfqws2", raw, "");
-        if (!result.valid)
-            fail_validation("Zapret2 rule '" + name + "' uses invalid NFQWS2 strategy: " + result.message + " Aborted.");
-        return;
-    }
-}
-
 function dns_action_has_domain_matchers(section) {
     for (let key in [ "domain", "domain_suffix", "domain_keyword", "domain_regex" ])
         if (option(section, key, "") != "" || option(section, key + "_text", "") != "" || length(list_option(section, key)) > 0)
@@ -1240,8 +1175,8 @@ function validate_dns_action(section, sections, context) {
         fail_validation("DNS rule '" + name + "' references missing detour section '" + target_name + "'. Aborted.");
     if (!section_enabled(target))
         fail_validation("DNS rule '" + name + "' references disabled detour section '" + target_name + "'. Aborted.");
-    if (!download_section_action_available(rule_action(target), context.zapret_installed, context.zapret2_installed))
-        fail_validation("DNS rule '" + name + "' references detour section '" + target_name + "' with unsupported action '" + rule_action(target) + "'. Select an enabled Connection, VPN, Zapret, or Zapret2 section. Aborted.");
+    if (!download_section_action_available(rule_action(target)))
+        fail_validation("DNS rule '" + name + "' references detour section '" + target_name + "' with unsupported action '" + rule_action(target) + "'. Select an enabled Connection or VPN section. Aborted.");
 }
 
 function validate_rule(section, sections, context) {
@@ -1261,22 +1196,6 @@ function validate_rule(section, sections, context) {
 
     if (action == "dns")
         validate_dns_action(section, sections, context);
-
-    if (action == "zapret") {
-        if (!context.zapret_installed) {
-            validate_common_rule_references(section, context);
-            return;
-        }
-        validate_provider_strategy("zapret", section, context);
-    }
-
-    if (action == "zapret2") {
-        if (!context.zapret2_installed) {
-            validate_common_rule_references(section, context);
-            return;
-        }
-        validate_provider_strategy("zapret2", section, context);
-    }
 
     if (connections.is_connections_action(action)) {
 
@@ -1431,12 +1350,7 @@ function validate_subscription_download_sections(sections, context) {
             if (target == name)
                 fail_validation("Subscription source in rule '" + name + "' cannot be downloaded through the same rule. Select another rule or disable download-through-section. Aborted.");
 
-            validate_download_section_rows(
-                target,
-                context.zapret_installed,
-                context.zapret2_installed,
-                rows
-            );
+            validate_download_section_rows(target, rows);
         }
     }
 }
@@ -1470,34 +1384,6 @@ function validate_runtime_mark_ranges_context(context) {
     // send the router's own rerouting lookup to the main table.
     if ((router_mark & (fakeip_mark | outbound_mark)) != 0)
         fail_validation("Router mark shares bits with the FakeIP or outbound mark. Aborted.");
-
-    let ranges = [
-        [ "Zapret", context.zapret_route_mark_base, context.zapret_queue_range_size, fakeip_mark, "FakeIP mark " + context.nft_fakeip_mark ],
-        [ "Zapret", context.zapret_route_mark_base, context.zapret_queue_range_size, outbound_mark, "outbound mark " + context.nft_outbound_mark ],
-        [ "Zapret2", context.zapret2_route_mark_base, context.zapret2_queue_range_size, fakeip_mark, "FakeIP mark " + context.nft_fakeip_mark ],
-        [ "Zapret2", context.zapret2_route_mark_base, context.zapret2_queue_range_size, outbound_mark, "outbound mark " + context.nft_outbound_mark ],
-        [ "Zapret", context.zapret_route_mark_base, context.zapret_queue_range_size, router_mark, "router mark " + context.nft_router_mark ],
-        [ "Zapret2", context.zapret2_route_mark_base, context.zapret2_queue_range_size, router_mark, "router mark " + context.nft_router_mark ],
-        [ "Zapret", context.zapret_route_mark_base, context.zapret_queue_range_size, TAILSCALE_FWMARK_MASK, "Tailscale fwmark mask 0x00ff0000" ],
-        [ "Zapret2", context.zapret2_route_mark_base, context.zapret2_queue_range_size, TAILSCALE_FWMARK_MASK, "Tailscale fwmark mask 0x00ff0000" ]
-    ];
-
-    for (let range in ranges) {
-        let label = as_string(range[0]);
-        let base = parse_number(range[1]);
-        let range_size = parse_number(range[2]);
-        let mark_mask = range[3];
-        let mark_mask_label = as_string(range[4]);
-
-        if (base == null || range_size == null || mark_mask == null)
-            fail_validation(label + " route mark range contains invalid numeric constants. Aborted.");
-
-        for (let index_value = 1; index_value <= range_size; index_value++) {
-            let mark_value = base + index_value;
-            if ((mark_value & mark_mask) != 0)
-                fail_validation(label + " route mark range overlaps " + mark_mask_label + ". Aborted.");
-        }
-    }
 }
 
 function validate_runtime_config(context) {
@@ -1514,16 +1400,12 @@ function validate_runtime_config(context) {
     if (download_via_proxy_enabled(settings, "lists")) {
         validate_download_section_rows(
             download_via_proxy_section(settings, "lists"),
-            context.zapret_installed,
-            context.zapret2_installed,
             basic_rows_from_sections(sections)
         );
     }
     if (download_via_proxy_enabled(settings, "components")) {
         validate_download_section_rows(
             download_via_proxy_section(settings, "components"),
-            context.zapret_installed,
-            context.zapret2_installed,
             basic_rows_from_sections(sections)
         );
     }
@@ -1541,33 +1423,13 @@ function context_from_runtime() {
     return {
         constants,
         community_services: constant_value(constants, "COMMUNITY_SERVICES"),
-        zapret_default_nfqws_opt: constant_value(constants, "ZAPRET_DEFAULT_NFQWS_OPT"),
-        zapret_legacy_default_nfqws_opt: constant_value(constants, "ZAPRET_LEGACY_DEFAULT_NFQWS_OPT"),
-        zapret2_default_nfqws2_opt: constant_value(constants, "ZAPRET2_DEFAULT_NFQWS2_OPT"),
-        zapret_installed: file_executable(constant_value(constants, "ZAPRET_PROVIDER_NFQWS_BIN")),
-        zapret2_installed: file_executable(constant_value(constants, "ZAPRET2_PROVIDER_NFQWS2_BIN")),
-        zapret_provider_nfqws_bin: constant_value(constants, "ZAPRET_PROVIDER_NFQWS_BIN"),
-        zapret2_provider_nfqws2_bin: constant_value(constants, "ZAPRET2_PROVIDER_NFQWS2_BIN"),
-        zapret_route_mark_base: constant_value(constants, "ZAPRET_ROUTE_MARK_BASE"),
-        zapret_queue_range_size: constant_value(constants, "ZAPRET_QUEUE_RANGE_SIZE"),
-        zapret2_route_mark_base: constant_value(constants, "ZAPRET2_ROUTE_MARK_BASE"),
-        zapret2_queue_range_size: constant_value(constants, "ZAPRET2_QUEUE_RANGE_SIZE"),
         nft_fakeip_mark: constant_value(constants, "NFT_FAKEIP_MARK"),
         nft_outbound_mark: constant_value(constants, "NFT_OUTBOUND_MARK"),
         nft_router_mark: constant_value(constants, "NFT_ROUTER_MARK"),
         sing_box_required_version: constant_value(constants, "SB_REQUIRED_VERSION"),
         sing_box_variant_state_file: constant_value(constants, "SB_VARIANT_STATE_FILE"),
         sing_box_version_state_file: constant_value(constants, "SB_VERSION_STATE_FILE"),
-        sing_box_managed_service_marker: constant_value(constants, "SB_MANAGED_SERVICE_MARKER"),
-        zapret_legacy_runtime_base_dir: constant_value(constants, "ZAPRET_LEGACY_RUNTIME_BASE_DIR"),
-        zapret_state_dir: constant_value(constants, "ZAPRET_STATE_DIR"),
-        zapret_pid_dir: constant_value(constants, "ZAPRET_PID_DIR"),
-        zapret_child_pid_dir: constant_value(constants, "ZAPRET_CHILD_PID_DIR"),
-        zapret_log_dir: constant_value(constants, "ZAPRET_LOG_DIR"),
-        zapret2_state_dir: constant_value(constants, "ZAPRET2_STATE_DIR"),
-        zapret2_pid_dir: constant_value(constants, "ZAPRET2_PID_DIR"),
-        zapret2_child_pid_dir: constant_value(constants, "ZAPRET2_CHILD_PID_DIR"),
-        zapret2_log_dir: constant_value(constants, "ZAPRET2_LOG_DIR")
+        sing_box_managed_service_marker: constant_value(constants, "SB_MANAGED_SERVICE_MARKER")
     };
 }
 
@@ -1690,12 +1552,6 @@ function has_outbound_section(ctx) {
         if (!section_enabled(section))
             continue;
 
-        let action = rule_action(section);
-        if (action == "zapret" && ctx.zapret_installed)
-            return true;
-        if (action == "zapret2" && ctx.zapret2_installed)
-            return true;
-
         if (length(connections.connection_urls(section)) > 0 ||
             length(connections.subscription_urls(section)) > 0 ||
             length(connections.outbound_jsons(section)) > 0 ||
@@ -1723,70 +1579,6 @@ function has_discord_cloudflare_overlap() {
     }
 
     return discord && cloudflare;
-}
-
-function has_enabled_rule_action(action) {
-    action = as_string(action);
-
-    for (let section in sections_by_type("section"))
-        if (section_enabled(section) && rule_action(section) == action)
-            return true;
-
-    return false;
-}
-
-function cleanup_legacy_zapret_runtime(ctx) {
-    let base = as_string(ctx.zapret_legacy_runtime_base_dir);
-    if (base == "")
-        return;
-
-    let needle = base + "/nfq/nfqws";
-    for (let line in split(command_output_from_args([ "ps", "w" ]), "\n")) {
-        if (index(as_string(line), needle) < 0)
-            continue;
-
-        let fields = split(trim(as_string(line)), /[ \t]+/);
-        let pid = length(fields) > 0 ? as_string(fields[0]) : "";
-        if (match(pid, /^[0-9]+$/) != null)
-            run_args([ "kill", pid ]);
-    }
-
-    safe_rm_rf(base);
-}
-
-function check_provider_requirement(action, display_name, bin_path, dirs, missing_message, prepare_failure_message) {
-    if (!has_enabled_rule_action(action))
-        return;
-
-    if (!file_executable(bin_path)) {
-        log_message(missing_message, "error");
-        return;
-    }
-
-    if (!mkdir_p(dirs))
-        fail_requirement(prepare_failure_message, "fatal");
-}
-
-function check_provider_requirements(ctx) {
-    cleanup_legacy_zapret_runtime(ctx);
-
-    check_provider_requirement(
-        "zapret",
-        "Zapret",
-        ctx.zapret_provider_nfqws_bin,
-        [ ctx.zapret_state_dir, ctx.zapret_pid_dir, ctx.zapret_child_pid_dir, ctx.zapret_log_dir ],
-        "Zapret provider is not available at " + ctx.zapret_provider_nfqws_bin + ". Rules with action 'zapret' will be skipped until the zapret provider is installed.",
-        "Failed to prepare the Forkop zapret state directory in " + ctx.zapret_state_dir + ". Aborted."
-    );
-
-    check_provider_requirement(
-        "zapret2",
-        "Zapret2",
-        ctx.zapret2_provider_nfqws2_bin,
-        [ ctx.zapret2_state_dir, ctx.zapret2_pid_dir, ctx.zapret2_child_pid_dir, ctx.zapret2_log_dir ],
-        "Zapret2 provider is not available at " + ctx.zapret2_provider_nfqws2_bin + ". Rules with action 'zapret2' will be skipped until the zapret2 provider is installed.",
-        "Failed to prepare the Forkop zapret2 state directory in " + ctx.zapret2_state_dir + ". Aborted."
-    );
 }
 
 function check_runtime_requirements() {
@@ -1831,7 +1623,6 @@ function check_runtime_requirements() {
     else
         log_message("No proxy outbound sections found. Forkop will use direct and/or provider-only routing.", "warn");
 
-    check_provider_requirements(ctx);
 }
 
 function context_override_value(overrides, defaults, key) {
@@ -1839,13 +1630,6 @@ function context_override_value(overrides, defaults, key) {
     if (value != null)
         return as_string(value);
     return as_string(object_or_empty(defaults)[key]);
-}
-
-function context_override_bool(overrides, defaults, key) {
-    let value = object_or_empty(overrides)[key];
-    if (value != null)
-        return bool_flag(value);
-    return bool_flag(object_or_empty(defaults)[key]);
 }
 
 function context_from_json(value, defaults) {
@@ -1861,15 +1645,6 @@ function context_from_json(value, defaults) {
 
     return {
         community_services: context_override_value(value, defaults, "community_services"),
-        zapret_default_nfqws_opt: context_override_value(value, defaults, "zapret_default_nfqws_opt"),
-        zapret_legacy_default_nfqws_opt: context_override_value(value, defaults, "zapret_legacy_default_nfqws_opt"),
-        zapret2_default_nfqws2_opt: context_override_value(value, defaults, "zapret2_default_nfqws2_opt"),
-        zapret_installed: context_override_bool(value, defaults, "zapret_installed"),
-        zapret2_installed: context_override_bool(value, defaults, "zapret2_installed"),
-        zapret_route_mark_base: context_override_value(value, defaults, "zapret_route_mark_base"),
-        zapret_queue_range_size: context_override_value(value, defaults, "zapret_queue_range_size"),
-        zapret2_route_mark_base: context_override_value(value, defaults, "zapret2_route_mark_base"),
-        zapret2_queue_range_size: context_override_value(value, defaults, "zapret2_queue_range_size"),
         nft_fakeip_mark: context_override_value(value, defaults, "nft_fakeip_mark"),
         nft_outbound_mark: context_override_value(value, defaults, "nft_outbound_mark"),
         nft_router_mark: context_override_value(value, defaults, "nft_router_mark")

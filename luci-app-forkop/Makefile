@@ -22,7 +22,7 @@ LUCI_PKGARCH:=all
 LUCI_LANG.ru:=Русский (Russian)
 LUCI_LANG.en:=English
 LUCI_MAINTAINER:=Screamshow <235684779+Screamshow@users.noreply.github.com>
-LUCI_DESCRIPTION:=Rule-based Forkop LuCI app with hybrid sing-box + zapret orchestration
+LUCI_DESCRIPTION:=Rule-based Forkop LuCI app with sing-box orchestration
 LUCI_MINIFY_JS:=0
 
 PKG_LICENSE:=GPL-2.0-or-later

@@ -118,44 +118,6 @@ function constants_map() {
     c.SUBNETS_CLOUDFRONT = env("SUBNETS_CLOUDFRONT", c.GITHUB_RAW_URL + "/Subnets/IPv4/cloudfront.lst");
     c.COMMUNITY_SERVICES = env("COMMUNITY_SERVICES", "russia_inside russia_outside ukraine_inside geoblock block porn news anime youtube hdrezka tiktok google_ai google_play hodca discord meta twitter cloudflare cloudfront digitalocean hetzner ovh telegram roblox ads_hagezi_pro supercell github");
 
-    c.ZAPRET_PROVIDER_BASE_DIR = env("ZAPRET_PROVIDER_BASE_DIR", "/opt/zapret");
-    c.ZAPRET_PROVIDER_NFQWS_BIN = env("ZAPRET_PROVIDER_NFQWS_BIN", c.ZAPRET_PROVIDER_BASE_DIR + "/nfq/nfqws");
-    c.ZAPRET_PROVIDER_FILES_DIR = env("ZAPRET_PROVIDER_FILES_DIR", c.ZAPRET_PROVIDER_BASE_DIR + "/files");
-    c.ZAPRET_PROVIDER_IPSET_DIR = env("ZAPRET_PROVIDER_IPSET_DIR", c.ZAPRET_PROVIDER_BASE_DIR + "/ipset");
-    c.ZAPRET_LEGACY_RUNTIME_BASE_DIR = env("ZAPRET_LEGACY_RUNTIME_BASE_DIR", "/var/run/forkop/zapret-runtime");
-    c.ZAPRET_NFQWS_BIN = env("ZAPRET_NFQWS_BIN", c.ZAPRET_PROVIDER_NFQWS_BIN);
-    c.ZAPRET_STATE_DIR = env("ZAPRET_STATE_DIR", "/var/run/forkop/zapret");
-    c.ZAPRET_PID_DIR = env("ZAPRET_PID_DIR", c.ZAPRET_STATE_DIR + "/pid");
-    c.ZAPRET_CHILD_PID_DIR = env("ZAPRET_CHILD_PID_DIR", c.ZAPRET_STATE_DIR + "/child-pid");
-    c.ZAPRET_LOG_DIR = env("ZAPRET_LOG_DIR", c.ZAPRET_STATE_DIR + "/log");
-    c.ZAPRET_HOSTLIST_DIR = env("ZAPRET_HOSTLIST_DIR", c.ZAPRET_STATE_DIR + "/hostlist");
-    c.ZAPRET_ROUTE_MARK_BASE = env("ZAPRET_ROUTE_MARK_BASE", "0x01000000");
-    c.ZAPRET_QUEUE_BASE = env("ZAPRET_QUEUE_BASE", "4000");
-    c.ZAPRET_QUEUE_RANGE_SIZE = env("ZAPRET_QUEUE_RANGE_SIZE", "256");
-    c.ZAPRET_NFQWS_RESPAWN_DELAY = env("ZAPRET_NFQWS_RESPAWN_DELAY", "5");
-    c.ZAPRET_DESYNC_MARK = env("ZAPRET_DESYNC_MARK", "0x40000000");
-    c.ZAPRET_DESYNC_MARK_POSTNAT = env("ZAPRET_DESYNC_MARK_POSTNAT", "0x20000000");
-    c.ZAPRET_LEGACY_DEFAULT_NFQWS_OPT = env("ZAPRET_LEGACY_DEFAULT_NFQWS_OPT", "--filter-tcp=80 <HOSTLIST> --dpi-desync=fake,fakedsplit --dpi-desync-autottl=2 --dpi-desync-fooling=badsum --new --filter-tcp=443 --hostlist=/opt/zapret/ipset/zapret-hosts-google.txt --dpi-desync=fake,multidisorder --dpi-desync-split-pos=1,midsld --dpi-desync-repeats=11 --dpi-desync-fooling=badsum --dpi-desync-fake-tls-mod=rnd,dupsid,sni=www.google.com --new --filter-udp=443 --hostlist=/opt/zapret/ipset/zapret-hosts-google.txt --dpi-desync=fake --dpi-desync-repeats=11 --dpi-desync-fake-quic=/opt/zapret/files/fake/quic_initial_www_google_com.bin --new --filter-udp=443 <HOSTLIST_NOAUTO> --dpi-desync=fake --dpi-desync-repeats=11 --new --filter-tcp=443 <HOSTLIST> --dpi-desync=multidisorder --dpi-desync-split-pos=1,sniext+1,host+1,midsld-2,midsld,midsld+2,endhost-1");
-    c.ZAPRET_DEFAULT_NFQWS_OPT = env("ZAPRET_DEFAULT_NFQWS_OPT", "--filter-tcp=80 --dpi-desync=fake,fakedsplit --dpi-desync-autottl=2 --dpi-desync-fooling=badsum --new --filter-tcp=443 --dpi-desync=fake,multidisorder --dpi-desync-split-pos=1,midsld --dpi-desync-repeats=11 --dpi-desync-fooling=badsum --dpi-desync-fake-tls-mod=rnd,dupsid,sni=www.google.com --new --filter-udp=443 --dpi-desync=fake --dpi-desync-repeats=11 --dpi-desync-fake-quic=/opt/zapret/files/fake/quic_initial_www_google_com.bin");
-
-    c.ZAPRET2_PROVIDER_BASE_DIR = env("ZAPRET2_PROVIDER_BASE_DIR", "/opt/zapret2");
-    c.ZAPRET2_PROVIDER_NFQWS2_BIN = env("ZAPRET2_PROVIDER_NFQWS2_BIN", c.ZAPRET2_PROVIDER_BASE_DIR + "/nfq2/nfqws2");
-    c.ZAPRET2_PROVIDER_FILES_DIR = env("ZAPRET2_PROVIDER_FILES_DIR", c.ZAPRET2_PROVIDER_BASE_DIR + "/files");
-    c.ZAPRET2_PROVIDER_IPSET_DIR = env("ZAPRET2_PROVIDER_IPSET_DIR", c.ZAPRET2_PROVIDER_BASE_DIR + "/ipset");
-    c.ZAPRET2_PROVIDER_LUA_DIR = env("ZAPRET2_PROVIDER_LUA_DIR", c.ZAPRET2_PROVIDER_BASE_DIR + "/lua");
-    c.ZAPRET2_NFQWS2_BIN = env("ZAPRET2_NFQWS2_BIN", c.ZAPRET2_PROVIDER_NFQWS2_BIN);
-    c.ZAPRET2_STATE_DIR = env("ZAPRET2_STATE_DIR", "/var/run/forkop/zapret2");
-    c.ZAPRET2_PID_DIR = env("ZAPRET2_PID_DIR", c.ZAPRET2_STATE_DIR + "/pid");
-    c.ZAPRET2_CHILD_PID_DIR = env("ZAPRET2_CHILD_PID_DIR", c.ZAPRET2_STATE_DIR + "/child-pid");
-    c.ZAPRET2_LOG_DIR = env("ZAPRET2_LOG_DIR", c.ZAPRET2_STATE_DIR + "/log");
-    c.ZAPRET2_ROUTE_MARK_BASE = env("ZAPRET2_ROUTE_MARK_BASE", "0x02000000");
-    c.ZAPRET2_QUEUE_BASE = env("ZAPRET2_QUEUE_BASE", "4300");
-    c.ZAPRET2_QUEUE_RANGE_SIZE = env("ZAPRET2_QUEUE_RANGE_SIZE", "256");
-    c.ZAPRET2_NFQWS2_RESPAWN_DELAY = env("ZAPRET2_NFQWS2_RESPAWN_DELAY", "5");
-    c.ZAPRET2_DESYNC_MARK = env("ZAPRET2_DESYNC_MARK", "0x40000000");
-    c.ZAPRET2_DESYNC_MARK_POSTNAT = env("ZAPRET2_DESYNC_MARK_POSTNAT", "0x20000000");
-    c.ZAPRET2_DEFAULT_NFQWS2_OPT = env("ZAPRET2_DEFAULT_NFQWS2_OPT", "--filter-tcp=80 --filter-l7=http --payload=http_req --lua-desync=fake:blob=fake_default_http:tcp_md5 --lua-desync=multisplit:pos=method+2 --new --filter-tcp=443 --filter-l7=tls --payload=tls_client_hello --lua-desync=fake:blob=fake_default_tls:tcp_md5:tcp_seq=-10000 --lua-desync=multidisorder:pos=1,midsld --new --filter-udp=443 --filter-l7=quic --payload=quic_initial --lua-desync=fake:blob=fake_default_quic:repeats=6");
-
     return c;
 }
 

@@ -31,7 +31,7 @@ define Package/forkop
 endef
 
 define Package/forkop/description
-	Rule-based Forkop backend with hybrid sing-box + zapret orchestration
+	Rule-based Forkop backend with sing-box orchestration
 endef
 
 define Build/Configure

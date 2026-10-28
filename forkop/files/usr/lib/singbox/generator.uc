@@ -1781,8 +1781,7 @@ function apply_section_detour_to_connection_outbounds(config, start_index, detou
 }
 
 function mixed_proxy_enabled_action(action) {
-    return action == "connection" || action == "proxy" || action == "outbound" || action == "vpn" ||
-        action == "zapret" || action == "zapret2";
+    return action == "connection" || action == "proxy" || action == "outbound" || action == "vpn";
 }
 
 function add_mixed_proxy_for_section(config, section, service_address) {
@@ -2623,40 +2622,6 @@ function add_connections_outbound(config, section, taken) {
     }
     if (!atomic_write_json_file(runtime_subscription.section_cache_path(section_name), state))
         runtime_generate_unsupported("failed to write section cache for " + section_name);
-}
-
-function enabled_action_index(sections, target_section, action_name) {
-    let index = 0;
-    for (let section in sections) {
-        if (option(section, "action", "") != action_name)
-            continue;
-        index++;
-        if (section[".name"] == target_section[".name"])
-            return index;
-    }
-    return 0;
-}
-
-function add_zapret_outbound(config, section, sections) {
-    let index = enabled_action_index(sections, section, "zapret");
-    if (index <= 0)
-        runtime_generate_unsupported("unable to resolve Zapret index for " + section[".name"]);
-    push(config.outbounds, {
-        type: "direct",
-        tag: outbound_tag(section[".name"]),
-        routing_mark: runtime_constants.ZAPRET_ROUTE_MARK_BASE + index
-    });
-}
-
-function add_zapret2_outbound(config, section, sections) {
-    let index = enabled_action_index(sections, section, "zapret2");
-    if (index <= 0)
-        runtime_generate_unsupported("unable to resolve Zapret2 index for " + section[".name"]);
-    push(config.outbounds, {
-        type: "direct",
-        tag: outbound_tag(section[".name"]),
-        routing_mark: runtime_constants.ZAPRET2_ROUTE_MARK_BASE + index
-    });
 }
 
 function ensure_community_ruleset(config, section_name, community) {
@@ -3539,10 +3504,6 @@ function add_outbound_for_section(config, section, taken, sections) {
 
     if (connections.is_connections_action(action))
         add_connections_outbound(config, section, taken);
-    else if (action == "zapret")
-        add_zapret_outbound(config, section, sections);
-    else if (action == "zapret2")
-        add_zapret2_outbound(config, section, sections);
     else if (action == "bypass") {
         /* route-only action */
     }
@@ -3560,8 +3521,7 @@ function add_outbound_for_section(config, section, taken, sections) {
 function reserve_section_outbound_tags(sections, taken) {
     for (let section in sections) {
         let action = option(section, "action", "");
-        if (connections.is_connections_action(action) ||
-            action == "zapret" || action == "zapret2")
+        if (connections.is_connections_action(action))
             taken[outbound_tag(section[".name"])] = true;
 
         if (!connections.is_connections_action(action))

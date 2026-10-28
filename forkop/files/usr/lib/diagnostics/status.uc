@@ -642,8 +642,6 @@ function render_global_system_info() {
     let forkop_version = object_value(value, "forkop_version") || "unknown";
     let luci_app_version = object_value(value, "luci_app_version") || "unknown";
     let sing_box_version = object_value(value, "sing_box_version") || "unknown";
-    let zapret_version = object_value(value, "zapret_version") || "unknown";
-    let zapret2_version = object_value(value, "zapret2_version") || "unknown";
     let openwrt_version = object_value(value, "openwrt_version") || "unknown";
     let device_model = object_value(value, "device_model") || "unknown";
 
@@ -653,10 +651,6 @@ function render_global_system_info() {
     print_line("\ud83d\udd73\ufe0f Forkop:   " + forkop_version);
     print_line("\ud83d\udd73\ufe0f LuCI App:      " + luci_app_version);
     print_line("\ud83d\udce6 Sing-box:      " + format_sing_box_version(value, sing_box_version));
-    if (flag_is_one(value.zapret_installed))
-        print_line("\ud83e\uddf5 Zapret:        " + zapret_version);
-    if (flag_is_one(value.zapret2_installed))
-        print_line("\ud83e\uddf5 Zapret2:       " + zapret2_version);
     print_line("\ud83d\udedc OpenWrt:       " + openwrt_version);
     print_line("\ud83d\udedc Device:        " + device_model);
 }

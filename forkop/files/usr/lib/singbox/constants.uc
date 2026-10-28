@@ -38,8 +38,6 @@ const CHECK_PROXY_IP_DOMAIN = "ip.podkop.fyi";
 const FAKEIP_TEST_DOMAIN = "fakeip.podkop.fyi";
 const TMP_SING_BOX_FOLDER = "/tmp/sing-box";
 const TMP_RULESET_FOLDER = TMP_SING_BOX_FOLDER + "/rulesets";
-const ZAPRET_ROUTE_MARK_BASE = 0x01000000;
-const ZAPRET2_ROUTE_MARK_BASE = 0x02000000;
 
 const RESERVED_TAGS = {
     [DNS_SERVER_TAG]: true,
@@ -117,8 +115,6 @@ return {
     FAKEIP_TEST_DOMAIN,
     TMP_SING_BOX_FOLDER,
     TMP_RULESET_FOLDER,
-    ZAPRET_ROUTE_MARK_BASE,
-    ZAPRET2_ROUTE_MARK_BASE,
     RESERVED_TAGS,
     tag,
     inbound_tag,

@@ -59,10 +59,6 @@ function emit_reload_plan(previous, current, context) {
         dnsmasq: current.dnsmasq != previous.dnsmasq,
         sing_box: current.sing_box != previous.sing_box,
         nft: current.nft != previous.nft,
-        zapret_queue: current.zapret_queue != previous.zapret_queue,
-        zapret_runtime: current.zapret_runtime != previous.zapret_runtime,
-        zapret2_queue: current.zapret2_queue != previous.zapret2_queue,
-        zapret2_runtime: current.zapret2_runtime != previous.zapret2_runtime,
         list: current.list != previous.list,
         cron: current.cron != previous.cron
     };
@@ -70,8 +66,6 @@ function emit_reload_plan(previous, current, context) {
     let needs = {
         sing_box_reload: false,
         nft_rebuild: false,
-        zapret_restart: false,
-        zapret2_restart: false,
         dnsmasq_configure: false,
         dnsmasq_restore: false,
         cron_refresh: false,
@@ -83,24 +77,6 @@ function emit_reload_plan(previous, current, context) {
 
     if (changed.nft)
         needs.nft_rebuild = true;
-
-    if (changed.zapret_queue) {
-        needs.zapret_restart = true;
-        needs.nft_rebuild = true;
-        needs.sing_box_reload = true;
-    }
-
-    if (changed.zapret_runtime)
-        needs.zapret_restart = true;
-
-    if (changed.zapret2_queue) {
-        needs.zapret2_restart = true;
-        needs.nft_rebuild = true;
-        needs.sing_box_reload = true;
-    }
-
-    if (changed.zapret2_runtime)
-        needs.zapret2_restart = true;
 
     if (changed.dnsmasq) {
         if (!current.dont_touch_dhcp)
@@ -130,8 +106,6 @@ function emit_reload_plan(previous, current, context) {
     if (context.force_runtime_reload &&
         !needs.sing_box_reload &&
         !needs.nft_rebuild &&
-        !needs.zapret_restart &&
-        !needs.zapret2_restart &&
         !needs.dnsmasq_configure &&
         !needs.dnsmasq_restore)
         needs.sing_box_reload = true;
@@ -139,8 +113,6 @@ function emit_reload_plan(previous, current, context) {
     let has_work =
         needs.sing_box_reload ||
         needs.nft_rebuild ||
-        needs.zapret_restart ||
-        needs.zapret2_restart ||
         needs.dnsmasq_configure ||
         needs.dnsmasq_restore ||
         needs.cron_refresh ||
@@ -156,17 +128,11 @@ function emit_reload_plan(previous, current, context) {
     emit_bool("changed_dnsmasq", changed.dnsmasq);
     emit_bool("changed_sing_box", changed.sing_box);
     emit_bool("changed_nft", changed.nft);
-    emit_bool("changed_zapret_queue", changed.zapret_queue);
-    emit_bool("changed_zapret_runtime", changed.zapret_runtime);
-    emit_bool("changed_zapret2_queue", changed.zapret2_queue);
-    emit_bool("changed_zapret2_runtime", changed.zapret2_runtime);
     emit_bool("changed_cron", changed.cron);
     emit_bool("changed_list", changed.list);
 
     emit_bool("needs_sing_box_reload", needs.sing_box_reload);
     emit_bool("needs_nft_rebuild", needs.nft_rebuild);
-    emit_bool("needs_zapret_restart", needs.zapret_restart);
-    emit_bool("needs_zapret2_restart", needs.zapret2_restart);
     emit_bool("needs_dnsmasq_configure", needs.dnsmasq_configure);
     emit_bool("needs_dnsmasq_restore", needs.dnsmasq_restore);
     emit_bool("needs_cron_refresh", needs.cron_refresh);
@@ -180,37 +146,29 @@ function reload_plan() {
         dnsmasq: as_string(ARGV[2]),
         sing_box: as_string(ARGV[3]),
         nft: as_string(ARGV[4]),
-        zapret_queue: as_string(ARGV[5]),
-        zapret_runtime: as_string(ARGV[6]),
-        zapret2_queue: as_string(ARGV[7]),
-        zapret2_runtime: as_string(ARGV[8]),
-        list: as_string(ARGV[9]),
-        cron: as_string(ARGV[10]),
-        urltest_sections_known: arg_bool(ARGV[11]),
-        urltest_sections: as_string(ARGV[12])
+        list: as_string(ARGV[5]),
+        cron: as_string(ARGV[6]),
+        urltest_sections_known: arg_bool(ARGV[7]),
+        urltest_sections: as_string(ARGV[8])
     };
 
     let current = {
-        service_trigger: as_string(ARGV[13]),
-        dnsmasq: as_string(ARGV[14]),
-        sing_box: as_string(ARGV[15]),
-        nft: as_string(ARGV[16]),
-        zapret_queue: as_string(ARGV[17]),
-        zapret_runtime: as_string(ARGV[18]),
-        zapret2_queue: as_string(ARGV[19]),
-        zapret2_runtime: as_string(ARGV[20]),
-        list: as_string(ARGV[21]),
-        cron: as_string(ARGV[22]),
-        urltest_sections: as_string(ARGV[23]),
-        dont_touch_dhcp: arg_bool(ARGV[24])
+        service_trigger: as_string(ARGV[9]),
+        dnsmasq: as_string(ARGV[10]),
+        sing_box: as_string(ARGV[11]),
+        nft: as_string(ARGV[12]),
+        list: as_string(ARGV[13]),
+        cron: as_string(ARGV[14]),
+        urltest_sections: as_string(ARGV[15]),
+        dont_touch_dhcp: arg_bool(ARGV[16])
     };
 
     let context = {
-        force_runtime_reload: arg_bool(ARGV[25]),
-        dnsmasq_managed_state: arg_bool(ARGV[26]),
-        has_list_update_sources: arg_bool(ARGV[27]),
-        has_nft_list_update_sources: arg_bool(ARGV[28]),
-        runtime_cache_needs_rebuild: arg_bool(ARGV[29])
+        force_runtime_reload: arg_bool(ARGV[17]),
+        dnsmasq_managed_state: arg_bool(ARGV[18]),
+        has_list_update_sources: arg_bool(ARGV[19]),
+        has_nft_list_update_sources: arg_bool(ARGV[20]),
+        runtime_cache_needs_rebuild: arg_bool(ARGV[21])
     };
 
     emit_reload_plan(previous, current, context);
@@ -252,10 +210,6 @@ function plan_state_from_file(path) {
         dnsmasq: as_string(state.dnsmasq_signature),
         sing_box: as_string(state.sing_box_signature),
         nft: as_string(state.nft_signature),
-        zapret_queue: as_string(state.zapret_queue_signature),
-        zapret_runtime: as_string(state.zapret_runtime_signature),
-        zapret2_queue: as_string(state.zapret2_queue_signature),
-        zapret2_runtime: as_string(state.zapret2_runtime_signature),
         list: as_string(state.list_signature),
         cron: as_string(state.cron_signature),
         urltest_sections_known: state.__has.urltest_enabled_sections === true,

@@ -42,7 +42,6 @@ const SB_TPROXY_INBOUND_PORT = getenv("SB_TPROXY_INBOUND_PORT") || constants.SB_
 const SB_CLASH_API_CONTROLLER_PORT = getenv("SB_CLASH_API_CONTROLLER_PORT") || constants.SB_CLASH_API_CONTROLLER_PORT || "9090";
 const SING_BOX_BIN_PATH = getenv("FORKOP_DIAGNOSTICS_SING_BOX_BIN_PATH") || "/usr/bin/sing-box";
 const CLOUDFLARE_OCTETS = getenv("CLOUDFLARE_OCTETS") || constants.CLOUDFLARE_OCTETS || "8.47 162.159 188.114";
-const ZAPRET_LEGACY_DEFAULT_NFQWS_OPT = getenv("ZAPRET_LEGACY_DEFAULT_NFQWS_OPT") || constants.ZAPRET_LEGACY_DEFAULT_NFQWS_OPT || "";
 const DEFAULT_LATENCY_TEST_URL = getenv("DEFAULT_LATENCY_TEST_URL") || "https://www.gstatic.com/generate_204";
 const RUNTIME_STABLE_MIN_AGE = getenv("FORKOP_RUNTIME_STABLE_MIN_AGE") || "2";
 const AUTOMATIC_LATENCY_TEST_LOCK_DIR = getenv("FORKOP_AUTOMATIC_LATENCY_TEST_LOCK_DIR") || RUNTIME_STATE_DIR + "/automatic-latency-test.lock";
@@ -65,10 +64,6 @@ const DIAGNOSTICS_RUNTIME_UC = getenv("FORKOP_DIAGNOSTICS_RUNTIME_UC") || LIB_DI
 const SERVICE_UI_UC = LIB_DIR + "/service/ui.uc";
 const SUBSCRIPTION_CACHE_UC = LIB_DIR + "/subscription/cache.uc";
 const SINGBOX_RUNTIME_UC = LIB_DIR + "/singbox/runtime.uc";
-const ZAPRET_RUNTIME_UC = LIB_DIR + "/providers/zapret/runtime.uc";
-const ZAPRET2_RUNTIME_UC = LIB_DIR + "/providers/zapret2/runtime.uc";
-const ZAPRET_VALIDATOR_UC = LIB_DIR + "/providers/zapret/validator.uc";
-const ZAPRET2_VALIDATOR_UC = LIB_DIR + "/providers/zapret2/validator.uc";
 
 function as_string(value) {
     return value == null ? "" : "" + value;
@@ -173,13 +168,6 @@ function module_output_stdin(module_path, args, input) {
 
 function module_success(module_path, args) {
     return command_success(command_from_args(module_args(module_path, args)));
-}
-
-function module_passthrough(module_path, args) {
-    let result = module_capture(module_path, args);
-    if (result.output != "")
-        print(result.output);
-    return result.status;
 }
 
 function status_capture(args, input) {
@@ -623,10 +611,6 @@ function get_luci_app_version() {
     return "";
 }
 
-function provider_installed(runtime_uc) {
-    return module_success(runtime_uc, [ "installed" ]);
-}
-
 function sing_box_binary_signature() {
     let stat = fs.stat(SING_BOX_BIN_PATH);
     return stat == null ? "" : join(":", [ stat.inode, stat.size, stat.mtime, stat.ctime ]);
@@ -716,18 +700,7 @@ function system_info_cache_is_valid() {
     if (cache.forkop_version != FORKOP_VERSION || cache.luci_app_version != get_luci_app_version())
         return false;
 
-    let zapret_manager_installed = zapret_manager_is_installed() ? 1 : 0;
-
-    let zapret_installed = 0;
-    let zapret2_installed = 0;
-    if (provider_installed(ZAPRET_RUNTIME_UC))
-        zapret_installed = 1;
-    if (provider_installed(ZAPRET2_RUNTIME_UC))
-        zapret2_installed = 1;
-
-    return int(cache.zapret_installed || 0) == zapret_installed &&
-        int(cache.zapret2_installed || 0) == zapret2_installed &&
-        int(cache.zapret_manager_installed || 0) == zapret_manager_installed;
+    return int(cache.zapret_manager_installed || 0) == (zapret_manager_is_installed() ? 1 : 0);
 }
 
 function sing_box_compressed_binary() {
@@ -771,11 +744,6 @@ function sing_box_capability_flags(sing_box_version, sing_box_version_output) {
         tailscale = 1;
 
     return { extended, tiny, tailscale, package_name };
-}
-
-function provider_version(runtime_uc) {
-    let value = replace(module_output(runtime_uc, [ "package-version" ]), /[\r\n]+$/g, "");
-    return value != "" ? value : "unknown";
 }
 
 function openwrt_release() {
@@ -822,10 +790,6 @@ function build_system_info() {
     let flags = sing_box_capability_flags(sing_box_version, sing_box_version_output);
     let sing_box_compressed = flags.extended == 1 && sing_box_compressed_binary() ? 1 : 0;
 
-    let zapret_installed = provider_installed(ZAPRET_RUNTIME_UC) ? 1 : 0;
-    let zapret_version = zapret_installed ? provider_version(ZAPRET_RUNTIME_UC) : "not installed";
-    let zapret2_installed = provider_installed(ZAPRET2_RUNTIME_UC) ? 1 : 0;
-    let zapret2_version = zapret2_installed ? provider_version(ZAPRET2_RUNTIME_UC) : "not installed";
     let zapret_manager_installed = zapret_manager_is_installed() ? 1 : 0;
     let device_model = first_line_value("/tmp/sysinfo/model", "unknown");
     let packet_steering_mode = trim(uci_core.get("network.@globals[0].packet_steering"));
@@ -849,10 +813,6 @@ function build_system_info() {
         sing_box_compressed,
         sing_box_tailscale: flags.tailscale,
         sing_box_package: flags.package_name,
-        zapret_version,
-        zapret_installed,
-        zapret2_version,
-        zapret2_installed,
         zapret_manager_installed,
         packet_steering_mode,
         direct_proxy_enabled,
@@ -877,11 +837,6 @@ function get_system_info() {
     let system_info = sprintf("%J", build_system_info());
     write_system_info_cache(system_info);
     print(system_info, "\n");
-    return 0;
-}
-
-function neutralize_zapret_defaults() {
-    log_message("Standalone zapret is not neutralized automatically; Forkop uses /opt/zapret/nfq/nfqws as an external provider and manages only its own NFQUEUE range.", "info");
     return 0;
 }
 
@@ -976,22 +931,6 @@ function get_subscription_metadata(section) {
     }
     let result = subscription_cache([ "get-subscription-metadata", SECTION_CACHE_DIR, section, metadata_path ]);
     return print_subscription_result(result, "{}\n");
-}
-
-function validate_nfqws_strategy_json(raw_opt) {
-    let result = module_capture(ZAPRET_VALIDATOR_UC, [
-        "validate-json", "nfqws", as_string(raw_opt), ZAPRET_LEGACY_DEFAULT_NFQWS_OPT
-    ]);
-    if (result.output != "")
-        print(result.output);
-    return 0;
-}
-
-function validate_nfqws2_strategy_json(raw_opt) {
-    let result = module_capture(ZAPRET2_VALIDATOR_UC, [ "validate-json", "nfqws2", as_string(raw_opt) ]);
-    if (result.output != "")
-        print(result.output);
-    return 0;
 }
 
 function url_host(value) {
@@ -2141,24 +2080,6 @@ function global_check(arg1, arg2) {
         }
     }
 
-    if (file_executable("/etc/init.d/zapret") && command_success_from_args([ "/etc/init.d/zapret", "status" ])) {
-        print_global("━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        print_global("⚠️ Standalone zapret service is active. Forkop uses separate queues, but packet-level policy overlap is possible.");
-    }
-    else if (file_executable("/etc/init.d/zapret") && command_success_from_args([ "/etc/init.d/zapret", "enabled" ])) {
-        print_global("━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        print_global("⚠️ Standalone zapret autostart is enabled. Forkop will not modify /etc/config/zapret.");
-    }
-
-    if (file_executable("/etc/init.d/zapret2") && command_success_from_args([ "/etc/init.d/zapret2", "status" ])) {
-        print_global("━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        print_global("⚠️ Standalone zapret2 service is active. Forkop uses separate queues, but packet-level policy overlap is possible.");
-    }
-    else if (file_executable("/etc/init.d/zapret2") && command_success_from_args([ "/etc/init.d/zapret2", "enabled" ])) {
-        print_global("━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        print_global("⚠️ Standalone zapret2 autostart is enabled. Forkop will not modify /etc/config/zapret2.");
-    }
-
     print_global("━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     print_global("🥸 FakeIP status");
     let fakeip_check_json = command_capture(command_from_args(module_args(LIB_DIR + "/diagnostics/runtime.uc", [ "check-fakeip" ]))).output;
@@ -2258,12 +2179,6 @@ else if (mode == "fakeip-public-ip-comparison-available-fixture")
     fakeip_public_ip_comparison_available_fixture(ARGV[1]);
 else if (mode == "check-fakeip-fixture")
     exit(check_fakeip_fixture(ARGV[1]));
-else if (mode == "check-zapret-runtime")
-    exit(module_passthrough(ZAPRET_RUNTIME_UC, [ "check" ]));
-else if (mode == "check-zapret2-runtime")
-    exit(module_passthrough(ZAPRET2_RUNTIME_UC, [ "check" ]));
-else if (mode == "neutralize-zapret-defaults")
-    exit(neutralize_zapret_defaults());
 else if (mode == "clash-api")
     exit(clash_api(ARGV[1], ARGV[2], ARGV[3], ARGV[4]));
 else if (mode == "clash-api-ready")
@@ -2288,10 +2203,6 @@ else if (mode == "get-subscription-metadata")
     exit(get_subscription_metadata(ARGV[1]));
 else if (mode == "get-sing-box-status")
     exit(get_sing_box_status());
-else if (mode == "get-zapret-status")
-    exit(module_passthrough(ZAPRET_RUNTIME_UC, [ "status" ]));
-else if (mode == "get-zapret2-status")
-    exit(module_passthrough(ZAPRET2_RUNTIME_UC, [ "status" ]));
 else if (mode == "get-system-info")
     exit(get_system_info());
 else if (mode == "check-dns-available")
@@ -2300,10 +2211,6 @@ else if (mode == "global-check")
     exit(global_check(ARGV[1] || "", ARGV[2] || ""));
 else if (mode == "support-report")
     exit(support_report());
-else if (mode == "validate-nfqws-strategy-json")
-    exit(validate_nfqws_strategy_json(ARGV[1] || ""));
-else if (mode == "validate-nfqws2-strategy-json")
-    exit(validate_nfqws2_strategy_json(ARGV[1] || ""));
 else {
     warn("Usage: diagnostics/runtime.uc <operation> ...\n");
     exit(1);
