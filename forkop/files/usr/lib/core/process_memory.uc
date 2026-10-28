@@ -6,12 +6,10 @@ function start_ticks(stat) {
     return length(fields) >= 20 ? fields[19] : null;
 }
 
-function services_rss_bytes(services, service_name, proc_root) {
-    if (type(services) != "object" || type(services[service_name]) != "object")
-        return null;
-    let instances = services[service_name].instances || {};
+// Sum the verified instances of one procd service. The caller owns `seen`, so a
+// pid reached through two service names is counted once across a whole group.
+function instances_rss_bytes(instances, proc_root, seen) {
     let total = 0;
-    let seen = {};
     for (let _, instance in instances) {
         let pid = int(instance.pid || 0);
         if (instance.running !== true || pid <= 0 || seen[pid])
@@ -43,22 +41,82 @@ function services_rss_bytes(services, service_name, proc_root) {
     return total;
 }
 
-// Only count live procd children whose command still matches the registered
-// instance. Never infer core identity from its process name or memory usage.
-function service_rss_bytes(service_name) {
-    if (match(service_name || "", /^[A-Za-z0-9_.-]+$/) == null)
+function services_rss_bytes(services, service_name, proc_root) {
+    if (type(services) != "object" || type(services[service_name]) != "object")
         return null;
-    let pipe = fs.popen("ubus call service list '{\"name\":\"" + service_name + "\"}' 2>/dev/null", "r");
+    return instances_rss_bytes(services[service_name].instances || {}, proc_root, {});
+}
+
+// One figure for several procd services. Forkop's resident memory is spread over
+// more than one service -- the native Tailscale runs the very same core binary
+// under a service of its own -- so asking about a single name reports a fraction
+// of what is actually resident and calls it the total.
+//
+// A name procd does not know is a component that is not installed: it adds
+// nothing and does not spoil the figure. A service procd does know but whose
+// instance cannot be verified makes the whole figure unavailable, so a number
+// that is known to be short is never shown. When none of the names is known the
+// figure is unavailable rather than zero, which is what tells an uninstalled
+// core apart from one using no memory.
+function services_group_rss_bytes(services, service_names, proc_root) {
+    if (type(services) != "object" || type(service_names) != "array")
+        return null;
+
+    let total = 0;
+    let seen = {};
+    let known = false;
+    for (let service_name in service_names) {
+        if (type(services[service_name]) != "object")
+            continue;
+        let bytes = instances_rss_bytes(services[service_name].instances || {}, proc_root, seen);
+        if (bytes == null)
+            return null;
+        known = true;
+        total += bytes;
+    }
+
+    return known ? total : null;
+}
+
+function ubus_services(request) {
+    let pipe = fs.popen("ubus call service list " + request + " 2>/dev/null", "r");
     if (!pipe)
         return null;
     let output = pipe.read("all");
     let status = pipe.close();
-    let services;
-    try { services = json(output); } catch (e) { return null; }
     if (status != 0)
         return null;
-    return services_rss_bytes(services, service_name, "/proc");
+    try { return json(output); } catch (e) { return null; }
+}
+
+function valid_service_name(service_name) {
+    return match(service_name || "", /^[A-Za-z0-9_.-]+$/) != null;
+}
+
+// Only count live procd children whose command still matches the registered
+// instance. Never infer core identity from its process name or memory usage.
+function service_rss_bytes(service_name) {
+    if (!valid_service_name(service_name))
+        return null;
+    return services_rss_bytes(
+        ubus_services("'{\"name\":\"" + service_name + "\"}'"), service_name, "/proc");
+}
+
+// One unfiltered listing answers for every name at once, which is one shell and
+// one ubus round trip instead of one per service.
+function service_group_rss_bytes(service_names) {
+    if (type(service_names) != "array")
+        return null;
+    for (let service_name in service_names)
+        if (!valid_service_name(service_name))
+            return null;
+    return services_group_rss_bytes(ubus_services(""), service_names, "/proc");
 }
 
 
-return { service_rss_bytes, services_rss_bytes };
+return {
+    service_rss_bytes,
+    service_group_rss_bytes,
+    services_rss_bytes,
+    services_group_rss_bytes
+};

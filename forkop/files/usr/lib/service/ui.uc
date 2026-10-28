@@ -10,6 +10,13 @@ const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
 const BIN_PATH = getenv("FORKOP_BIN") || "/usr/bin/forkop";
 const SERVICE_INIT = getenv("FORKOP_SERVICE_INIT") || "/etc/init.d/forkop";
 const SERVICE_NAME = getenv("FORKOP_SERVICE_NAME") || "forkop";
+// The core's resident memory is spread over two procd services: forkop-tailscale
+// runs the very same core binary, so leaving it out reports roughly half of what
+// the core actually occupies. A name procd does not know is a component that is
+// not installed and simply adds nothing.
+const CORE_SERVICE_NAMES = [ "sing-box", "forkop-tailscale" ];
+// Forkop's own workers, each in a procd service of its own.
+const FORKOP_SERVICE_NAMES = [ SERVICE_NAME, "forkop-torrserver-direct" ];
 const STATE_UC = LIB_DIR + "/service/state.uc";
 const UI_UC = LIB_DIR + "/service/ui.uc";
 const STATE_DIR = getenv("FORKOP_UI_STATE_DIR") || "/var/run/forkop/ui-state";
@@ -1094,11 +1101,16 @@ function current_ui_state_json() {
     else if (active_action == "reload")
         forkop_status = "reloading";
 
+    // One listing answers for every service below, instead of a shell and a ubus
+    // round trip per name.
+    let procd_services = process_memory.ubus_services("");
+
     write_json({
         service: {
             forkop: {
                 running: forkop_is_running,
-                memory_rss_bytes: process_memory.service_rss_bytes(SERVICE_NAME),
+                memory_rss_bytes: process_memory.services_group_rss_bytes(
+                    procd_services, FORKOP_SERVICE_NAMES, "/proc"),
                 restart_blocked: restart_blocked ? 1 : 0,
                 stop_available: stop_available ? 1 : 0,
                 enabled: forkop_is_enabled,
@@ -1107,7 +1119,8 @@ function current_ui_state_json() {
             },
             sing_box: {
                 running: sing_box_is_running,
-                memory_rss_bytes: process_memory.service_rss_bytes("sing-box"),
+                memory_rss_bytes: process_memory.services_group_rss_bytes(
+                    procd_services, CORE_SERVICE_NAMES, "/proc"),
                 enabled: sing_box_is_enabled,
                 status: sing_box_status
             }

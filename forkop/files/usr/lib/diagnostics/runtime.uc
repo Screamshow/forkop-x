@@ -14,6 +14,11 @@ const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
 const FORKOP_VERSION = getenv("FORKOP_VERSION") || constants.FORKOP_VERSION || "";
 const FORKOP_CONFIG = getenv("FORKOP_CONFIG") || constants.FORKOP_CONFIG || "/etc/config/" + CONFIG_NAME;
 const FORKOP_SERVICE_NAME = getenv("FORKOP_SERVICE_NAME") || constants.FORKOP_SERVICE_NAME || "forkop";
+// The core's resident memory is spread over two procd services: forkop-tailscale
+// runs the very same core binary. Forkop's own workers likewise sit in more than
+// one service. A name procd does not know is a component that is not installed.
+const CORE_SERVICE_NAMES = [ "sing-box", "forkop-tailscale" ];
+const FORKOP_SERVICE_NAMES = [ FORKOP_SERVICE_NAME, "forkop-torrserver-direct" ];
 const FORKOP_LUCI_VIEW_DIR = getenv("FORKOP_LUCI_VIEW_DIR") || constants.FORKOP_LUCI_VIEW_DIR || "/www/luci-static/resources/view/forkop";
 const RUNTIME_STATE_DIR = getenv("FORKOP_RUNTIME_STATE_DIR") || "/var/run/forkop";
 const SYSTEM_INFO_CACHE_FILE = getenv("FORKOP_SYSTEM_INFO_CACHE_FILE") || RUNTIME_STATE_DIR + "/system-info.json";
@@ -892,12 +897,12 @@ function service_status_label(running, enabled) {
     return arg_number(enabled) == 1 ? "stopped but enabled" : "stopped & disabled";
 }
 
-function write_service_status(running, enabled, dns_configured, service_name) {
+function write_service_status(running, enabled, dns_configured, service_names) {
     write_json({
         running,
         enabled,
         status: service_status_label(running, enabled),
-        memory_rss_bytes: process_memory.service_rss_bytes(service_name),
+        memory_rss_bytes: process_memory.service_group_rss_bytes(service_names),
         dns_configured
     });
 }
@@ -913,7 +918,7 @@ function get_sing_box_status() {
     ]) ? 1 : 0;
     let enabled = file_executable("/etc/rc.d/S99sing-box") ? 1 : 0;
     let dns_configured = dnsmasq_has_forkop_dns() ? 1 : 0;
-    write_service_status(running, enabled, dns_configured, "sing-box");
+    write_service_status(running, enabled, dns_configured, CORE_SERVICE_NAMES);
     return 0;
 }
 
@@ -923,7 +928,7 @@ function get_status() {
     ]) ? 1 : 0;
     let enabled = file_executable("/etc/rc.d/S99" + FORKOP_SERVICE_NAME) ? 1 : 0;
     let dns_configured = dnsmasq_has_forkop_dns() ? 1 : 0;
-    write_service_status(running, enabled, dns_configured, FORKOP_SERVICE_NAME);
+    write_service_status(running, enabled, dns_configured, FORKOP_SERVICE_NAMES);
     return 0;
 }
 
