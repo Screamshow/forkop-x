@@ -34,9 +34,12 @@ function first_line_value(path) {
     return trim(newline >= 0 ? substr(data, 0, newline) : data);
 }
 
+// Pid 0 is not a process: `kill -0 0` signals the caller's own process group and
+// always succeeds, so an owner of 0 would read as alive for ever and the lock
+// would never be released to anybody.
 function pid_alive(pid) {
     pid = as_string(pid);
-    return match(pid, /^[0-9]+$/) != null && command_success([ "kill", "-0", pid ]);
+    return match(pid, /^[1-9][0-9]*$/) != null && command_success([ "kill", "-0", pid ]);
 }
 
 function current_epoch() {
@@ -68,10 +71,19 @@ function held(lock_dir) {
     return now <= 0 || created <= 0 || now - created < OWNER_WRITE_GRACE_SECONDS;
 }
 
+function release(lock_dir) {
+    lock_dir = as_string(lock_dir);
+    if (lock_dir == "")
+        return;
+
+    command_success([ "rm", "-f", lock_dir + "/pid" ]);
+    command_success([ "rmdir", lock_dir ]);
+}
+
 function acquire(lock_dir, owner_pid) {
     lock_dir = as_string(lock_dir);
     owner_pid = as_string(owner_pid);
-    if (lock_dir == "" || match(owner_pid, /^[0-9]+$/) == null)
+    if (lock_dir == "" || match(owner_pid, /^[1-9][0-9]*$/) == null)
         return false;
 
     if (command_success([ "mkdir", lock_dir ])) {
@@ -96,15 +108,6 @@ function acquire(lock_dir, owner_pid) {
         return false;
 
     return claim_owner(lock_dir, owner_pid);
-}
-
-function release(lock_dir) {
-    lock_dir = as_string(lock_dir);
-    if (lock_dir == "")
-        return;
-
-    command_success([ "rm", "-f", lock_dir + "/pid" ]);
-    command_success([ "rmdir", lock_dir ]);
 }
 
 return {

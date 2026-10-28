@@ -34,6 +34,34 @@ done
 [ "$dead_pid" != 0 ] || fail 'no unused pid to test an abandoned lock with'
 
 if lock_op held "$lock"; then fail 'a lock that does not exist is reported as held'; fi
+
+# Recording the owner is the one step of taking a lock that runs a shell, so a
+# shell that refuses makes it fail with the directory already created. That path
+# has to give the lock back and answer no, not abort the caller: a reload or a
+# latency test that dies here leaves the directory behind for the grace window
+# and reports nothing at all.
+mkdir -p "$work/noshell"
+printf '#!/bin/sh\nexit 1\n' >"$work/noshell/sh"
+chmod +x "$work/noshell/sh"
+if PATH="$work/noshell:$PATH" lock_op acquire "$work/unclaimable" "$$" 2>"$work/claim.err"; then
+  fail 'a lock whose owner could not be recorded was reported as taken'
+fi
+[ ! -s "$work/claim.err" ] ||
+  fail "recording the owner failed with an error instead of a refusal: $(cat "$work/claim.err")"
+[ ! -e "$work/unclaimable" ] ||
+  fail 'a lock whose owner could not be recorded was left behind'
+
+# A pid of 0 is not a process. `kill -0 0` signals the caller's own process group
+# and succeeds, so an owner of 0 must be refused outright rather than recorded as
+# an owner that can never be proven gone.
+if lock_op acquire "$work/zero.lock" 0; then fail 'a lock was given to owner 0'; fi
+[ ! -e "$work/zero.lock" ] || fail 'the refused owner 0 left a lock behind'
+mkdir "$work/zero.held"
+printf '0\n' >"$work/zero.held/pid"
+if lock_op held "$work/zero.held"; then fail 'a lock owned by pid 0 is reported as held'; fi
+lock_op acquire "$work/zero.held" "$$" || fail 'a lock owned by pid 0 was never recoverable'
+[ "$(cat "$work/zero.held/pid")" = "$$" ] || fail 'the owner was not recorded over pid 0'
+lock_op release "$work/zero.held"
 lock_op acquire "$lock" "$$" || fail 'a free lock was not acquired'
 [ "$(cat "$lock/pid")" = "$$" ] || fail 'the owner was not recorded'
 lock_op held "$lock" || fail 'a held lock is reported as free'
