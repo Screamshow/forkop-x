@@ -1791,6 +1791,54 @@ function formatServiceMemory(bytes?: number | null) {
     : _('✔ Running');
 }
 
+type ServicesInfoRow = {
+  key: string;
+  value: string;
+  attributes?: { class?: string; title?: string };
+};
+
+function serviceRow(
+  key: string,
+  running: boolean,
+  memoryBytes: number | null | undefined,
+  options: { child?: boolean; title?: string } = {},
+): ServicesInfoRow {
+  const classes = [
+    running
+      ? 'fkp_dashboard-page__widgets-section__item__row--success'
+      : 'fkp_dashboard-page__widgets-section__item__row--error',
+  ];
+
+  if (options.child) {
+    classes.push('fkp_dashboard-page__widgets-section__item__row--nested');
+  }
+
+  return {
+    key: options.child ? `└ ${key}` : key,
+    value: running ? formatServiceMemory(memoryBytes) : _('✘ Stopped'),
+    attributes: { class: classes.join(' '), title: options.title },
+  };
+}
+
+// A service procd does not know is a component that is not installed: it gets
+// no row at all rather than a zero.
+function nestedServiceRow(
+  key: string,
+  state: { running: number; memoryBytes?: number | null } | null | undefined,
+  title: string,
+): ServicesInfoRow[] {
+  if (!state) {
+    return [];
+  }
+
+  return [
+    serviceRow(key, Boolean(state.running), state.memoryBytes, {
+      child: true,
+      title,
+    }),
+  ];
+}
+
 async function renderServicesInfoWidget() {
   logger.debug('[DASHBOARD]', 'renderServicesInfoWidget');
   const servicesInfoWidget = store.get().servicesInfoWidget;
@@ -1817,28 +1865,36 @@ async function renderServicesInfoWidget() {
     failed: servicesInfoWidget.failed,
     title: _('Services info'),
     items: [
-      {
-        key: 'Forkop X',
-        value: servicesInfoWidget.data.forkopRunning
-          ? formatServiceMemory(servicesInfoWidget.data.forkopMemoryBytes)
-          : _('✘ Stopped'),
-        attributes: {
-          class: servicesInfoWidget.data.forkopRunning
-            ? 'fkp_dashboard-page__widgets-section__item__row--success'
-            : 'fkp_dashboard-page__widgets-section__item__row--error',
+      serviceRow(
+        'Forkop X',
+        Boolean(servicesInfoWidget.data.forkopRunning),
+        servicesInfoWidget.data.forkopMemoryBytes,
+        {
+          title: _(
+            'Resident memory (RSS) of the Forkop service and its own workers.',
+          ),
         },
-      },
-      {
-        key: getSingBoxName(store.get().diagnosticsSystemInfo),
-        value: servicesInfoWidget.data.singbox
-          ? formatServiceMemory(servicesInfoWidget.data.singboxMemoryBytes)
-          : _('✘ Stopped'),
-        attributes: {
-          class: servicesInfoWidget.data.singbox
-            ? 'fkp_dashboard-page__widgets-section__item__row--success'
-            : 'fkp_dashboard-page__widgets-section__item__row--error',
+      ),
+      ...nestedServiceRow(
+        _('TorrServer Direct'),
+        servicesInfoWidget.data.torrserverDirect,
+        _('Its own worker; part of the Forkop X total above.'),
+      ),
+      serviceRow(
+        getSingBoxName(store.get().diagnosticsSystemInfo),
+        Boolean(servicesInfoWidget.data.singbox),
+        servicesInfoWidget.data.singboxMemoryBytes,
+        {
+          title: _(
+            'Resident memory (RSS) of every service running the core binary.',
+          ),
         },
-      },
+      ),
+      ...nestedServiceRow(
+        'Tailscale',
+        servicesInfoWidget.data.tailscale,
+        _('Runs the same core binary; part of the core total above.'),
+      ),
     ],
   });
 

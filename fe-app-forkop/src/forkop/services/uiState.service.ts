@@ -15,6 +15,14 @@ function isRunningAction(state: { running?: boolean }) {
   return state.running === true;
 }
 
+// A service procd does not know keeps its dashboard row hidden, so the null
+// the runtime reports is passed through rather than flattened to zero.
+function serviceProcessState(state?: Forkop.ServiceProcessState | null) {
+  return state
+    ? { running: state.running, memoryBytes: state.memory_rss_bytes }
+    : null;
+}
+
 function getEmptyUpdatesActions(): StoreType['updatesActions'] {
   return {
     forkopCheck: { loading: false },
@@ -107,6 +115,10 @@ function applyServiceState(uiState: Forkop.UiState) {
       data: {
         singbox: uiState.service.sing_box.running,
         singboxMemoryBytes: uiState.service.sing_box.memory_rss_bytes,
+        tailscale: serviceProcessState(uiState.service.tailscale),
+        torrserverDirect: serviceProcessState(
+          uiState.service.torrserver_direct,
+        ),
         forkopMemoryBytes: uiState.service.forkop.memory_rss_bytes,
         forkopRunning: uiState.service.forkop.running,
         stopAvailable:

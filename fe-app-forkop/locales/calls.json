@@ -51,8 +51,7 @@
     "call": "✘ Stopped",
     "key": "✘ Stopped",
     "places": [
-      "src/forkop/tabs/dashboard/initController.ts:1824",
-      "src/forkop/tabs/dashboard/initController.ts:1835"
+      "src/forkop/tabs/dashboard/initController.ts:1818"
     ]
   },
   {
@@ -2596,6 +2595,13 @@
     ]
   },
   {
+    "call": "Its own worker; part of the Forkop X total above.",
+    "key": "Its own worker; part of the Forkop X total above.",
+    "places": [
+      "src/forkop/tabs/dashboard/initController.ts:1881"
+    ]
+  },
+  {
     "call": "JSON outbound",
     "key": "JSON outbound",
     "places": [
@@ -3551,10 +3557,24 @@
     ]
   },
   {
+    "call": "Resident memory (RSS) of every service running the core binary.",
+    "key": "Resident memory (RSS) of every service running the core binary.",
+    "places": [
+      "src/forkop/tabs/dashboard/initController.ts:1888"
+    ]
+  },
+  {
     "call": "Resident memory (RSS) of the core process.",
     "key": "Resident memory (RSS) of the core process.",
     "places": [
       "src/forkop/tabs/dashboard/initController.ts:1780"
+    ]
+  },
+  {
+    "call": "Resident memory (RSS) of the Forkop service and its own workers.",
+    "key": "Resident memory (RSS) of the Forkop service and its own workers.",
+    "places": [
+      "src/forkop/tabs/dashboard/initController.ts:1873"
     ]
   },
   {
@@ -3697,6 +3717,13 @@
     "key": "Run Diagnostic",
     "places": [
       "src/forkop/tabs/diagnostic/partials/renderRunAction.ts:17"
+    ]
+  },
+  {
+    "call": "Runs the same core binary; part of the core total above.",
+    "key": "Runs the same core binary; part of the core total above.",
+    "places": [
+      "src/forkop/tabs/dashboard/initController.ts:1896"
     ]
   },
   {
@@ -3977,7 +4004,7 @@
     "call": "Services info",
     "key": "Services info",
     "places": [
-      "src/forkop/tabs/dashboard/initController.ts:1818"
+      "src/forkop/tabs/dashboard/initController.ts:1866"
     ]
   },
   {
@@ -4397,6 +4424,7 @@
     "call": "TorrServer Direct",
     "key": "TorrServer Direct",
     "places": [
+      "src/forkop/tabs/dashboard/initController.ts:1879",
       "src/forkop/tabs/updates/initController.ts:894"
     ]
   },

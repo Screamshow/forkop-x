@@ -101,6 +101,11 @@ export const styles = `
 
 .fkp_dashboard-page__widgets-section__item__row {}
 
+.fkp_dashboard-page__widgets-section__item__row--nested .fkp_dashboard-page__widgets-section__item__row__key {
+    padding-left: 6px;
+    opacity: 0.75;
+}
+
 .fkp_dashboard-page__widgets-section__item__row--success .fkp_dashboard-page__widgets-section__item__row__value {
     color: var(--success-color-medium, green);
 }

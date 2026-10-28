@@ -7,8 +7,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: FORKOP\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-28 09:43+0000\n"
-"PO-Revision-Date: 2026-10-28 09:43+0000\n"
+"POT-Creation-Date: 2026-10-28 10:16+0000\n"
+"PO-Revision-Date: 2026-10-28 10:16+0000\n"
 "Last-Translator: Screamshow\n"
 "Language-Team: none\n"
 "Language: ru\n"
@@ -1082,6 +1082,9 @@ msgstr "Только IPv6"
 msgid "Issues detected"
 msgstr "Обнаружены проблемы"
 
+msgid "Its own worker; part of the Forkop X total above."
+msgstr "Отдельный воркер; входит в итог Forkop X выше."
+
 msgid "JSON outbound"
 msgstr "JSON outbound"
 
@@ -1472,8 +1475,14 @@ msgstr "Требовать логин и пароль для локальног�
 msgid "Requires downloaded Meta subnet lists in an enabled routing section without source or port filters. Keeps existing routes and explicit DNS rules. Devices must use the router DNS. Custom DNS rules may override this setting."
 msgstr "Нужны загруженные подсети Meta во включённой секции без фильтров устройств и портов. Сохраняет существующие маршруты и явные DNS-правила. Устройства должны использовать DNS роутера. Собственные DNS-правила могут переопределять эту настройку."
 
+msgid "Resident memory (RSS) of every service running the core binary."
+msgstr "Резидентная память (RSS) всех служб, использующих бинарник ядра."
+
 msgid "Resident memory (RSS) of the core process."
 msgstr ""
+
+msgid "Resident memory (RSS) of the Forkop service and its own workers."
+msgstr "Резидентная память (RSS) службы Forkop и её собственных воркеров."
 
 msgid "Resolve domain names before routing so sing-box can use real destination IPs."
 msgstr "Разрешать доменные имена перед маршрутизацией, чтобы sing-box использовал реальные IP-адреса назначения."
@@ -1534,6 +1543,9 @@ msgstr "Правила прокси существуют"
 
 msgid "Run Diagnostic"
 msgstr "Запустить диагностику"
+
+msgid "Runs the same core binary; part of the core total above."
+msgstr "Использует тот же бинарник ядра; входит в итог ядра выше."
 
 msgid "Save"
 msgstr "Сохранить"

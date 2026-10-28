@@ -387,6 +387,13 @@ export namespace Forkop {
     descriptions?: Record<string, string>;
   }
 
+  // One procd service named on its own. Absent when procd does not know it,
+  // which is a component that is not installed.
+  export interface ServiceProcessState {
+    running: number;
+    memory_rss_bytes?: number | null;
+  }
+
   export interface GetSingBoxStatus {
     memory_rss_bytes?: number | null;
     running: number;
@@ -469,6 +476,8 @@ export namespace Forkop {
     service: {
       forkop: GetStatus;
       sing_box: GetSingBoxStatus;
+      tailscale?: ServiceProcessState | null;
+      torrserver_direct?: ServiceProcessState | null;
     };
     capabilities: GetUiCapabilities;
     actions: {

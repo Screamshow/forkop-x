@@ -58,6 +58,10 @@ export async function fetchServicesInfo() {
         forkopMemoryBytes: forkop.success
           ? forkop.data.memory_rss_bytes
           : undefined,
+        // This fallback cannot see the per-service figures, so keep whatever
+        // the last runtime state reported instead of dropping their rows.
+        tailscale: previousData.tailscale,
+        torrserverDirect: previousData.torrserverDirect,
         singbox: singbox.success ? singbox.data.running : previousData.singbox,
         forkopRunning: forkop.success
           ? forkop.data.running

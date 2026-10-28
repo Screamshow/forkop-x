@@ -78,6 +78,27 @@ function services_group_rss_bytes(services, service_names, proc_root) {
     return known ? total : null;
 }
 
+// One procd service on its own, for a dashboard row that names it. A name
+// procd does not know is a component that is not installed, and the caller
+// gets null so it can leave the row out instead of printing a zero. A known
+// service with no live instance reports running false with zero bytes, which
+// is a stopped service rather than a missing one.
+function services_state(services, service_name, proc_root) {
+    if (type(services) != "object" || type(services[service_name]) != "object")
+        return null;
+
+    let instances = services[service_name].instances || {};
+    let running = false;
+    for (let _, instance in instances)
+        if (instance.running === true && int(instance.pid || 0) > 0)
+            running = true;
+
+    return {
+        running: running ? 1 : 0,
+        memory_rss_bytes: instances_rss_bytes(instances, proc_root, {})
+    };
+}
+
 function ubus_services(request) {
     let pipe = fs.popen("ubus call service list " + request + " 2>/dev/null", "r");
     if (!pipe)
@@ -118,5 +139,6 @@ return {
     service_rss_bytes,
     service_group_rss_bytes,
     services_rss_bytes,
-    services_group_rss_bytes
+    services_group_rss_bytes,
+    services_state
 };

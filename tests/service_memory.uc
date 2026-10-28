@@ -62,6 +62,20 @@ check(memory.services_group_rss_bytes(services,
     "One process counted once across names");
 delete services["forkop-tailscale-alias"];
 
+// The dashboard also names single services. An installed one reports its own
+// share, a stopped one reports zero, and a name procd does not know reports
+// nothing at all so the row can be left out.
+let tailscale_state = memory.services_state(services, "forkop-tailscale", root);
+check(tailscale_state.running, 1, "A live single service is running");
+check(tailscale_state.memory_rss_bytes, 6602752, "A single service reports its own RSS");
+check(memory.services_state(services, "absent-service", root), null,
+    "An unknown single service has no state at all");
+tailscale.running = false;
+let stopped_state = memory.services_state(services, "forkop-tailscale", root);
+check(stopped_state.running, 0, "A registered service with no live instance is stopped");
+check(stopped_state.memory_rss_bytes, 0, "A stopped single service occupies nothing");
+tailscale.running = true;
+
 // A service that is registered but stopped contributes nothing and must not make
 // the figure unavailable: the rest of the group is still measurable.
 tailscale.running = false;

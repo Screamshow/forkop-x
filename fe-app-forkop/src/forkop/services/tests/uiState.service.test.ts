@@ -50,6 +50,35 @@ describe('confirmed restart conflict in UI state', () => {
   });
 });
 
+describe('per-service memory rows', () => {
+  it('passes the services the runtime names through to the widget', () => {
+    const state = createUiState();
+    state.service.tailscale = { running: 1, memory_rss_bytes: 6602752 };
+    state.service.torrserver_direct = { running: 0, memory_rss_bytes: 0 };
+
+    applyUiStateToStore(state);
+
+    expect(store.get().servicesInfoWidget.data.tailscale).toEqual({
+      running: 1,
+      memoryBytes: 6602752,
+    });
+    expect(store.get().servicesInfoWidget.data.torrserverDirect).toEqual({
+      running: 0,
+      memoryBytes: 0,
+    });
+  });
+
+  it('keeps a service procd does not know out of the widget', () => {
+    const state = createUiState();
+    state.service.tailscale = null;
+
+    applyUiStateToStore(state);
+
+    expect(store.get().servicesInfoWidget.data.tailscale).toBeNull();
+    expect(store.get().servicesInfoWidget.data.torrserverDirect).toBeNull();
+  });
+});
+
 function createUiState(
   actions: Partial<Forkop.UiState['actions']> = {},
   capabilities: Partial<Forkop.UiState['capabilities']> = {},

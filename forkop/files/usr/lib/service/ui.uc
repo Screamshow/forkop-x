@@ -14,9 +14,11 @@ const SERVICE_NAME = getenv("FORKOP_SERVICE_NAME") || "forkop";
 // runs the very same core binary, so leaving it out reports roughly half of what
 // the core actually occupies. A name procd does not know is a component that is
 // not installed and simply adds nothing.
-const CORE_SERVICE_NAMES = [ "sing-box", "forkop-tailscale" ];
+const TAILSCALE_SERVICE_NAME = "forkop-tailscale";
+const TORRSERVER_SERVICE_NAME = "forkop-torrserver-direct";
+const CORE_SERVICE_NAMES = [ "sing-box", TAILSCALE_SERVICE_NAME ];
 // Forkop's own workers, each in a procd service of its own.
-const FORKOP_SERVICE_NAMES = [ SERVICE_NAME, "forkop-torrserver-direct" ];
+const FORKOP_SERVICE_NAMES = [ SERVICE_NAME, TORRSERVER_SERVICE_NAME ];
 const STATE_UC = LIB_DIR + "/service/state.uc";
 const UI_UC = LIB_DIR + "/service/ui.uc";
 const STATE_DIR = getenv("FORKOP_UI_STATE_DIR") || "/var/run/forkop/ui-state";
@@ -1117,7 +1119,14 @@ function current_ui_state_json() {
                     procd_services, CORE_SERVICE_NAMES, "/proc"),
                 enabled: sing_box_is_enabled,
                 status: sing_box_status
-            }
+            },
+            // The two totals above stay totals; these break out the share of
+            // each that belongs to a service the dashboard names separately.
+            // Null means procd does not know the service at all.
+            tailscale: process_memory.services_state(
+                procd_services, TAILSCALE_SERVICE_NAME, "/proc"),
+            torrserver_direct: process_memory.services_state(
+                procd_services, TORRSERVER_SERVICE_NAME, "/proc")
         },
         config_error,
         subscription_error: read_json_file(SUBSCRIPTION_APPLY_ERROR_FILE),

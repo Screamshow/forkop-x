@@ -161,6 +161,13 @@ export interface StoreType {
       forkopRunning: number;
       forkopMemoryBytes?: number | null;
       singboxMemoryBytes?: number | null;
+      // Undefined until the runtime reports the service; null state means
+      // procd does not know it, so the dashboard leaves its row out.
+      tailscale?: { running: number; memoryBytes?: number | null } | null;
+      torrserverDirect?: {
+        running: number;
+        memoryBytes?: number | null;
+      } | null;
       stopAvailable: number;
       restartBlocked: number;
       restartConflictConfirmed?: boolean;
