@@ -2122,8 +2122,7 @@ function normalize_component_name(component) {
 
 function valid_component_name(component) {
     component = normalize_component_name(component);
-    return component == "forkop" || component == "sing_box" || component == "zapret" ||
-        component == "zapret2" || component == "zapret_manager" ||
+    return component == "forkop" || component == "sing_box" || component == "zapret_manager" ||
         component == "packet_steering" || component == "direct_proxy" || component == "torrserver_direct";
 }
 
@@ -2232,7 +2231,7 @@ function component_update_check_cache() {
     let results = [];
 
     if (enabled) {
-        for (let component in [ "forkop", "sing_box", "zapret", "zapret2" ]) {
+        for (let component in [ "forkop", "sing_box" ]) {
             let value = read_json_file(component_update_check_cache_path(component));
             if (component_update_check_result_cacheable(value))
                 push(results, value);
@@ -2586,10 +2585,6 @@ function automatic_component_check_names() {
 
     if (fs.stat("/usr/bin/sing-box") != null)
         push(result, "sing_box");
-    if (module_success([ LIB_DIR + "/providers/zapret/runtime.uc", "installed" ]))
-        push(result, "zapret");
-    if (module_success([ LIB_DIR + "/providers/zapret2/runtime.uc", "installed" ]))
-        push(result, "zapret2");
 
     return result;
 }
