@@ -71,3 +71,39 @@ No assertion is made that every system log is empty: the VM has unrelated
 Tailscale connection failures, DNS-rebind warnings and external feed TLS failures.
 No successful proxy transfer to the synthetic migration endpoint is expected;
 the reserved test IP is deliberately not a live proxy.
+
+## OpenWrt 24 / IPK reproduction and upgrade
+
+Existing VMware OpenWrt 24.10.8 at 192.168.241.2 was also tested. Initial state
+was Forkop 2.3.4-canary.2 and Rust X 0.0.27-9200. Package, service, UCI, nft and
+configuration snapshots were saved before installing baseline Forkop 2.6.0.
+The existing core was preserved.
+
+On the real 2.6.0 backend, all three original failures were reproduced:
+
+- A worker inheriting a deleted bytecode generation logged the missing
+  `components/action.uc` file.
+- A worker encountering a held component lock produced three busy error logs.
+- A cached subscription changed from a domain to 192.0.2.10 with a stale selected
+  binding; the original generator rejected URLTest group ms1 as empty.
+
+The real component updater then installed all three candidate IPKs through
+native opkg, including actual pre/post-upgrade hooks and service startup.
+Startup recovered the binding, ms1 selected the IP, DNS answered, and Manager
+RPC health succeeded. The patched worker was then given the same deleted
+inherited library path and held component lock: it waited, retried and exited
+successfully after lock release. The log segment from candidate update through
+worker completion contained zero Forkop errors/fatals, missing bytecode errors,
+migration failures or busy error messages.
+
+All three installed packages are 2.6.2-canary.999; installed changed backend
+files match the same dev SHA-256 values verified on VM25. VM24 was left running
+on the candidate, without restoring original packages or configuration.
+Evidence: `/root/forkop-upgrade-review24-20261029` on VM24.
+
+Reproducible test: `tests/subscription_upgrade_ipk_vm.sh`. It uses a private
+catalog and local delivery of unmodified public baseline packages, private
+candidate packages and the public Manager installer. opkg index update is a
+fixture using already available native indexes; package installation, hooks,
+checksums, locks, bytecode resolution and procd transitions are real. No public
+catalog, release or operator-router configuration was changed.
