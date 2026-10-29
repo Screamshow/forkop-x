@@ -128,13 +128,15 @@ cat > "$box/usr/bin/ucode" <<'EOF'
 n=0; [ ! -e /attempts ] || n=$(cat /attempts)
 n=$((n + 1)); echo "$n" > /attempts
 case "$*" in *'component-action zapret_manager migrate') ;; *) exit 2 ;; esac
+[ "$FORKOP_LIB" = /usr/lib/forkop ] || exit 3
+[ "$FORKOP_COMPONENT_BACKGROUND" = 1 ] || exit 4
 if [ "$TEST_SCENARIO" = queuefail ]; then echo 'installer failed'; exit 1; fi
-if [ "$n" -lt 2 ]; then echo 'Another component action is already running'; exit 1; fi
+if [ "$n" -lt 2 ]; then exit 75; fi
 echo 'migration verified'
 EOF
 printf '#!/bin/sh\nexit 0\n' > "$box/usr/bin/logger"
 chmod 0755 "$box/usr/bin/logger"
-run_worker() { TEST_SCENARIO=$1 chroot "$box" /bin/sh /upgrade run; }
+run_worker() { FORKOP_LIB=/var/run/forkop/bytecode/deleted-generation TEST_SCENARIO=$1 chroot "$box" /bin/sh /upgrade run; }
 run_worker queuebusy
 [ "$(cat "$box/attempts")" = 2 ]
 rm "$box/attempts"

@@ -2,7 +2,9 @@
 # Package upgrades can run inside a component transaction. Wait outside
 # postinst so the parent can release the component lock first.
 set -eu
-lib=${FORKOP_LIB:-/usr/lib/forkop}
+# A postinst child must not retain its parent's disposable bytecode directory.
+lib=${FORKOP_SOURCE_LIB:-/usr/lib/forkop}
+export FORKOP_LIB="$lib"
 case ${1:-} in
     queue)
         [ -e /opt/zapret-manager-luci/backend.sh ] ||
@@ -15,7 +17,10 @@ case ${1:-} in
 esac
 n=0
 while [ "$n" -lt 120 ]; do
-    result=$(ucode -L "$lib" "$lib/components/action.uc" component-action zapret_manager migrate 2>&1) && exit 0
+    rc=0
+    result=$(FORKOP_COMPONENT_BACKGROUND=1 ucode -L "$lib" "$lib/components/action.uc" component-action zapret_manager migrate 2>&1) || rc=$?
+    [ "$rc" != 0 ] || exit 0
+    if [ "$rc" = 75 ]; then sleep 2; n=$((n + 1)); continue; fi
     case "$result" in
         *'Another component action is already running'*) sleep 2; n=$((n + 1)) ;;
         *) logger -t forkop "Zapret Manager migration failed: $result"; exit 1 ;;

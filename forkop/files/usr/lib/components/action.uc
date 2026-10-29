@@ -2875,8 +2875,13 @@ function normalize_component_name(component) {
 function component_action(component, action, version) {
     component = normalize_component_name(component);
     action = as_string(action);
-    if (!acquire_component_lock())
+    if (!acquire_component_lock()) {
+        // Scheduled maintenance waits for the owning transaction. A busy lock
+        // is expected here and must not publish an error or run failure cleanup.
+        if (getenv("FORKOP_COMPONENT_BACKGROUND") == "1")
+            exit(75);
         action_fail(component != "" ? component : "unknown", action != "" ? action : "unknown", "Another component action is already running");
+    }
     if (!init_tmp_dir())
         action_fail(component != "" ? component : "unknown", action != "" ? action : "unknown", "Failed to create temporary directory");
     capture_forkop_running_state();

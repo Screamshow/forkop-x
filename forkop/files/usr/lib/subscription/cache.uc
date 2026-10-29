@@ -2233,6 +2233,11 @@ function prepare_subscription_cache_section(state, section) {
     if (!section_is_subscription_proxy(section))
         return;
 
+    // Startup may use an already refreshed cache with stale persisted filters
+    // (including after an upgrade). Reconcile before generating any runtime,
+    // even when every source is current and no network download is necessary.
+    let filter_snapshot = filter_selection.snapshot(section);
+
     let section_name_value = section_name(section);
     let metadata_tmpfile = temp_path(TMP_SUBSCRIPTION_FOLDER, section_name_value, "metadata-section");
     write_json(metadata_tmpfile, []);
@@ -2248,6 +2253,11 @@ function prepare_subscription_cache_section(state, section) {
             failed++;
             state.unavailable_sources = append_word_once(state.unavailable_sources, source_id(section_name_value, total));
         }
+    }
+
+    if (ready > 0 && length(filter_snapshot.descriptors) > 0 && !filter_selection.finish(filter_snapshot).ok) {
+        log_message("Failed to reconcile subscription filters for rule '" + section_name_value + "'", "error");
+        state.startup_blocked = true;
     }
 
     if (total > 0 && ready == 0) {
