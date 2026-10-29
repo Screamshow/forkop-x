@@ -92,11 +92,12 @@ def main():
     assert re.fullmatch(r'\d+\.\d+\.\d+', version)
     assert m['apk_signed'] is True
     assert hashlib.sha256((source / 'forkop-apk.pem').read_bytes()).hexdigest() == m['signing_public_key_sha256']
-    expected = {(arch, fmt) for arch in ('x86_64', 'aarch64_cortex-a53') for fmt in ('apk', 'ipk')}
-    beam = {('aarch64_cortex-a73', fmt) for fmt in ('apk', 'ipk')}
-    generic = {('aarch64_generic', fmt) for fmt in ('apk', 'ipk')}
+    required = {'x86_64', 'aarch64_cortex-a53'}
+    supported = required | {'aarch64_cortex-a73', 'aarch64_generic', 'mipsel_24kc'}
     actual = {(a['architecture'], a['format']) for a in m['assets']}
-    assert actual in (expected, expected | beam, expected | generic, expected | beam | generic) and len(m['assets']) == len(actual)
+    architectures = {arch for arch, _ in actual}
+    complete = {(arch, fmt) for arch in architectures for fmt in ('apk', 'ipk')}
+    assert required <= architectures <= supported and actual == complete and len(m['assets']) == len(actual)
     # Canary.2 accepts a cortex-a53 fallback on Beam; place the exact Beam
     # package first so existing installations select it before that fallback.
     m['assets'].sort(key=lambda a: (a['architecture'] != 'aarch64_cortex-a73', a['architecture'], a['format']))

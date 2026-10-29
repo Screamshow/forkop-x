@@ -22,7 +22,7 @@ release() { # version assets...
 }
 {
     printf '{"schema":1,"name":"rust-x","releases":['
-    release 0.0.26 "$(asset 0.0.26 r1 aarch64_generic apk)" "$(asset 0.0.26 1 aarch64_generic ipk)" "$(asset 0.0.26 r1 aarch64_cortex-a73 apk)" "$(asset 0.0.26 1 aarch64_cortex-a53 ipk)" "$(asset 0.0.26 r1 aarch64_cortex-a53 apk)" "$(asset 0.0.26 r1 x86_64 apk)"
+    release 0.0.26 "$(asset 0.0.26 r1 mipsel_24kc apk)" "$(asset 0.0.26 1 mipsel_24kc ipk)" "$(asset 0.0.26 r1 aarch64_generic apk)" "$(asset 0.0.26 1 aarch64_generic ipk)" "$(asset 0.0.26 r1 aarch64_cortex-a73 apk)" "$(asset 0.0.26 1 aarch64_cortex-a53 ipk)" "$(asset 0.0.26 r1 aarch64_cortex-a53 apk)" "$(asset 0.0.26 r1 x86_64 apk)"
     printf ','
     release 0.0.25 "$(asset 0.0.25 1 aarch64_cortex-a53 ipk)" "$(asset 0.0.25 r1 x86_64 apk)"
     printf ','
@@ -74,6 +74,8 @@ fs.unlink(path);
 exit(status);
 ' "$ACTION" "$work/releases.json" "$1" "$2" "$3"
 }
+select_releases mipsel_24kc 1 0.0.26
+select_releases mipsel_24kc 0 0.0.26
 select_releases aarch64_generic 1 0.0.26
 select_releases aarch64_generic 0 0.0.26
 
@@ -82,7 +84,7 @@ select_releases aarch64 1 0.0.26 >"$work/apk.json" || fail 'APK filogic release 
 select_releases aarch64_cortex-a73 1 0.0.26 >/dev/null || fail 'APK Beam release selection'
 select_releases aarch64_cortex-a73 0 '' >/dev/null || fail 'IPK must not use APK architecture fallback'
 select_releases x86_64 1 0.0.26,0.0.25 >/dev/null || fail 'APK x86_64 release selection'
-select_releases mipsel_24kc 0 '' >"$work/none.json" || fail 'unsupported architecture'
+select_releases mips_24kc 0 '' >"$work/none.json" || fail 'unsupported architecture'
 ucode -e '
 let r = json(require("fs").readfile(ARGV[0]));
 assert(r.success === true && length(r.releases) == 2 && r.releases[0].version == "0.0.26" && r.releases[0].channel == "stable", "release list");

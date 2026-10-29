@@ -18,13 +18,15 @@ class RustCatalogTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
-    def release(self, version, beam=False, generic=False):
+    def release(self, version, beam=False, generic=False, mips=False):
         folder = self.root / 'releases' / version
         folder.mkdir(parents=True)
         assets = []
         architectures = ('aarch64_cortex-a73', 'aarch64_cortex-a53', 'x86_64') if beam else ('x86_64', 'aarch64_cortex-a53')
         if generic:
             architectures += ('aarch64_generic',)
+        if mips:
+            architectures += ('mipsel_24kc',)
         for arch in architectures:
             for fmt in ('apk', 'ipk'):
                 revision = 'r1' if fmt == 'apk' else '1'
@@ -66,8 +68,16 @@ class RustCatalogTests(unittest.TestCase):
         self.assertIn('aarch64_generic', entries[0]['architectures'])
         self.assertNotIn('aarch64_generic', entries[1]['architectures'])
 
-    def test_publish_generic_pair_and_keep_historical_archives(self):
-        source, assets = self.release('0.0.29', beam=True, generic=True)
+    def test_mips_availability_is_per_release(self):
+        self.release('0.0.28', beam=True)
+        self.release('0.0.29', beam=True, generic=True, mips=True)
+        entries = publisher.build_catalog(self.root)['releases']
+        self.assertEqual(len(entries[0]['assets']), 10)
+        self.assertIn('mipsel_24kc', entries[0]['architectures'])
+        self.assertNotIn('mipsel_24kc', entries[1]['architectures'])
+
+    def test_publish_generic_and_mips_pairs_and_keep_historical_archives(self):
+        source, assets = self.release('0.0.29', beam=True, generic=True, mips=True)
         public_key = b'public test key'
         (source / 'forkop-apk.pem').write_bytes(public_key)
         for asset in assets:
@@ -82,9 +92,10 @@ class RustCatalogTests(unittest.TestCase):
         with patch('sys.argv', ['publish-rust-x.py', str(source), str(destination), '--latest']):
             publisher.main()
         latest = json.loads((destination / 'latest.json').read_text())
-        self.assertEqual(len(latest['assets']), 8)
+        self.assertEqual(len(latest['assets']), 10)
         catalog = json.loads((destination / 'releases.json').read_text())
         self.assertIn('aarch64_generic', catalog['releases'][0]['architectures'])
+        self.assertIn('mipsel_24kc', catalog['releases'][0]['architectures'])
         # Re-running the publisher is idempotent; changing an archived package fails.
         with patch('sys.argv', ['publish-rust-x.py', str(source), str(destination), '--latest']):
             publisher.main()
