@@ -95,7 +95,17 @@ connections.set_item_sections_from_data({
     urltest: [ { ".name": "group", section: "test", include_outbounds: [ "Moscow #1" ] } ]
 });
 before = selection.snapshot(section);
-let replacement = { ...new_node, server: "replacement.test" };
+let addressed = { ...new_node, server: "192.0.2.10" };
+common.write_private_json_file(runtime + "/test-subscription-1.json", { outbounds: [ addressed ] });
+result = selection.finish(before);
+expect(result.ok, "domain to IP refresh succeeds");
+saved = selection.read("test");
+eq(saved[selection.urltest_key(section, "group")].include[0].keys,
+    [ selection.connection(source, addressed) ], "domain to IP updates persisted binding");
+before = selection.snapshot(section);
+result = selection.finish(before);
+expect(result.ok, "repeated address refresh succeeds");
+let replacement = { ...new_node, server: "replacement.test", uuid: "different-user" };
 common.write_private_json_file(runtime + "/test-subscription-1.json", { outbounds: [ replacement ] });
 result = selection.finish(before);
 expect(result.ok, "removed pinned connection can be persisted");
@@ -103,11 +113,36 @@ saved = selection.read("test");
 expect(index(saved[selection.urltest_key(section, "group")].include[0].keys,
     selection.connection(source, replacement)) < 0, "reused name never rebinds after removal");
 
+function candidate(node, src) {
+    return { name: node.tag, key: selection.connection(src || source, node) };
+}
+let original = candidate(new_node);
+let moved = candidate(addressed);
+function migration(next, previous) {
+    return selection.reconcile([new_node.tag], [{name:new_node.tag,keys:[original.key]}],
+        previous || [original], next).records[0].keys;
+}
+eq(migration([moved]), [moved.key], "unique address change accepted");
+eq(migration([moved], []), [moved.key], "saved old binding repairs already refreshed cache");
+eq(migration([moved], [moved]), [moved.key], "recovery uses updated cache with stale saved binding");
+eq(migration([candidate({...addressed, server:'192.0.2.11'}), moved]),
+    [original.key], "duplicate names do not migrate");
+eq(migration([candidate(addressed, 'different-source')]), [original.key], "source change rejected");
+eq(migration([candidate({...addressed, server_port:8443})]), [original.key], "port change rejected");
+eq(migration([candidate({...addressed, tls:{enabled:true}})]), [original.key], "TLS change rejected");
+eq(migration([candidate({...addressed, transport:{type:'ws'}})]), [original.key], "transport change rejected");
+eq(migration([moved, candidate({...new_node,tag:'Renamed'})]),
+    [original.key], "surviving renamed identity wins over reused name");
+eq(migration([moved], [original,moved]), [original.key], "existing different node cannot take over name");
+let reverse = selection.reconcile([addressed.tag], [{name:addressed.tag,keys:[moved.key]}],
+    [moved], [original]);
+eq(reverse.records[0].keys, [original.key], "IP to domain change accepted");
+
 let fixture = { settings: { ".name": "settings", ".type": "settings" },
     section: [{ ".name": "test", ".type": "section", enabled: "1", action: "connection", subscription_urls: [ source ] }],
     urltest: [{ ".name": "group", ".type": "urltest", section: "test", name: "Pinned", filter_mode: "include", include_outbounds: [ "Moscow #1" ] }] };
 common.write_private_json_file(runtime + "/fixture.json", fixture);
-common.write_private_json_file(runtime + "/test-subscription-1.json", { outbounds: [ replacement, old_node ] });
+common.write_private_json_file(runtime + "/test-subscription-1.json", { outbounds: [ replacement, { ...old_node, server: addressed.server } ] });
 fs.writefile(runtime + "/test-subscription-1.url", source + "\n");
 fs.writefile(runtime + "/test-subscription-1.user_agent", "INCY/" + require("core.constants").FORKOP_VERSION + "\n");
 
