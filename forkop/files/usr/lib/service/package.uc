@@ -337,6 +337,13 @@ function prerm_cleanup(action) {
     return true;
 }
 
+function queue_zapret_manager_migration() {
+    // Start only after Forkop recovery succeeded. The worker waits for the
+    // parent component action to release its lock before touching the panel.
+    if (!PACKAGE_TEST_MODE)
+        command_success_from_args([ "sh", "/usr/share/forkop/zapret-manager-upgrade.sh", "queue" ]);
+}
+
 function postinst_restore() {
     if (env("IPKG_INSTROOT", "") != "")
         return true;
@@ -377,6 +384,7 @@ function postinst_restore() {
     if (!path_exists(PACKAGE_UPGRADE_STATE)) {
         clear_upgrade_quiesce();
         clear_compressed_upgrade_backup();
+        queue_zapret_manager_migration();
         return true;
     }
 
@@ -397,6 +405,7 @@ function postinst_restore() {
     unlink_if_exists(PACKAGE_UPGRADE_STATE);
     clear_upgrade_quiesce();
     clear_compressed_upgrade_backup();
+    queue_zapret_manager_migration();
     return true;
 }
 

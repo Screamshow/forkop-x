@@ -68,3 +68,11 @@ choice x 1.16.4 tiny
 choice x 2.0.0-canary.1 x
 choice "" 2.4.4 ""
 echo 'Installer core choice by release: OK'
+
+# Rockchip requires its exact package architecture for both package managers.
+for format in apk ipk; do
+  sed -e 's/aarch64_cortex-a53/aarch64_generic/g' -e "s/\"apk\"/\"$format\"/g" -e "s/[.]apk/.$format/g" "$work/rust-x.json" > "$work/rockchip.json"
+  if [ "$format" = ipk ]; then sed -i 's/-r1_/-1_/g' "$work/rockchip.json"; fi
+  ucode "$helper" core-package-plan rust-x aarch64_generic "$format" https://mirror.51343.ru < "$work/rockchip.json" > "$work/rockchip-plan"
+  grep -q aarch64_generic "$work/rockchip-plan"
+done

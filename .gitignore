@@ -65,6 +65,7 @@ ops/deployed-nginx/
 !/tests/sing_box_extended_manual_only.sh
 !/tests/rust_x_release_selection.sh
 !/tests/zapret_manager_web.sh
+!/tests/zapret_manager_migration.sh
 !/tests/whatsapp_real_dns_vm.sh
 !/tests/log_hygiene.sh
 !/tests/urltest_groups.sh
@@ -183,5 +184,6 @@ ops/deployed-nginx/
 !/tests/runtime_dir_lock.sh
 !/docs/releases/2.3.9.md
 !/docs/releases/2.4.2.md
+!/docs/releases/2.6.0.md
 !/tests/bytecode_cache.sh
 !/tests/flintnet_urltest_default.sh

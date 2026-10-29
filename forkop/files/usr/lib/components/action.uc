@@ -1532,80 +1532,18 @@ function zapret_manager_web_installed_version() {
     return matched != null ? matched[2] : "";
 }
 
-// Same rule as the script's zm_ver_gt: numeric dotted fields.
-function zapret_manager_version_newer(candidate, installed) {
-    let a = split(as_string(candidate), "."), b = split(as_string(installed), ".");
-    for (let i = 0; i < length(a) || i < length(b); i++) {
-        let x = int(a[i] || 0), y = int(b[i] || 0);
-        if (x != y)
-            return x > y;
-    }
-    return false;
-}
-
-// Install or update the web version like "w" does, but never remove it.
-// "" on success, otherwise the reason it was not activated.
-function activate_zapret_manager_web(manager_source) {
-    let path = match(manager_source, /ZM_LUCI_URL="\$\{GH_RAW\}\/([^"]+)"/);
-    if (path == null)
-        return "the script does not name its web installer";
-    let url = FORKOP_MIRROR_BASE_URL + "/zapret-manager/proxy/raw.githubusercontent.com/" + path[1];
-    let installer = tmp_dir + "/ZapretManager_LuCI.sh";
-    if (!download_with_retry(url, installer, "Zapret-Manager web version"))
-        return "its installer could not be downloaded from the mirror";
-    let header = match(read_file(installer), /\n# Version:[ \t]*([0-9.]+)/);
-    let latest = header != null ? header[1] : "";
-    let installed = file_exists(ZAPRET_MANAGER_WEB_BACKEND) ? zapret_manager_web_installed_version() : "";
-    if (installed != "" && !zapret_manager_version_newer(latest, installed)) {
-        updates_log("Zapret-Manager web version " + installed + " is already installed");
-        return "";
-    }
-    let ok = run_logged("Activating the Zapret-Manager web version" + (latest != "" ? " " + latest : ""),
-        command_from_args([ "sh", installer ]) + " </dev/null");
-    remove_file(installer);
-    if (!ok || !file_exists(ZAPRET_MANAGER_WEB_BACKEND))
-        return "its installer failed; see the component log";
-    return "";
-}
-
-function write_zapret_manager_launchers(manager_url, web_url) {
-    let launcher = function(url) {
-        return "#!/bin/sh\nexec sh <(wget -q -O - " + shell_quote(url) + ") \"$@\"\n";
-    };
-    // zmw is the web version's own update command; keep it on the mirror too.
-    return write_file("/usr/bin/zms", launcher(manager_url)) && write_file("/usr/bin/zmsA", launcher(manager_url)) &&
-        write_file("/usr/bin/zmw", launcher(web_url)) &&
-        command_success_from_args([ "chmod", "0755", "/usr/bin/zms", "/usr/bin/zmsA", "/usr/bin/zmw" ]);
-}
-
 function install_zapret_manager(action) {
     let component = "zapret_manager";
-    let manager_url = FORKOP_MIRROR_BASE_URL + "/zapret-manager/proxy/raw.githubusercontent.com/Screamshow/Zapret-Manager/main/Zapret-Manager.sh";
-    let web_url = FORKOP_MIRROR_BASE_URL + "/zapret-manager/proxy/raw.githubusercontent.com/StressOzz/Zapret-Manager/main/ZapretManager_LuCI.sh";
-    let manager_file = tmp_dir + "/Zapret-Manager.sh";
-    let current_version = file_exists("/usr/bin/zms") ? "installed" : "not installed";
-
+    let current_version = zapret_manager_web_installed_version();
     if (FORKOP_MIRROR_BASE_URL == "")
         action_fail(component, action, "Forkop mirror URL is not configured", current_version);
-    if (!download_with_retry(manager_url, manager_file, "Zapret-Manager"))
-        action_fail(component, action, "Failed to download Zapret-Manager from the mirror", current_version);
-
-    let source = read_file(manager_file);
-    let matched = match(source, /ZAPRET_MANAGER_VERSION="([^"]+)"/);
-    let latest_version = matched != null ? as_string(matched[1]) : "mirror";
-
-    // The web installer replaces zms with a GitHub launcher, so the Forkop
-    // mirror launchers are written after it.
-    let web_error = activate_zapret_manager_web(source);
-    if (!write_zapret_manager_launchers(manager_url, web_url))
-        action_fail(component, action, "Failed to install Zapret-Manager launchers", current_version, latest_version);
-
+    if (!run_logged("Migrating Zapret Manager with file rollback",
+        command_from_args([ "sh", "/usr/share/forkop/zapret-manager-migrate.sh", action == "migrate" ? "migrate" : "install", FORKOP_MIRROR_BASE_URL ])))
+        action_fail(component, action, "Zapret Manager migration failed; see component log and recovery result", current_version);
+    let changed = index(last_logged_output, "FORKOP_ZM_CHANGED=1") >= 0 ? 1 : 0;
     clear_version_caches();
-    if (web_error != "")
-        action_fail(component, action, "Zapret-Manager has been installed, but its web version was not activated: " + web_error,
-            "installed", latest_version);
-    action_success(component, action, "Zapret-Manager and its web version have been installed from the Forkop mirror (LuCI: Services → Zapret Manager)",
-        current_version, latest_version, 1, "latest", manager_url);
+    action_success(component, action, "Zapret Manager backend, RPC and launchers verified",
+        current_version, zapret_manager_web_installed_version(), changed, "latest");
 }
 
 // Remove the web version the way the script's "w" command does.
@@ -1613,13 +1551,14 @@ function remove_zapret_manager_web() {
     if (!file_exists(ZAPRET_MANAGER_WEB_BACKEND) && !file_exists(ZAPRET_MANAGER_WEB_SCRIPT))
         return true;
     let script = join("\n", [
-        "[ -x /opt/zapret-manager-luci/backend.sh ] && /opt/zapret-manager-luci/backend.sh redbtn_panel_gone >/dev/null 2>&1",
-        "rm -rf /opt/zapret-manager-luci /usr/lib/zapret-manager* /usr/libexec/rpcd/zapret-manager* " +
+        "rm -rf /opt/zapret-manager-luci /usr/libexec/rpcd/zapret-manager " +
             "/usr/share/luci/menu.d/luci-app-zapret-manager.json /usr/share/rpcd/acl.d/luci-app-zapret-manager.json " +
-            "/www/luci-static/resources/view/zapret-manager* /www/luci-static/resources/zapret-manager* " +
-            "/www/luci-static/resources/bytetube /www/luci-static/resources/view/bytetube /www/zm /www/zm-webui.html " +
+            "/www/luci-static/resources/view/zapret-manager /www/luci-static/resources/zapret-manager " +
+            "/www/zm /www/zm-webui.html " +
             "/tmp/zapret-manager* /tmp/zm_uninstall_panel.sh /tmp/zm_luci_latest /tmp/luci-indexcache* /tmp/luci-modulecache/* 2>/dev/null",
-        "[ -s /etc/zm-steer/owned ] || rm -rf /usr/share/zm-redbtn",
+        // These three legacy UI files were panel assets. Preserve directories
+        // and standalone services even when the old panel knew about them.
+        "rm -f /www/luci-static/resources/bytetube/common.js /www/luci-static/resources/bytetube/presets.js /www/luci-static/resources/view/bytetube/style.css",
         "uci -q delete uhttpd.zmweb && uci -q commit uhttpd",
         "/etc/init.d/rpcd restart >/dev/null 2>&1",
         "/etc/init.d/uhttpd restart >/dev/null 2>&1",
@@ -1633,8 +1572,7 @@ function remove_zapret_manager_web() {
 // installer writes (they fetch through /tmp/zm-get.PID.sh). Any other
 // /usr/bin/zms* belongs to the user and is kept.
 function zapret_manager_launcher_owned(source) {
-    return index(source, "/zapret-manager/proxy/") >= 0 ||
-        (index(source, "/tmp/zm-get.$$.sh") >= 0 && index(source, "/StressOzz/Zapret-Manager/main/") >= 0);
+    return match(source, /https:\/\/[^ \t\r\n"')]*raw\.githubusercontent\.com\/(StressOzz|Screamshow)\/Zapret-Manager\/(refs\/heads\/)?main\/(Zapret-Manager|ZapretManager_LuCI)\.sh([ \t\r\n"')]|$)/) != null;
 }
 
 function remove_zapret_manager(action) {
@@ -1643,7 +1581,7 @@ function remove_zapret_manager(action) {
     let removed = 0;
 
     for (let path in paths)
-        if (file_exists(path) && !zapret_manager_launcher_owned(read_file(path)))
+        if (fs.readlink(path) != null || (file_exists(path) && !zapret_manager_launcher_owned(read_file(path))))
             action_fail(component, action, "Existing " + path + " was not created by Forkop X or Zapret-Manager and was not removed");
     if (!remove_zapret_manager_web())
         action_fail(component, action, "Failed to remove the Zapret-Manager web version");
@@ -2950,7 +2888,7 @@ function component_action(component, action, version) {
     else if (component == "sing_box" && (action == "check_update" || action == "install" ||
         action == "install_rust_x" || action == "install_x" || action == "install_tiny" || action == "install_stable"))
         dispatch_sing_box(action, version);
-    else if (component == "zapret_manager" && action == "install")
+    else if (component == "zapret_manager" && (action == "install" || action == "migrate"))
         install_zapret_manager(action);
     else if (component == "zapret_manager" && action == "remove")
         remove_zapret_manager(action);

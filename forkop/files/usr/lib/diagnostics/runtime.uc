@@ -621,14 +621,14 @@ function zapret_manager_launcher_installed(path) {
         return false;
 
     let source = as_string(fs.readfile(path));
-    // ZMS can replace the mirror launchers with its own upstream launchers.
-    return index(source, "/zapret-manager/proxy/") >= 0 ||
-        match(source, /https:\/\/raw\.githubusercontent\.com\/(StressOzz|Screamshow)\/Zapret-Manager\/main\/Zapret-Manager\.sh([ \t\r\n"')]|$)/) != null;
+    return match(source, /https:\/\/[^ \t\r\n"')]*raw\.githubusercontent\.com\/(StressOzz|Screamshow)\/Zapret-Manager\/(refs\/heads\/)?main\/(Zapret-Manager|ZapretManager_LuCI)\.sh([ \t\r\n"')]|$)/) != null;
 }
 
 function zapret_manager_is_installed() {
-    return zapret_manager_launcher_installed("/usr/bin/zms") &&
-        zapret_manager_launcher_installed("/usr/bin/zmsA");
+    return file_executable("/opt/zapret-manager-luci/backend.sh") ||
+        zapret_manager_launcher_installed("/usr/bin/zms") ||
+        zapret_manager_launcher_installed("/usr/bin/zmsA") ||
+        zapret_manager_launcher_installed("/usr/bin/zmw");
 }
 
 function ensure_subscription_runtime_dirs() {

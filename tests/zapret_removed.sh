@@ -36,7 +36,7 @@ awk '
 echo 'No Zapret provider references in runtime, LuCI, frontend or translations'
 
 # The Zapret Manager component is still installable from the GUI.
-grep -Fq 'component == "zapret_manager" && action == "install"' "$LIB/components/action.uc" ||
+grep -Fq 'component == "zapret_manager" && (action == "install" || action == "migrate")' "$LIB/components/action.uc" ||
   fail "the Zapret Manager component can no longer be installed"
 grep -Fq 'component == "zapret_manager"' "$LIB/components/updates.uc" ||
   fail "the Zapret Manager component is no longer a valid component name"

@@ -85,6 +85,8 @@ define Package/forkop/install
 
 	$(INSTALL_DIR) $(1)/usr/share/forkop/defaults
 	$(INSTALL_CONF) ./files/etc/config/forkop $(1)/usr/share/forkop/defaults/forkop
+	$(INSTALL_BIN) ./files/usr/share/forkop/zapret-manager-upgrade.sh $(1)/usr/share/forkop/zapret-manager-upgrade.sh
+	$(INSTALL_BIN) ./files/usr/share/forkop/zapret-manager-migrate.sh $(1)/usr/share/forkop/zapret-manager-migrate.sh
 	$(INSTALL_BIN) ./files/usr/share/forkop/mirror-migration.sh $(1)/usr/share/forkop/mirror-migration.sh
 	$(INSTALL_BIN) ./files/usr/share/forkop/package-init $(1)/usr/share/forkop/package-init
 

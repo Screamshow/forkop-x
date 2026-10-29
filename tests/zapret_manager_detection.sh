@@ -1,7 +1,7 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RUNTIME="$ROOT_DIR/forkop/files/usr/lib/diagnostics/runtime.uc"
 
 # Exercise the production detector without touching installed launchers.
@@ -26,19 +26,23 @@ let cases = [
     { name: "upstream self-update", zms: upstream, auto: upstream_auto, expected: true },
     { name: "legacy upstream", zms: legacy, auto: legacy, expected: true },
     { name: "mixed launchers", zms: upstream, auto: mirror, expected: true },
-    { name: "missing zms", auto: upstream_auto, expected: false },
-    { name: "missing zmsA", zms: upstream, expected: false },
+    { name: "missing zms", auto: upstream_auto, expected: true },
+    { name: "missing zmsA", zms: upstream, expected: true },
     { name: "missing both", expected: false },
-    { name: "non-executable", zms: upstream, auto: upstream_auto, disabled: true, expected: false },
-    { name: "unrelated launchers", zms: "#!/bin/sh\necho hello\n", auto: upstream_auto, expected: false },
-    { name: "wrong repository", zms: replace(upstream, "StressOzz", "other"), auto: upstream_auto, expected: false },
-    { name: "wrong script", zms: replace(upstream, "Manager.sh", "Manager.sh.backup"), auto: upstream_auto, expected: false }
+    { name: "backend only", backend: true, expected: true },
+    { name: "web launcher only", web: replace(upstream, "Zapret-Manager.sh", "ZapretManager_LuCI.sh"), expected: true },
+    { name: "non-executable", zms: upstream, auto: upstream_auto, disabled: true, expected: true },
+    { name: "unrelated launchers", zms: "#!/bin/sh\necho hello\n", expected: false },
+    { name: "wrong repository", zms: replace(upstream, "StressOzz", "other"), expected: false },
+    { name: "wrong script", zms: replace(upstream, "Manager.sh", "Manager.sh.backup"), expected: false }
 ];
 for (let test in cases) {
-    sources = { "/usr/bin/zms": test.zms, "/usr/bin/zmsA": test.auto };
+    sources = { "/usr/bin/zms": test.zms, "/usr/bin/zmsA": test.auto, "/usr/bin/zmw": test.web };
     executable = {
         "/usr/bin/zms": test.zms != null && !test.disabled,
-        "/usr/bin/zmsA": test.auto != null
+        "/usr/bin/zmsA": test.auto != null,
+        "/usr/bin/zmw": test.web != null,
+        "/opt/zapret-manager-luci/backend.sh": test.backend == true
     };
     if (zapret_manager_is_installed() != test.expected)
         die("FAIL: " + test.name + "\n");
