@@ -154,3 +154,13 @@ MIPS ELF — 9 705 532 байта: для конкретной платы ещё
 [отчёт Xrust](https://github.com/Screamshow/xrust/blob/dev/docs/mipsel-openwrt-preparation-2026-10-29.md).
 Описания 2.6.0/0.0.29 дополнены MIPS в прежнем стиле; changelog менеджера
 не изменялся. Публикация и main по-прежнему ожидают обсуждения описаний.
+
+Дополнение зафиксировано в Forkop dev `6524eb98`, исходники Xrust —
+`c4d2b7ae3d841be7d245013e274940c8a41938eb`; обе ветки отправлены в origin/dev.
+Все 10 кандидатов находятся в `../tmp/xrust-029-mips-signed`, пять APK подписаны
+на существующем зеркале только в build-каталоге. Подписи, identities, source,
+размеры и SHA-256 повторно проверены после скачивания. Publisher сформировал
+только локальный preview `../tmp/xrust-029-mips-mirror-preview`.
+APK/IPK цикл повторён на окончательных файлах; 27 release/catalog Python-тестов
+Forkop и 4 ELF/finalizer теста Xrust пройдены. GitHub CI не запускался.
+Публичные rust-x latest/catalog и Forkop stable после подписи не изменились.
