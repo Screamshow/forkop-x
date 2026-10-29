@@ -784,13 +784,6 @@ function getComponentCards(): ComponentCard[] {
   const zapretManagerActions: ComponentActionButton[] = zapretManagerInstalled
     ? [
         {
-          key: 'zapretManagerInstall',
-          text: _('Update'),
-          icon: renderDownloadIcon24,
-          component: 'zapret_manager',
-          action: 'install',
-        },
-        {
           key: 'zapretManagerRemove',
           text: _('Remove'),
           icon: renderXIcon24,
