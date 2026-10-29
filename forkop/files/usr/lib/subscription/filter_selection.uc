@@ -51,6 +51,40 @@ function candidates(section) {
     return result;
 }
 
+// A provider may change an endpoint address without changing the selected node.
+// Keep source, credentials, TLS and transport strict; only server may differ.
+function address_profile(key) {
+    try {
+        let parts = json(key);
+        if (type(parts) != "array" || length(parts) != 2)
+            return "";
+        let outbound = json(parts[1]);
+        if (!outbound.server)
+            return "";
+        outbound.server = "address-migration";
+        return connection(parts[0], outbound);
+    }
+    catch (e) { return ""; }
+}
+
+function migrate_address(keys, name, previous, next) {
+    // Multiple selected connections or duplicate names are ambiguous. Exact
+    // identity matches always win, including a surviving node renamed elsewhere.
+    if (length(keys) != 1 || length(filter(next, c => c.key == keys[0])))
+        return keys;
+    let profile = address_profile(keys[0]);
+    if (profile == "")
+        return keys;
+    let targets = filter(next, c => c.name == name);
+    if (length(targets) != 1 || address_profile(targets[0].key) != profile)
+        return keys;
+    // Do not steal a different existing connection during a rename/removal.
+    let old_present = length(filter(previous, c => c.key == keys[0])) > 0;
+    if (length(filter(previous, c => c.key == targets[0].key && (old_present || c.name != name))))
+        return keys;
+    return [ targets[0].key ];
+}
+
 // Resolve against the OLD feed before considering any new names. In particular,
 // simultaneous A->B / B->A renames must not cascade through string replacements.
 function reconcile(values, saved, previous, next) {
@@ -67,6 +101,7 @@ function reconcile(values, saved, previous, next) {
                 if (candidate.name == name && index(keys, candidate.key) < 0)
                     push(keys, candidate.key);
         }
+        keys = migrate_address(keys, name, previous, next);
         let matches = filter(next, candidate => index(keys, candidate.key) >= 0);
         // Keep a tombstone if the selected connection disappears. A new owner
         // of its name must not take over an existing selection.
