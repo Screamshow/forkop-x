@@ -173,6 +173,8 @@ ops/deployed-nginx/
 !/tests/installer_core_processes.sh
 !/tests/subscription_filter_selection.sh
 !/tests/subscription_filter_selection.uc
+!/tests/startup_filter_reconciliation.sh
+!/tests/subscription_package_upgrade_vm.sh
 !/tests/hysteria2_certificate_pins.sh
 !/tests/packages_installed_version.sh
 !/tests/installer_version_verification.sh
