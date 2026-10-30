@@ -577,7 +577,8 @@ function staged_package_field(path, field) {
     }
     let key = (is_apk() ? field :
         field == "name" ? "Package" : field == "version" ? "Version" :
-        field == "arch" ? "Architecture" : field == "depends" ? "Depends" : "Installed-Size") + ": ";
+        field == "arch" ? "Architecture" : field == "depends" ? "Depends" :
+        field == "provides" ? "Provides" : "Installed-Size") + ": ";
     for (let line in split(metadata, "\n")) {
         line = trim(as_string(line));
         if (substr(line, 0, length(key)) == key) {
@@ -637,6 +638,13 @@ function package_sha256(path) {
     return split(trim(command_output_from_args([ "sha256sum", path ])), /[ \t]+/)[0];
 }
 
+function ipk_provides(provides, name) {
+    for (let entry in split(as_string(provides), ","))
+        if (trim(replace(entry, /\s*\([^)]*\)/g, "")) == name)
+            return true;
+    return false;
+}
+
 function stage_repository_package(package_name, expected_version) {
     let retain = index([ "sing-box", "sing-box-tiny" ], package_name) != -1;
     if (retain && as_string(expected_version) != "") {
@@ -663,9 +671,14 @@ function stage_repository_package(package_name, expected_version) {
     if (!downloaded)
         return null;
     let matches = command_output("find " + shell_quote(tmp_dir) + " -maxdepth 1 -type f -name " +
-        shell_quote(is_apk() ? package_name + "-*." + ext : package_name + "_*." + ext));
+        shell_quote(is_apk() ? package_name + "-*." + ext : "*.ipk"));
     for (let path in split(matches, "\n")) {
-        let info = staged_package_info(trim(path), package_name, expected_version);
+        path = trim(path);
+        let actual_name = is_apk() ? package_name : staged_package_field(path, "name");
+        if (actual_name != package_name &&
+            (as_string(expected_version) != "" || !ipk_provides(staged_package_field(path, "provides"), package_name)))
+            continue;
+        let info = staged_package_info(path, actual_name, expected_version);
         if (info != null) {
             return info;
         }
@@ -714,9 +727,27 @@ function array_has(values, item) {
 
 function staged_package_by_name(values, name) {
     for (let item in values)
-        if (item.name == name)
+        if (item.name == name || (!is_apk() && ipk_provides(staged_package_field(item.path, "provides"), name)))
             return item;
     return null;
+}
+
+function installed_dependency_name(name) {
+    if (pkg_is_installed(name) || is_apk())
+        return name;
+    // Resolve virtual dependencies without changing exact package identity checks.
+    for (let entry in split(as_string(fs.readfile("/usr/lib/opkg/status")), /\n\s*\n/)) {
+        let actual = "", provides = "", installed = false;
+        for (let line in split(entry, "\n")) {
+            if (substr(line, 0, 9) == "Package: ") actual = trim(substr(line, 9));
+            if (substr(line, 0, 10) == "Provides: ") provides = substr(line, 10);
+            if (substr(line, 0, 8) == "Status: ")
+                installed = match(trim(substr(line, 8)), / installed$/) != null;
+        }
+        if (installed && actual != "" && ipk_provides(provides, name))
+            return actual;
+    }
+    return name;
 }
 
 function stage_apk_dependency_tree(info, removed, staged) {
@@ -727,6 +758,7 @@ function stage_apk_dependency_tree(info, removed, staged) {
     for (let dependency in dependencies) {
         dependency = trim(dependency);
         if (dependency == "") continue;
+        dependency = installed_dependency_name(dependency);
         if (!array_has(removed, dependency) && pkg_is_installed(dependency))
             continue;
         if (staged_package_by_name(staged, dependency) != null)
