@@ -586,6 +586,30 @@ function outbound_uses_xhttp(outbound) {
         lc(as_string(outbound.transport.type || "")) == "xhttp";
 }
 
+function xhttp_base62_session_id_compatible(outbound) {
+    if (!outbound_uses_xhttp(outbound))
+        return true;
+
+    let transport = outbound.transport;
+    if (lc(trim(as_string(transport.session_id_table || ""))) != "base62")
+        return true;
+
+    let value = trim(as_string(transport.session_id_length || ""));
+    if (value == "")
+        return true;
+
+    // Handle canonical values such as "4" or "4-8". Unknown formats remain
+    // subject to the core's own validation.
+    if (match(value, /^[0-9]+(-[0-9]+)?$/) == null)
+        return true;
+
+    let minimum = int(split(value, "-")[0], 10);
+
+    // XHTTP requires at least 2^31 possible session IDs.
+    // Base62^5 = 916,132,832 while Base62^6 = 56,800,235,584.
+    return minimum >= 6;
+}
+
 function outbound_uses_certificate_pins(outbound) {
     let tls = object_or_empty(object_or_empty(outbound).tls);
     let value = tls.certificate_sha256;
@@ -787,6 +811,11 @@ function compatible_subscription_outbounds(outbounds, section_name) {
         }
         if (!runtime_supports_xhttp && outbound_uses_xhttp(outbound)) {
             warn_skipped_subscription_outbound(section_name, outbound, "installed sing-box does not advertise XHTTP support");
+            continue;
+        }
+        if (!xhttp_base62_session_id_compatible(outbound)) {
+            warn_skipped_subscription_outbound(section_name, outbound,
+                "XHTTP Base62 session ID length is too small");
             continue;
         }
         push(retained, outbound);

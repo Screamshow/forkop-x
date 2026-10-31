@@ -67,6 +67,12 @@ function vless_outbound(config) {
     for (let o in config.outbounds) if (o.type == "vless") return o;
     expect(false, "VLESS outbound generated");
 }
+function has_outbound(config, tag) {
+    for (let outbound in config.outbounds)
+        if (as_string(outbound.tag || "") == tag)
+            return true;
+    return false;
+}
 
 let last;
 for (let aliases in [
@@ -155,7 +161,20 @@ expect(fs.readfile(runtime + "/cache-format") == "12\n", "runtime cache format u
 expect(fs.stat(persistent + "/" + source + ".json") != null, "offline persistent cache retained");
 
 // Generation must also recover an old runtime cache without a network refresh.
-write(runtime + "/" + source + ".json", {outbounds:[cached]});
+// Invalid provider XHTTP nodes must be skipped instead of rejecting the whole config.
+let broken_xhttp = {
+    type: "vless",
+    tag: "broken-xhttp",
+    server: "127.0.0.1",
+    server_port: 19444,
+    uuid: "00000000-0000-4000-8000-000000000002",
+    transport: {
+        type: "xhttp",
+        session_id_table: "Base62",
+        session_id_length: "4-8"
+    }
+};
+write(runtime + "/" + source + ".json", {outbounds:[cached, broken_xhttp]});
 let cached_fixture = work + "/cached.fixture.json";
 let cached_config = work + "/cached.generated.json";
 write(cached_fixture, {settings:{".name":"settings",".type":"settings",dns_server:"1.1.1.1"},
@@ -167,10 +186,13 @@ run(["env", "TMP_SUBSCRIPTION_FOLDER=" + runtime,
     "FORKOP_RUNTIME_STATE_DIR=" + runtime, "ucode", "-L", lib,
     lib + "/singbox/generator.uc", "generate-config-fixture", cached_fixture, cached_config,
     "127.0.0.1", "0", "1", "", "1.14.1-extended-2.7.2"]);
-let cached_generated = vless_outbound(read(cached_config));
+let cached_result = read(cached_config);
+let cached_generated = vless_outbound(cached_result);
 fields(cached_generated, "X-Cache", 6);
 expect(cached_generated.tls.reality.support_x25519mlkem768 === false,
     "cached explicit false survives final generation");
+expect(!has_outbound(cached_result, "broken-xhttp"),
+    "invalid Base62 XHTTP subscription outbound skipped");
 
 for (let version in ["1.13.21", "1.14.1", "1.14.1-extended-2.7.1", "unknown", "1.14.1-extended-2.7.2-rc1",
     "1.14.1-extended-2.7.2", "1.14.1-extended-2.7.20", "1.14.1-extended-2.8.0", "1.14.1-extended-3.0.0"]) {
