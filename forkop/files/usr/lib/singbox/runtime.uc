@@ -316,6 +316,11 @@ function sing_box_supports_trojan(version, version_output) {
     return output_has_feature(version_output, "outbound.trojan");
 }
 
+function sing_box_supports_bittorrent_direct(version, version_output) {
+    return match(as_string(version), /-rust-x[.]/) != null &&
+        output_has_feature(version_output, "sniff.bittorrent-extended");
+}
+
 function sing_box_supports_tailscale(version, version_output) {
     version = as_string(version);
     version_output = as_string(version_output);
@@ -991,7 +996,8 @@ function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferre
             sing_box_supports_xhttp(core_version, version_output) ? "1" : "0",
             deferred_sections,
             core_version,
-            sing_box_supports_trojan(core_version, version_output) ? "1" : "0"
+            sing_box_supports_trojan(core_version, version_output) ? "1" : "0",
+            sing_box_supports_bittorrent_direct(core_version, version_output) ? "1" : "0"
         ]) + " >" + shell_quote(runtime_log) + " 2>&1"
     );
     if (SINGBOX_CONFIG_FAIL_PHASE == "generate")
@@ -1155,6 +1161,8 @@ else if (mode == "is-tiny")
     exit(sing_box_is_tiny(ARGV[1], ARGV[2]) ? 0 : 1);
 else if (mode == "supports-tailscale")
     exit(sing_box_supports_tailscale(ARGV[1], ARGV[2]) ? 0 : 1);
+else if (mode == "supports-bittorrent-direct")
+    exit(sing_box_supports_bittorrent_direct(ARGV[1], ARGV[2]) ? 0 : 1);
 else if (mode == "variant")
     print(sing_box_variant(), "\n");
 else {

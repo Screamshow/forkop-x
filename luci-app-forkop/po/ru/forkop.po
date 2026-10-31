@@ -2014,3 +2014,15 @@ msgstr "Да"
 
 msgid "You can select Output Network Interface, by default autodetect"
 msgstr "Вы можете выбрать выходной сетевой интерфейс, по умолчанию он определяется автоматически."
+
+msgid "Route detected BitTorrent directly"
+msgstr "Направлять BitTorrent напрямую"
+
+msgid "Recognized torrent connections bypass proxy and VPN. Encrypted and other unrecognized traffic follows normal routing."
+msgstr "Распознанные торрент-соединения идут напрямую, минуя прокси и VPN. Зашифрованный и другой нераспознанный трафик следует обычным правилам маршрутизации."
+
+msgid "Available only for Xrust"
+msgstr "Доступно только для Xrust"
+
+msgid "Update Xrust to enable this setting"
+msgstr "Обновите Xrust, чтобы включить эту настройку"

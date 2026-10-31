@@ -1,5 +1,6 @@
 "use strict";
 "require form";
+"require fs";
 "require uci";
 "require baseclass";
 "require tools.widgets as widgets";
@@ -524,6 +525,43 @@ function createSettingsContent(section) {
   );
   o.default = "1";
   o.rmempty = false;
+
+  o = section.option(
+    form.Flag,
+    "bittorrent_direct",
+    _("Route detected BitTorrent directly"),
+    _("Recognized torrent connections bypass proxy and VPN. Encrypted and other unrecognized traffic follows normal routing."),
+  );
+  o.default = "0";
+  o.rmempty = false;
+  o.readonly = true;
+  const loadBitTorrent = o.load;
+  const writeBitTorrent = o.write;
+  const removeBitTorrent = o.remove;
+  // An unavailable checkbox must not turn an absent setting into explicit OFF
+  // when the user saves unrelated settings before upgrading Xrust.
+  o.write = function (section_id, value) {
+    if (!this.readonly) return writeBitTorrent.call(this, section_id, value);
+  };
+  o.remove = function (section_id) {
+    if (!this.readonly) return removeBitTorrent.call(this, section_id);
+  };
+  o.load = async function (section_id) {
+    let supported = false;
+    let rustX = false;
+    try {
+      const result = await fs.exec("/usr/bin/forkop", ["get_system_info"]);
+      const info = JSON.parse(result.stdout || "{}");
+      rustX = /-rust-x\./.test(info.sing_box_version || "");
+      supported = rustX && info.sing_box_bittorrent_direct === 1;
+    } catch (_error) { /* Keep unavailable when capability detection fails. */ }
+    this.readonly = !supported;
+    this.default = supported ? "1" : "0";
+    this.description = supported
+      ? _("Recognized torrent connections bypass proxy and VPN. Encrypted and other unrecognized traffic follows normal routing.")
+      : rustX ? _("Update Xrust to enable this setting") : _("Available only for Xrust");
+    return loadBitTorrent.call(this, section_id);
+  };
 
   o = section.option(
     form.Flag,

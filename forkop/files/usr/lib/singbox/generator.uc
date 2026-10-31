@@ -3593,7 +3593,7 @@ function enabled_sections(deferred_sections) {
     return result;
 }
 
-function generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan) {
+function generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan, supports_bittorrent_direct) {
     runtime_prunable_outbounds = {};
     runtime_skipped_protocol_outbounds = {};
     // Verified for Xrust; Go X 1.0.4 and Extended 2.7.2 do not support this
@@ -3622,6 +3622,7 @@ function generate_config(output_path, service_address, mwan3_active, supports_xh
     let source_aware_dns = bootstrap_lists ? [] : source_aware_dns_sources(sections);
     let config = base_config(settings, service_address, {
         core_version: sing_box_version,
+        supports_bittorrent_direct: rust_x_core_version(sing_box_version) && cli_bool(supports_bittorrent_direct),
         mwan3_active: cli_bool(mwan3_active),
         source_aware_dns: length(source_aware_dns) > 0
     });
@@ -3675,11 +3676,11 @@ function generate_config(output_path, service_address, mwan3_active, supports_xh
     }
 }
 
-function generate_config_fixture(fixture_path, output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan) {
+function generate_config_fixture(fixture_path, output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan, supports_bittorrent_direct) {
     use_fixture_cursor(fixture_path);
     runtime_subscription.set_section_cache_dir(output_path + ".section-cache");
     runtime_ruleset_folder = output_path + ".rulesets";
-    generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan);
+    generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan, supports_bittorrent_direct);
 }
 
 function stdin_contains(needle) {
@@ -3721,9 +3722,9 @@ function service_route_check_section_fixture() {
 let mode = ARGV[0] || "";
 
 if (mode == "generate-config")
-    generate_config(ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5] || "", ARGV[6] || "", ARGV[7] || "");
+    generate_config(ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5] || "", ARGV[6] || "", ARGV[7] || "", ARGV[8] || "0");
 else if (mode == "generate-config-fixture")
-    generate_config_fixture(ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5], ARGV[6] || "", ARGV[7] || "", ARGV[8] || "");
+    generate_config_fixture(ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5], ARGV[6] || "", ARGV[7] || "", ARGV[8] || "", ARGV[9] || "0");
 else if (mode == "stdin-contains")
     exit(stdin_contains(ARGV[1]) ? 0 : 1);
 else if (mode == "csv-to-json-array")

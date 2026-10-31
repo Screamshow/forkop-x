@@ -1659,6 +1659,7 @@ function sing_box_signature_body(settings, sections, mwan3_active) {
     body = signature_add_value(body, "settings.output_network_interface", option(settings, "output_network_interface", ""));
     body = signature_add_value(body, "settings.disable_quic", bool_option_value(settings, "disable_quic", true));
     body = signature_add_value(body, "settings.disable_quic_vpn", bool_option_value(settings, "disable_quic_vpn", false));
+    body = signature_add_value(body, "settings.bittorrent_direct", bool_option_value(settings, "bittorrent_direct", true));
     body = signature_add_value(body, "settings.whatsapp_real_dns", bool_option_value(settings, "whatsapp_real_dns", false));
     if (sing_box_signature_has_remote_ruleset_sources(sections))
         body = signature_add_value(body, "settings.update_interval", settings_update_interval(settings));

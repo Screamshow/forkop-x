@@ -55,6 +55,15 @@ function config(settings, runtime) {
 
     if (output_network_interface != "")
         result.default_interface = output_network_interface;
+    // A saved selection survives core switching, but only a capable Xrust may
+    // activate it. Never emit Xrust-only sniff names for another core.
+    if (bool_option(settings, "bittorrent_direct", true) &&
+        type(runtime) == "object" && bool_value(runtime.supports_bittorrent_direct)) {
+        result.rules[1].sniffer = [ "bittorrent-extended", "tls", "http", "dns",
+            "quic", "stun", "dtls", "ssh", "rdp", "ntp" ];
+        push(result.rules, { action: "route", inbound: tproxy_inbounds,
+            protocol: "bittorrent", outbound: runtime_constants.DIRECT_OUTBOUND_TAG });
+    }
     if (bool_option(settings, "disable_quic", true))
         push(result.rules, { action: "reject", inbound: tproxy_inbounds, protocol: "quic" });
 

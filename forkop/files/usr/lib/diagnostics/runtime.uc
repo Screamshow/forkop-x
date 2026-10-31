@@ -808,6 +808,8 @@ function build_system_info() {
         luci_app_version,
         sing_box_version,
         sing_box_binary_signature: sing_box_binary_signature(),
+        sing_box_bittorrent_direct: module_success(SINGBOX_RUNTIME_UC,
+            [ "supports-bittorrent-direct", sing_box_version, sing_box_version_output ]) ? 1 : 0,
         sing_box_extended: flags.extended,
         sing_box_tiny: flags.tiny,
         sing_box_compressed,
