@@ -1669,7 +1669,7 @@ function clash_api(action, arg1, arg2, arg3) {
     }
 
     if (action == "get_connections") {
-        let args = [ "curl", "-s" ];
+        let args = [ "curl", "--max-time", "5", "--fail", "-s" ];
         for (let item in auth) push(args, item);
         push(args, base_url + "/connections");
         return clash_json_output(args);

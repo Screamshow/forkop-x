@@ -180,10 +180,10 @@ msgid "Available actions"
 msgstr "Доступные действия"
 
 msgid "Block QUIC in intercepted traffic and UDP/443 in direct Internet traffic from client interfaces. Local services and port forwards are excluded. Overrides the VPN-only setting while enabled."
-msgstr ""
+msgstr "Блокировать QUIC в перехватываемом трафике и UDP/443 в прямом интернет-трафике с клиентских интерфейсов. Локальные сервисы и перенаправления портов исключены. Пока включено, имеет приоритет над блокировкой только для VPN-трафика."
 
 msgid "Block QUIC only when a routing rule sends traffic through a proxy or VPN. Earlier DIRECT rules and source exclusions are preserved. This setting remains selected when global blocking is toggled."
-msgstr ""
+msgstr "Блокировать QUIC только тогда, когда правило маршрутизации направляет трафик через прокси или VPN. Предшествующие правила DIRECT и исключения для источников сохраняются. Значение этой настройки сохраняется при включении и выключении глобальной блокировки."
 
 msgid "Bootstrap DNS"
 msgstr "Bootstrap DNS"
@@ -450,10 +450,10 @@ msgid "Disable autostart"
 msgstr "Отключить автостарт"
 
 msgid "Disable QUIC for VPN traffic"
-msgstr ""
+msgstr "Отключить QUIC для VPN-трафика"
 
 msgid "Disable QUIC globally"
-msgstr ""
+msgstr "Отключить QUIC глобально"
 
 msgid "Disabled"
 msgstr "Выключен"

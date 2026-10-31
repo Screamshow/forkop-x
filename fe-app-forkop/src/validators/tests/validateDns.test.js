@@ -53,10 +53,11 @@ describe('validateBootstrapDNS', () => {
     expect(validateBootstrapDNS(value).valid).toBe(true);
   });
 
-  it.each(['dns.example.com', 'dns.example.com:853', 'dns.example.com/dns-query'])(
-    'rejects a hostname: %s',
-    (value) => {
-      expect(validateBootstrapDNS(value).valid).toBe(false);
-    },
-  );
+  it.each([
+    'dns.example.com',
+    'dns.example.com:853',
+    'dns.example.com/dns-query',
+  ])('rejects a hostname: %s', (value) => {
+    expect(validateBootstrapDNS(value).valid).toBe(false);
+  });
 });

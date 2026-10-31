@@ -105,3 +105,12 @@ fs.unlink(root + "/42/cmdline");
 fs.rmdir(root + "/42");
 fs.rmdir(root);
 print("Service memory tests passed\n");
+
+// Disabled optional modules disappear, including stale procd registrations.
+check(memory.optional_services_state({}, "optional", root, false), null, "Absent disabled module hidden");
+let stopped = { optional: { instances: {} } };
+check(memory.optional_services_state(stopped, "optional", root, false), null, "Disabled registered module hidden");
+check(memory.optional_services_state(stopped, "optional", root, true).running, 0, "Enabled stopped module remains visible");
+check(memory.optional_services_state({}, "optional", root, true).running, 0, "Enabled missing service remains visible");
+check(memory.optional_services_state({ optional: { instances: { main: { running: true, pid: 42 } } } }, "optional", root, false).running, 1, "Running optional module remains visible");
+print("Optional service visibility checks passed\n");

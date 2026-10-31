@@ -25,11 +25,11 @@ BATCH="$WORK_DIR/candidate.nft"
 : >"$BATCH"
 FORKOP_NFT_BATCH_FILE="$BATCH" ucode -L "$FORKOP_LIB" "$NFT_UC" nft-create-runtime-base \
     ForkopReplyTest localv4 subnets ports ip_ports interfaces br-lan 0x04000000 0x08000000 \
-    198.18.0.0/15 1602 0 localv6 subnets6 ip_ports6 fc00::/18 ::1
+    198.18.0.0/15 1602 0 localv6 subnets6 ip_ports6 2001:2::/112 ::1
 FORKOP_NFT_BATCH_FILE="$BATCH" ucode -L "$FORKOP_LIB" "$NFT_UC" nft-add-section-priority-rules-fixture \
-    "$WORK_DIR/fixture.json" ForkopReplyTest interfaces localv4 localv6 0x04000000 198.18.0.0/15 fc00::/18
+    "$WORK_DIR/fixture.json" ForkopReplyTest interfaces localv4 localv6 0x04000000 198.18.0.0/15 2001:2::/112
 FORKOP_NFT_BATCH_FILE="$BATCH" ucode -L "$FORKOP_LIB" "$NFT_UC" nft-create-runtime-output-rules \
-    ForkopReplyTest localv4 subnets ports ip_ports 0x04000000 198.18.0.0/15 localv6 subnets6 ip_ports6 fc00::/18
+    ForkopReplyTest localv4 subnets ports ip_ports 0x04000000 198.18.0.0/15 localv6 subnets6 ip_ports6 2001:2::/112
 
 # Position of the first rule of a chain whose text matches the pattern, or 0.
 rule_position() {

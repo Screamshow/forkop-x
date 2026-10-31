@@ -123,7 +123,7 @@ grep -Fq '19294-19344' "$WORK_DIR/discord.nft" || fail "Discord Cloudflare voice
 
 FORKOP_NFT_BATCH_FILE="$WORK_DIR/discord-rules.nft" \
   ucode -L "$FORKOP_LIB" "$NFT_UC" nft-add-section-priority-rules-fixture \
-    "$WORK_DIR/discord-fixture.json" ForkopTable source_interfaces localv4 localv6 0x04000000 198.18.0.0/15 fc00::/18
+    "$WORK_DIR/discord-fixture.json" ForkopTable source_interfaces localv4 localv6 0x04000000 198.18.0.0/15 2001:2::/112
 grep -Fq 'ip daddr . udp dport @forkop_rule_discord_udp_ip_ports' "$WORK_DIR/discord-rules.nft" ||
   fail "Discord shared ranges have no UDP voice interception rule"
 if grep -Fq 'tcp dport @forkop_rule_discord_udp_ip_ports' "$WORK_DIR/discord-rules.nft"; then
@@ -134,7 +134,7 @@ FORKOP_NFT_BATCH_FILE="$WORK_DIR/outbound-mark.nft" \
   ucode -L "$FORKOP_LIB" "$NFT_UC" nft-create-runtime-base \
     ForkopMarkTest localv4 common ports ip_ports interfaces br-lan \
     0x04000000 0x08000000 198.18.0.0/15 18602 0 \
-    localv6 common6 ip_ports6 fc00::/18 ::1
+    localv6 common6 ip_ports6 2001:2::/112 ::1
 grep -Fq 'meta mark & 0x08000000 == 0x08000000 counter return' "$WORK_DIR/outbound-mark.nft" ||
   fail "own-traffic bypass lost its mask"
 if grep -Fq 'meta mark 0x08000000 counter return' "$WORK_DIR/outbound-mark.nft"; then
@@ -145,7 +145,7 @@ printf 'outbound mark generation checks passed\n'
 FORKOP_NFT_BATCH_FILE="$WORK_DIR/outbound-mark.nft" \
   ucode -L "$FORKOP_LIB" "$NFT_UC" nft-create-runtime-output-rules \
     ForkopMarkTest localv4 common ports ip_ports 0x04000000 198.18.0.0/15 \
-    localv6 common6 ip_ports6 fc00::/18
+    localv6 common6 ip_ports6 2001:2::/112
 if grep -Eq '@(common6?|ports|ip_ports6?)( |$)' "$WORK_DIR/outbound-mark.nft"; then
   fail "obsolete common-set classifiers are still emitted"
 fi

@@ -61,7 +61,7 @@ fi
 # Generate the chains too: transport-specific sets need consumers even when
 # Discord/community_subnets is disabled.
 ucode -L "$FORKOP_LIB" "$FORKOP_LIB/nft/apply.uc" nft-add-section-priority-rules-fixture \
- "$WORK/fixture.json" forkop interfaces local local6 0x100 198.18.0.0/15 fc00::/18
+ "$WORK/fixture.json" forkop interfaces local local6 0x100 198.18.0.0/15 2001:2::/112
 grep -Eq 'udp dport.*@forkop_rule_alpha_udp_ip_ports' "$WORK/candidate.nft"
 grep -Eq 'tcp dport.*@forkop_rule_alpha_tcp_ip_ports' "$WORK/candidate.nft"
 printf 'Ruleset nft candidate checks passed\n'
