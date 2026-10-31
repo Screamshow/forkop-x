@@ -3565,7 +3565,9 @@ function add_service_route_rules(config, sections) {
         });
     }
     push(config.route.rules, {
-        action: "route-options",
+        // Keep the direct-IP reference outside all user proxy sections.
+        action: "route",
+        outbound: runtime_constants.DIRECT_OUTBOUND_TAG,
         domain: runtime_constants.FAKEIP_TEST_DOMAIN,
         override_port: 8443
     });

@@ -1,5 +1,7 @@
+import { pollDashboardMetrics } from './metricsPolling';
 import {
   getClashWsUrl,
+  canUseDirectClashApi,
   onMount,
   preserveScrollForPage,
 } from '../../../helpers';
@@ -55,6 +57,8 @@ let dashboardDataUpdatesStarted = false;
 let dashboardDataUpdatesId = 0;
 let dashboardSocketUnsubscribes: Array<() => void> = [];
 let pageUnloading = false;
+let stopMetricsPolling: (() => void) | null = null;
+let socketConnectTimer: ReturnType<typeof setTimeout> | null = null;
 const followedSubscriptionJobs = new Set<string>();
 const followedLatencyJobs = new Set<string>();
 const handledSubscriptionJobs = new Set<string>();
@@ -480,8 +484,74 @@ function stopActionStateWatcher() {
   actionStateUnsubscribe = null;
 }
 
+function startMetricsPolling(dataUpdatesId: number) {
+  // subscribe() may fail synchronously: wait for its cleanup handles.
+  void Promise.resolve().then(() => {
+    if (
+      stopMetricsPolling ||
+      !dashboardMounted ||
+      dataUpdatesId !== dashboardDataUpdatesId ||
+      getDashboardServiceAvailability() === 'stopped'
+    )
+      return;
+    if (socketConnectTimer) clearTimeout(socketConnectTimer);
+    socketConnectTimer = null;
+    for (const unsubscribe of dashboardSocketUnsubscribes) unsubscribe();
+    dashboardSocketUnsubscribes = [];
+    stopMetricsPolling = pollDashboardMetrics(
+      () => ForkopShellMethods.getClashApiConnections(),
+      (data) => {
+        store.set({
+          bandwidthWidget: {
+            loading: false,
+            failed: false,
+            data: { up: data.up, down: data.down },
+          },
+          trafficTotalWidget: {
+            loading: false,
+            failed: false,
+            data: {
+              uploadTotal: data.uploadTotal,
+              downloadTotal: data.downloadTotal,
+            },
+          },
+          systemInfoWidget: {
+            loading: false,
+            failed: false,
+            data: { connections: data.connections, memory: data.memory },
+          },
+        });
+      },
+      () => {
+        const state = store.get();
+        store.set({
+          bandwidthWidget: {
+            ...state.bandwidthWidget,
+            loading: false,
+            failed: true,
+          },
+          trafficTotalWidget: {
+            ...state.trafficTotalWidget,
+            loading: false,
+            failed: true,
+          },
+          systemInfoWidget: {
+            ...state.systemInfoWidget,
+            loading: false,
+            failed: true,
+          },
+        });
+      },
+    );
+  });
+}
+
 async function connectToClashSockets(dataUpdatesId: number) {
   const mountId = dashboardMountId;
+  if (!canUseDirectClashApi()) {
+    startMetricsPolling(dataUpdatesId);
+    return;
+  }
   const clashApiSecret = await getClashApiSecret();
 
   if (
@@ -492,6 +562,13 @@ async function connectToClashSockets(dataUpdatesId: number) {
   ) {
     return;
   }
+
+  let trafficReceived = false;
+  let connectionsReceived = false;
+  socketConnectTimer = setTimeout(() => {
+    if (!trafficReceived || !connectionsReceived)
+      startMetricsPolling(dataUpdatesId);
+  }, 5000);
 
   dashboardSocketUnsubscribes.push(
     socket.subscribe(
@@ -504,6 +581,7 @@ async function connectToClashSockets(dataUpdatesId: number) {
           return;
         }
 
+        trafficReceived = true;
         const parsedMsg = JSON.parse(msg);
 
         store.set({
@@ -522,18 +600,7 @@ async function connectToClashSockets(dataUpdatesId: number) {
           return;
         }
 
-        logger.error(
-          '[DASHBOARD]',
-          'connectToClashSockets - traffic: failed to connect to',
-          getClashWsUrl(),
-        );
-        store.set({
-          bandwidthWidget: {
-            loading: false,
-            failed: true,
-            data: { up: 0, down: 0 },
-          },
-        });
+        startMetricsPolling(dataUpdatesId);
       },
     ),
   );
@@ -549,6 +616,7 @@ async function connectToClashSockets(dataUpdatesId: number) {
           return;
         }
 
+        connectionsReceived = true;
         const parsedMsg = JSON.parse(msg);
 
         store.set({
@@ -578,26 +646,7 @@ async function connectToClashSockets(dataUpdatesId: number) {
           return;
         }
 
-        logger.error(
-          '[DASHBOARD]',
-          'connectToClashSockets - connections: failed to connect to',
-          getClashWsUrl(),
-        );
-        store.set({
-          trafficTotalWidget: {
-            loading: false,
-            failed: true,
-            data: { downloadTotal: 0, uploadTotal: 0 },
-          },
-          systemInfoWidget: {
-            loading: false,
-            failed: true,
-            data: {
-              connections: 0,
-              memory: 0,
-            },
-          },
-        });
+        startMetricsPolling(dataUpdatesId);
       },
     ),
   );
@@ -623,6 +672,10 @@ function stopDashboardDataUpdates() {
   }
 
   sectionsRefreshQueued = false;
+  stopMetricsPolling?.();
+  stopMetricsPolling = null;
+  if (socketConnectTimer) clearTimeout(socketConnectTimer);
+  socketConnectTimer = null;
   for (const unsubscribe of dashboardSocketUnsubscribes) unsubscribe();
   dashboardSocketUnsubscribes = [];
 }
@@ -1743,7 +1796,6 @@ async function renderTrafficTotalWidget() {
 async function renderSystemInfoWidget() {
   logger.debug('[DASHBOARD]', 'renderSystemInfoWidget');
   const systemInfoWidget = store.get().systemInfoWidget;
-  const rss = store.get().servicesInfoWidget.data.singboxMemoryBytes;
 
   const container = document.getElementById('dashboard-widget-system-info');
 
@@ -1765,19 +1817,11 @@ async function renderSystemInfoWidget() {
   const renderedWidget = renderWidget({
     loading: systemInfoWidget.loading,
     failed: systemInfoWidget.failed,
-    title: getSingBoxName(store.get().diagnosticsSystemInfo),
+    title: _('Connections'),
     items: [
       {
         key: _('Active Connections'),
         value: String(systemInfoWidget.data.connections),
-      },
-      {
-        key: _('Memory Usage'),
-        value:
-          typeof rss === 'number' && Number.isFinite(rss) && rss > 0
-            ? prettyBytes(rss)
-            : '—',
-        attributes: { title: _('Resident memory (RSS) of the core process.') },
       },
     ],
   });

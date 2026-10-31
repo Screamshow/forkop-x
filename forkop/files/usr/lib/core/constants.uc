@@ -73,7 +73,7 @@ function constants_map() {
     c.SB_DNS_SERVER_TAG = env("SB_DNS_SERVER_TAG", "dns-server");
     c.SB_FAKEIP_DNS_SERVER_TAG = env("SB_FAKEIP_DNS_SERVER_TAG", "fakeip-server");
     c.SB_FAKEIP_INET4_RANGE = env("SB_FAKEIP_INET4_RANGE", "198.18.0.0/15");
-    c.SB_FAKEIP_INET6_RANGE = env("SB_FAKEIP_INET6_RANGE", "fc00::/18");
+    c.SB_FAKEIP_INET6_RANGE = env("SB_FAKEIP_INET6_RANGE", "2001:2::/112");
     c.SB_BOOTSTRAP_SERVER_TAG = env("SB_BOOTSTRAP_SERVER_TAG", "bootstrap-dns-server");
     c.SB_FAKEIP_DNS_RULE_TAG = env("SB_FAKEIP_DNS_RULE_TAG", "fakeip-dns-rule-tag");
     c.SB_FAKEIP_RULESET_DNS_RULE_TAG = env("SB_FAKEIP_RULESET_DNS_RULE_TAG", "fakeip-ruleset-dns-rule-tag");

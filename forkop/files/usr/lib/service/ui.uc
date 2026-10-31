@@ -1122,11 +1122,13 @@ function current_ui_state_json() {
             },
             // The two totals above stay totals; these break out the share of
             // each that belongs to a service the dashboard names separately.
-            // Null means procd does not know the service at all.
-            tailscale: process_memory.services_state(
-                procd_services, TAILSCALE_SERVICE_NAME, "/proc"),
-            torrserver_direct: process_memory.services_state(
-                procd_services, TORRSERVER_SERVICE_NAME, "/proc")
+            // Disabled optional modules have no row; enabled failures remain visible.
+            tailscale: process_memory.optional_services_state(
+                procd_services, TAILSCALE_SERVICE_NAME, "/proc",
+                fs.stat("/etc/forkop-tailscale/enabled") != null),
+            torrserver_direct: process_memory.optional_services_state(
+                procd_services, TORRSERVER_SERVICE_NAME, "/proc",
+                trim(as_string(uci_core.get(CONFIG_NAME + ".settings.torrserver_direct_enabled"))) == "1")
         },
         config_error,
         subscription_error: read_json_file(SUBSCRIPTION_APPLY_ERROR_FILE),

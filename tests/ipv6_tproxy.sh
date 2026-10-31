@@ -60,11 +60,11 @@ for mode in enabled all-disabled lo-disabled missing; do
 
     batch=$WORK_DIR/$mode.nft
     FORKOP_NFT_BATCH_FILE=$batch ucode -L "$FORKOP_LIB" "$NFT_UC" nft-create-runtime-base \
-        ForkopIPv6Test localv4 subnets ports ip_ports interfaces br-lan 0x04000000 0x08000000 198.18.0.0/15 1602 0 localv6 subnets6 ip_ports6 fc00::/18 ::1
+        ForkopIPv6Test localv4 subnets ports ip_ports interfaces br-lan 0x04000000 0x08000000 198.18.0.0/15 1602 0 localv6 subnets6 ip_ports6 2001:2::/112 ::1
     FORKOP_NFT_BATCH_FILE=$batch ucode -L "$FORKOP_LIB" "$NFT_UC" nft-create-runtime-output-rules \
-        ForkopIPv6Test localv4 subnets ports ip_ports 0x04000000 198.18.0.0/15 localv6 subnets6 ip_ports6 fc00::/18
+        ForkopIPv6Test localv4 subnets ports ip_ports 0x04000000 198.18.0.0/15 localv6 subnets6 ip_ports6 2001:2::/112
     FORKOP_NFT_BATCH_FILE=$batch ucode -L "$FORKOP_LIB" "$NFT_UC" nft-add-section-priority-rules-fixture \
-        "$WORK_DIR/fixture.json" ForkopIPv6Test interfaces localv4 localv6 0x04000000 198.18.0.0/15 fc00::/18
+        "$WORK_DIR/fixture.json" ForkopIPv6Test interfaces localv4 localv6 0x04000000 198.18.0.0/15 2001:2::/112
     grep -q 'tproxy ip to' "$batch" || fail "$mode lost IPv4 interception"
     grep -q 'priority_output_rules ip daddr != @localv4 tcp dport @forkop_rule_ports_ports' "$batch" ||
         fail "$mode lost family-scoped section port capture"
@@ -115,4 +115,45 @@ if (!n.sing_box_standard_ports_listening(ports, null, null, "")) exit(1);
 if (n.sing_box_standard_ports_listening(ports, null, null, "::1")) exit(1);
 if (!n.sing_box_standard_ports_listening(ports + "::1:1602\n", null, null, "::1")) exit(1);
 '
+# Service checks must precede both port-wide and system-wide proxy sections.
+mkdir -p "$WORK_DIR/enabled-sysctl/all" "$WORK_DIR/enabled-sysctl/lo"
+printf "0\n" >"$WORK_DIR/enabled-sysctl/all/disable_ipv6"
+printf "0\n" >"$WORK_DIR/enabled-sysctl/lo/disable_ipv6"
+for version in 1.12.0 1.14.2-x-1.0.0 1.14.2-rust-x.0.0.30; do
+    for capture in ports system; do
+    ucode -e '
+let fs = require("fs"), c = json(fs.readfile(ARGV[0]));
+c.section[0].ports = ARGV[2] == "ports" ? ["1-65535"] : [];
+c.section[0].fully_routed_ips = ARGV[2] == "system" ? ["@system"] : [];
+fs.writefile(ARGV[1], sprintf("%J", c));
+' "$WORK_DIR/fixture.json" "$WORK_DIR/service-fixture.json" "$capture"
+    FORKOP_IPV6_SYSCTL_DIR="$WORK_DIR/enabled-sysctl" ucode -L "$FORKOP_LIB" "$FORKOP_LIB/singbox/generator.uc" generate-config-fixture \
+        "$WORK_DIR/service-fixture.json" "$WORK_DIR/service.json" 127.0.0.1 0 '' '' "$version"
+    ucode -e '
+let fs = require("fs"), c = json(fs.readfile(ARGV[0]));
+let check = -1, exit_check = -1, section = -1;
+for (let i, r in c.route.rules) {
+    if (r.domain == "fakeip.podkop.fyi") {
+        check = i;
+        if (r.action != "route" || r.outbound != "direct-out" || r.override_port != 8443 || r.inbound != null)
+            die("FakeIP reference must go direct for every inbound\n");
+    }
+    if (r.domain == "ip.podkop.fyi") {
+        exit_check = i;
+        if (r.outbound != "test-out") die("exit check bypassed the proxy section\n");
+    }
+    if (r.domain == null && r.outbound == "test-out") section = i;
+}
+if (check < 0 || exit_check < 0 || section < 0 || check >= section)
+    die("service checks must precede user sections\n");
+let found = false;
+for (let r in c.dns.servers)
+    if (r.tag == "fakeip-server") {
+        found = true;
+        if (r.inet6_range != "2001:2::/112") die("wrong IPv6 FakeIP range\n");
+    }
+if (!found) die("missing FakeIP server\n");
+' "$WORK_DIR/service.json"
+    done
+done
 printf 'IPv6 TPROXY auto-detection checks passed\n'

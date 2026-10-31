@@ -10,7 +10,7 @@ const OUTBOUND_MARK = getenv("NFT_OUTBOUND_MARK") || "0x08000000";
 // router DNS. Those addresses only work through sing-box, so leave them
 // unmarked for Forkop; peers are dialled by real IP and stay direct.
 const FAKEIP_INET4_RANGE = getenv("SB_FAKEIP_INET4_RANGE") || "198.18.0.0/15";
-const FAKEIP_INET6_RANGE = getenv("SB_FAKEIP_INET6_RANGE") || "fc00::/18";
+const FAKEIP_INET6_RANGE = getenv("SB_FAKEIP_INET6_RANGE") || "2001:2::/112";
 
 function text(value) { return value == null ? "" : "" + value; }
 function quote(value) { return "'" + replace(text(value), /'/g, "'\\''") + "'"; }

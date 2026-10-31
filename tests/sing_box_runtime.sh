@@ -237,8 +237,8 @@ mkdir -p "$WORK_DIR/fakeip-bin"
 cat >"$WORK_DIR/fakeip-bin/dig" <<'EOF_FAKEIP_DIG'
 #!/bin/sh
 case " $* " in
-  *' A '*) printf '%s\n' '198.18.0.42' ;;
-  *' AAAA '*) printf '%s\n' 'fc00::42' ;;
+  *' A '*) [ "${FORKOP_TEST_IPV6_ONLY:-0}" = 1 ] || printf '%s\n' '198.18.0.42' ;;
+  *' AAAA '*) printf '%s\n' '2001:2::42' ;;
 esac
 EOF_FAKEIP_DIG
 chmod +x "$WORK_DIR/fakeip-bin/dig"
@@ -253,10 +253,19 @@ ucode -e '
   let fs = require("fs");
   let value = json(fs.readfile(ARGV[0]));
   if (!value.fakeip || !value.public_ip_comparison_available ||
-      value.IPv4 != "198.18.0.42" || value.IPv6 != "fc00::42")
+      value.IPv4 != "198.18.0.42" || value.IPv6 != "2001:2::42")
     exit(1);
 ' "$WORK_DIR/fakeip-check.json" ||
   fail "FakeIP diagnostics full check returned an invalid result"
+
+FORKOP_TEST_IPV6_ONLY=1 PATH="$WORK_DIR/fakeip-bin:$PATH" \
+  ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" check-fakeip-fixture \
+    "$WORK_DIR/fakeip-comparison-proxy.json" >"$WORK_DIR/fakeip-v6-only.json"
+ucode -e '
+  let fs = require("fs"), value = json(fs.readfile(ARGV[0]));
+  if (!value.fakeip || value.IPv4 != "" || value.IP != "2001:2::42")
+    die("IPv6-only FakeIP was not recognized\n");
+' "$WORK_DIR/fakeip-v6-only.json"
 
 cat >"$WORK_DIR/fakeip-comparison-direct.json" <<'JSON'
 {"route":{"rules":[{"action":"route-options","domain":"fakeip.podkop.fyi","override_port":8443}]}}
@@ -1373,7 +1382,7 @@ for (let version_name in [ "section-exclusion-pre114", "section-exclusion-114" ]
     assert(exclusion_fallback && contains(exclusion_fallback.source_ip_cidr, "192.168.1.50/32"), version_name + " sends unmatched excluded-device DNS back to dnsmasq");
 }
 assert(matchers.dns.strategy == "prefer_ipv6", "configured DNS strategy is generated");
-assert(dns_server(matchers, r => r.tag == "fakeip-server" && r.inet6_range == "fc00::/18") != null, "FakeIP IPv6 range");
+assert(dns_server(matchers, r => r.tag == "fakeip-server" && r.inet6_range == "2001:2::/112") != null, "FakeIP IPv6 range");
 assert(inbound(matchers, "tproxy6-in") != null, "IPv6 TProxy inbound");
 assert(inbound(matchers, "tproxy6-in").listen == "::1", "IPv6 TProxy listen address");
 assert(route_rule(matchers, r => r.action == "reject" && r.ip_version == 6) == null, "IPv6 traffic is not rejected globally");
@@ -1392,7 +1401,7 @@ let bypass_dnsmasq = dns_rule(matchers, r =>
 assert(bypass_dnsmasq != null, "filtered bypass probes dnsmasq before real DNS fallback");
 assert(contains(bypass_dnsmasq.rules[0].inbound, "source-dns-in"), "filtered bypass DNS is limited to source-aware DNS clients");
 assert(contains(bypass_dnsmasq.rules[0].source_ip_cidr, "10.0.0.3/32"), "filtered bypass DNS keeps the client source");
-assert(bypass_dnsmasq.rules[1].invert === true && contains(bypass_dnsmasq.rules[1].ip_cidr, "198.18.0.0/15") && contains(bypass_dnsmasq.rules[1].ip_cidr, "fc00::/18"), "filtered bypass rejects nested FakeIP answers");
+assert(bypass_dnsmasq.rules[1].invert === true && contains(bypass_dnsmasq.rules[1].ip_cidr, "198.18.0.0/15") && contains(bypass_dnsmasq.rules[1].ip_cidr, "2001:2::/112"), "filtered bypass rejects nested FakeIP answers");
 let bypass_real = dns_rule(matchers, r =>
     r.server == "dns-server" && contains(r.domain_suffix, "example.org") &&
     contains(r.source_ip_cidr, "10.0.0.3/32"));
@@ -1627,9 +1636,10 @@ let xhttp_stable = cfg("subscription-xhttp-stable");
 assert(outbound(xhttp_stable, "xhttp-node") == null, "stable sing-box excludes XHTTP subscription leaf");
 assert(outbound(xhttp_stable, "depends-on-xhttp") == null, "stable sing-box excludes outbound detouring through XHTTP");
 assert(outbound(xhttp_stable, "recursive-dependent") == null, "stable sing-box recursively excludes XHTTP-dependent detours");
-let stable_provider_group = outbound(xhttp_stable, "Provider XHTTP Group");
-assert(stable_provider_group && length(stable_provider_group.outbounds) == 1 && stable_provider_group.outbounds[0] == "plain-node", "provider group removes XHTTP member");
-assert(stable_provider_group.default == null, "stable sing-box provider URLTest removes unsupported default field");
+// Configured URLTest/Priority groups use the leaves directly. The unused
+// provider group is pruned from runtime, while compatible leaves remain.
+assert(outbound(xhttp_stable, "Provider XHTTP Group") == null, "stable sing-box prunes unused provider group");
+assert(outbound(xhttp_stable, "plain-node") != null, "stable sing-box retains compatible subscription leaf");
 let stable_urltest = outbound(xhttp_stable, "xhttp-urltest-ut_xhttp-out");
 assert(stable_urltest && length(stable_urltest.outbounds) == 1 && stable_urltest.outbounds[0] == "plain-node", "URLTest receives only compatible subscription leaves");
 let stable_priority = outbound(xhttp_stable, "xhttp-priority-pg_xhttp-out");
@@ -1637,7 +1647,12 @@ assert(stable_priority && length(stable_priority.outbounds) == 1 && stable_prior
 
 let xhttp_extended = cfg("subscription-xhttp-extended");
 assert(outbound(xhttp_extended, "xhttp-node") != null, "extended sing-box keeps XHTTP subscription leaf");
-assert(outbound(xhttp_extended, "Provider XHTTP Group").default == null, "extended sing-box provider URLTest also removes unsupported default field");
+assert(outbound(xhttp_extended, "Provider XHTTP Group") == null, "extended sing-box also prunes unused provider group");
+assert(outbound(xhttp_extended, "plain-node") != null, "extended sing-box retains ordinary subscription leaf");
+for (let tag in [ "xhttp-urltest-ut_xhttp-out", "xhttp-priority-pg_xhttp-out" ]) {
+    let group = outbound(xhttp_extended, tag);
+    assert(group && contains(group.outbounds, "xhttp-node") && contains(group.outbounds, "plain-node"), "extended configured group retains both supported transports");
+}
 assert(outbound(xhttp_extended, "depends-on-xhttp").detour == "xhttp-node", "extended sing-box keeps XHTTP detour chain");
 assert(outbound(xhttp_extended, "recursive-dependent").detour == "depends-on-xhttp", "extended sing-box keeps recursive detour chain");
 

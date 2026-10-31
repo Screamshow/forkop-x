@@ -107,11 +107,11 @@ cat >"$WORK_DIR/fixture.json" <<'EOF_FIXTURE'
 EOF_FIXTURE
 FORKOP_NFT_BATCH_FILE="$BATCH" ucode -L "$FORKOP_LIB" "$NFT_UC" nft-create-runtime-base \
     ForkopRouterTest localv4 subnets ports ip_ports interfaces br-lan "$FAKEIP_MARK" 0x08000000 \
-    198.18.0.0/15 1602 0 localv6 subnets6 ip_ports6 fc00::/18 ::1
+    198.18.0.0/15 1602 0 localv6 subnets6 ip_ports6 2001:2::/112 ::1
 FORKOP_NFT_BATCH_FILE="$BATCH" ucode -L "$FORKOP_LIB" "$NFT_UC" nft-add-section-priority-rules-fixture \
-    "$WORK_DIR/fixture.json" ForkopRouterTest interfaces localv4 localv6 "$FAKEIP_MARK" 198.18.0.0/15 fc00::/18
+    "$WORK_DIR/fixture.json" ForkopRouterTest interfaces localv4 localv6 "$FAKEIP_MARK" 198.18.0.0/15 2001:2::/112
 FORKOP_NFT_BATCH_FILE="$BATCH" ucode -L "$FORKOP_LIB" "$NFT_UC" nft-create-runtime-output-rules \
-    ForkopRouterTest localv4 subnets ports ip_ports "$FAKEIP_MARK" 198.18.0.0/15 localv6 subnets6 ip_ports6 fc00::/18
+    ForkopRouterTest localv4 subnets ports ip_ports "$FAKEIP_MARK" 198.18.0.0/15 localv6 subnets6 ip_ports6 2001:2::/112
 
 capture_mask="$(ucode -L "$FORKOP_LIB" -e "
 let fakeip = $FAKEIP_MARK;

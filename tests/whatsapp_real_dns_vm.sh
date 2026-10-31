@@ -128,7 +128,7 @@ for mode in off on off; do
             }
         else
             echo "$a" | grep -Eq '^198\.(18|19)\.'
-            echo "$aaaa" | grep -Eq '^fc[0-3][0-9a-f]:'
+            echo "$aaaa" | grep -Eq '^2001:2::'
         fi
     done
     r dig @127.0.0.42 unrelated.example A +short +time=2 +tries=1 | grep -Eq '^198\.(18|19)\.'
@@ -171,7 +171,7 @@ r ip route add local 0.0.0.0/0 dev lo table 100
 r ip -6 rule add fwmark 0x04000000/0x04000000 table 100
 r ip -6 route add local ::/0 dev lo table 100
 FORKOP_NFT_BATCH_FILE="$WORK/base.nft" ucode -L "$LIB" "$LIB/nft/apply.uc" nft-create-runtime-base \
-    WhatsAppTest localv4 subnets ports ip_ports interfaces br-lan 0x04000000 0x08000000 198.18.0.0/15 1602 0 localv6 subnets6 ip_ports6 fc00::/18 ::1
+    WhatsAppTest localv4 subnets ports ip_ports interfaces br-lan 0x04000000 0x08000000 198.18.0.0/15 1602 0 localv6 subnets6 ip_ports6 2001:2::/112 ::1
 r nft -f "$WORK/base.nft"
 # Documentation prefixes are local-bypassed in production; remove that prefix
 # only inside this isolated test namespace to exercise the IPv6 capture path.

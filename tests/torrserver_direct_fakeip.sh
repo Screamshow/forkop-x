@@ -41,7 +41,7 @@ let lines = filter(split(fs.readfile(ARGV[0] + "/applied.nft"), "\n"), l => l !=
 let v4 = -1, v6 = -1, mark = -1;
 for (let i = 0; i < length(lines); i++) {
     if (lines[i] == "add rule inet ForkopTorrServerDirect output ip daddr 198.18.0.0/15 return") v4 = i;
-    if (lines[i] == "add rule inet ForkopTorrServerDirect output ip6 daddr fc00::/18 return") v6 = i;
+    if (lines[i] == "add rule inet ForkopTorrServerDirect output ip6 daddr 2001:2::/112 return") v6 = i;
     if (index(lines[i], "socket cgroupv2 level 2 \"services/torrserver\" meta mark set 0x08000000") >= 0) mark = i;
 }
 assert(v4 >= 0 && v6 >= 0, "FakeIP destinations are not excluded");

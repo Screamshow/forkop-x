@@ -99,6 +99,15 @@ function services_state(services, service_name, proc_root) {
     };
 }
 
+// Disabled optional modules have no dashboard row. Enabled modules still report
+// a failure even when procd has no registered instance yet.
+function optional_services_state(services, service_name, proc_root, enabled) {
+    let state = services_state(services, service_name, proc_root);
+    if (!enabled && (state == null || !state.running))
+        return null;
+    return state || { running: 0, memory_rss_bytes: 0 };
+}
+
 function ubus_services(request) {
     let pipe = fs.popen("ubus call service list " + request + " 2>/dev/null", "r");
     if (!pipe)
@@ -141,5 +150,6 @@ return {
     service_group_rss_bytes,
     services_rss_bytes,
     services_group_rss_bytes,
-    services_state
+    services_state,
+    optional_services_state
 };
