@@ -1247,6 +1247,20 @@ function fakeip_public_ip_comparison_available(config) {
     return false;
 }
 
+function fakeip_ipv6_address(address) {
+    // Retain detection for installations explicitly keeping the old range.
+    if (match(address, /^fc[0-3][0-9a-f]:/) != null)
+        return true;
+    let bytes = iptoarr(address);
+    let prefix = iptoarr("2001:2::");
+    if (type(bytes) != "array" || length(bytes) != 16)
+        return false;
+    for (let i = 0; i < 14; i++)
+        if (bytes[i] != prefix[i])
+            return false;
+    return true;
+}
+
 function fakeip_check_result(config) {
     let fakeip_address = "";
     let fakeip6_address = "";
@@ -1269,7 +1283,7 @@ function fakeip_check_result(config) {
         }
     }
     return {
-        fakeip: match(fakeip_address, /^198\.(18|19)\./) != null || match(fakeip6_address, /^fc[0-3][0-9a-f]:/) != null,
+        fakeip: match(fakeip_address, /^198\.(18|19)\./) != null || fakeip_ipv6_address(fakeip6_address),
         public_ip_comparison_available: fakeip_public_ip_comparison_available(config),
         IP: fakeip_address != "" ? fakeip_address : fakeip6_address,
         IPv4: fakeip_address,

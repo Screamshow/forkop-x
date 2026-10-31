@@ -237,7 +237,7 @@ mkdir -p "$WORK_DIR/fakeip-bin"
 cat >"$WORK_DIR/fakeip-bin/dig" <<'EOF_FAKEIP_DIG'
 #!/bin/sh
 case " $* " in
-  *' A '*) printf '%s\n' '198.18.0.42' ;;
+  *' A '*) [ "${FORKOP_TEST_IPV6_ONLY:-0}" = 1 ] || printf '%s\n' '198.18.0.42' ;;
   *' AAAA '*) printf '%s\n' '2001:2::42' ;;
 esac
 EOF_FAKEIP_DIG
@@ -257,6 +257,15 @@ ucode -e '
     exit(1);
 ' "$WORK_DIR/fakeip-check.json" ||
   fail "FakeIP diagnostics full check returned an invalid result"
+
+FORKOP_TEST_IPV6_ONLY=1 PATH="$WORK_DIR/fakeip-bin:$PATH" \
+  ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" check-fakeip-fixture \
+    "$WORK_DIR/fakeip-comparison-proxy.json" >"$WORK_DIR/fakeip-v6-only.json"
+ucode -e '
+  let fs = require("fs"), value = json(fs.readfile(ARGV[0]));
+  if (!value.fakeip || value.IPv4 != "" || value.IP != "2001:2::42")
+    die("IPv6-only FakeIP was not recognized\n");
+' "$WORK_DIR/fakeip-v6-only.json"
 
 cat >"$WORK_DIR/fakeip-comparison-direct.json" <<'JSON'
 {"route":{"rules":[{"action":"route-options","domain":"fakeip.podkop.fyi","override_port":8443}]}}
