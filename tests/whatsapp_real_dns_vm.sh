@@ -128,7 +128,7 @@ for mode in off on off; do
             }
         else
             echo "$a" | grep -Eq '^198\.(18|19)\.'
-            echo "$aaaa" | grep -Eq '^fc[0-3][0-9a-f]:'
+            echo "$aaaa" | grep -Eq '^2001:2::'
         fi
     done
     r dig @127.0.0.42 unrelated.example A +short +time=2 +tries=1 | grep -Eq '^198\.(18|19)\.'
