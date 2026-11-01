@@ -1119,6 +1119,8 @@ function add_subscription_source_with_state(config, section, source_index, sourc
 
         push(config.outbounds, outbound);
         added++;
+        if (type(state.subscriptionOutbounds) != "object") state.subscriptionOutbounds = {};
+        state.subscriptionOutbounds[outbound.tag] = true;
         if (!is_group)
             push(urltest_candidate_tags, outbound.tag);
         runtime_subscription.remember_source_outbound(
@@ -2600,7 +2602,9 @@ function add_connections_outbound(config, section, taken) {
     }
 
     if (section_needs_country_is(section)) {
-        let previous_state = read_json_file(runtime_subscription.section_cache_path(section_name));
+        let previous_state = read_json_file(runtime_subscription.section_cache_path(section_name)) ||
+            read_json_file((getenv("FORKOP_SECTION_CACHE_DIR") ||
+                (getenv("FORKOP_RUNTIME_STATE_DIR") || "/var/run/forkop") + "/section-cache") + "/" + section_name + ".json");
         state.outboundMetadata.countries = runtime_country.detect(
             state.servers,
             previous_state,
@@ -3596,6 +3600,8 @@ function enabled_sections(deferred_sections) {
 }
 
 function generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan, supports_bittorrent_direct) {
+    // Provenance and UI metadata belong to this candidate, never the live cache.
+    runtime_subscription.set_section_cache_dir(output_path + ".section-cache");
     runtime_prunable_outbounds = {};
     runtime_skipped_protocol_outbounds = {};
     // Verified for Xrust; Go X 1.0.4 and Extended 2.7.2 do not support this

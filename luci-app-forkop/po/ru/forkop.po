@@ -2015,6 +2015,7 @@ msgstr "Да"
 msgid "You can select Output Network Interface, by default autodetect"
 msgstr "Вы можете выбрать выходной сетевой интерфейс, по умолчанию он определяется автоматически."
 
+
 msgid "Route detected BitTorrent directly"
 msgstr "Направлять BitTorrent напрямую"
 
@@ -2026,3 +2027,13 @@ msgstr "Доступно только для Xrust"
 
 msgid "Update Xrust to enable this setting"
 msgstr "Обновите Xrust, чтобы включить эту настройку"
+
+msgid "Incompatible subscription nodes were skipped"
+msgstr "Несовместимые узлы подписки пропущены"
+
+msgid "Required connection is unavailable"
+msgstr "Необходимое подключение недоступно"
+
+msgid "Rejected by the selected core"
+msgstr "Отклонён выбранным ядром"
+

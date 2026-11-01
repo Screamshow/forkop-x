@@ -22,6 +22,7 @@ type DashboardSectionCache = {
   version?: number;
   section?: string;
   links?: Record<string, string>;
+  skippedSubscriptionOutbounds?: { tag: string; reason: string }[];
   outboundMetadata?: Forkop.GetOutboundMetadata;
   urltestGroups?: Record<string, UrlTestCacheGroup>;
   priorityGroups?: Record<string, PriorityCacheGroup>;
@@ -1501,6 +1502,16 @@ export async function getDashboardSections(): Promise<IGetDashboardSectionsRespo
             proxyConfigType,
             subscriptionSourceCount,
             subscriptionMetadata,
+            skippedSubscriptionOutbounds: Array.isArray(
+              dashboardCache?.skippedSubscriptionOutbounds,
+            )
+              ? dashboardCache.skippedSubscriptionOutbounds.filter(
+                  (item) =>
+                    item &&
+                    typeof item.tag === 'string' &&
+                    typeof item.reason === 'string',
+                )
+              : [],
             outbounds,
           };
         }

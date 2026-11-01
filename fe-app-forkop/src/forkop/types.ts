@@ -161,6 +161,7 @@ export namespace Forkop {
     proxyConfigType?: ProxyConfigType;
     subscriptionSourceCount?: number;
     subscriptionMetadata?: SubscriptionMetadata[];
+    skippedSubscriptionOutbounds?: { tag: string; reason: string }[];
     outbounds: Outbound[];
   }
 

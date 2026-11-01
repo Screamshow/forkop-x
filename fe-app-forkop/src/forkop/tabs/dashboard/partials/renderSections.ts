@@ -537,6 +537,28 @@ function renderDefaultState({
         ],
       ),
     ]),
+    ...(section.skippedSubscriptionOutbounds?.length
+      ? [
+          E('div', { class: 'alert-message warning' }, [
+            E('strong', {}, _('Incompatible subscription nodes were skipped')),
+            E(
+              'ul',
+              {},
+              section.skippedSubscriptionOutbounds.map((item) =>
+                E(
+                  'li',
+                  {},
+                  `${item.tag}: ${
+                    item.reason === 'unavailable-dependency'
+                      ? _('Required connection is unavailable')
+                      : _('Rejected by the selected core')
+                  }`,
+                ),
+              ),
+            ),
+          ]),
+        ]
+      : []),
     E('div', { class: 'fkp_dashboard-page__outbound-grid' }, [
       ...metadataNodes,
       ...section.outbounds.map((outbound) => renderOutbound(outbound)),

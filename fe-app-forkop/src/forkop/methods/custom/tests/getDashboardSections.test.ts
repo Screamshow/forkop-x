@@ -133,6 +133,24 @@ const clashProxies: Record<string, ClashAPI.ProxyBase> = {
 };
 
 describe('getDashboardSections', () => {
+  it('exposes subscription recovery warnings without treating them as nodes', async () => {
+    mocks.getConfigSections.mockResolvedValue([proxySection()]);
+    mocks.fsRead.mockResolvedValue(
+      JSON.stringify({
+        skippedSubscriptionOutbounds: [
+          { tag: 'provider-node', reason: 'core-validation' },
+          null,
+        ],
+      }),
+    );
+    const result = await getDashboardSections();
+    expect(result.data[0].skippedSubscriptionOutbounds).toEqual([
+      { tag: 'provider-node', reason: 'core-validation' },
+    ]);
+    expect(
+      result.data[0].outbounds.some((item) => item.code === 'provider-node'),
+    ).toBe(false);
+  });
   beforeEach(() => {
     mocks.getConfigSections.mockReset();
     mocks.getClashApiProxies.mockReset();

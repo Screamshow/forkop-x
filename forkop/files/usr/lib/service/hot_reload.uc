@@ -2,6 +2,7 @@
 let fs = require("fs");
 let common = require("core.common");
 let uci = require("core.uci");
+let subscription_recovery = require("singbox.subscription_recovery");
 const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
 const STATE_UC = getenv("FORKOP_STATE_UC") || LIB_DIR + "/service/state.uc";
@@ -9,10 +10,10 @@ const BINARY = getenv("FORKOP_SING_BOX_BIN") || "/usr/bin/sing-box";
 
 function str(value) { return value == null ? "" : "" + value; }
 function quote(value) { return "'" + replace(str(value), /'/g, "'\\''") + "'"; }
-function capture(args) {
+function capture(args, include_errors) {
     let encoded = [];
     for (let arg in args) push(encoded, quote(arg));
-    let pipe = fs.popen(join(" ", encoded) + " 2>/dev/null", "r");
+    let pipe = fs.popen(join(" ", encoded) + (include_errors ? " 2>&1" : " 2>/dev/null"), "r");
     if (!pipe) return { status: 1, output: "" };
     let output = pipe.read("all");
     let status = int(pipe.close());
@@ -150,7 +151,18 @@ function plan(stage_path) {
     // before applying and reports a refusal, while a second full decode here
     // would sit beside it in memory. Older Xrust ignores the flag.
     let result = capture([ BINARY, "reload-plan", "--current", current_path, "-c", stage_path,
-        "--skip-rule-set-payloads" ]);
+        "--skip-rule-set-payloads" ], true);
+    if (result.status != 0 && trim(result.output) == "reload-plan: candidate configuration rejected") {
+        // Older Xrust supplies no node index here. Use the existing guarded
+        // cold validation/recovery path, never a second eager check beside
+        // the running core. Manual-only candidates retain the old failure.
+        let states = [];
+        for (let entry in common.array_or_empty(fs.lsdir(stage_path + ".section-cache"))) {
+            if (match(entry, /^[A-Za-z0-9_-]+\.json$/) == null) continue;
+            push(states, read(stage_path + ".section-cache/" + entry));
+        }
+        if (subscription_recovery.cold_retry(result, states)) { print("cold\n"); return 0; }
+    }
     let candidate = result.status == 0 ? parsed(result.output) : null;
     if (candidate == null || candidate.schema != 1) return 1;
     if (!candidate.in_place || candidate.current_sha256 != before.config_sha256) {

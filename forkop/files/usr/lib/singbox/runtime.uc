@@ -4,6 +4,7 @@ let fs = require("fs");
 let uci_core = require("core.uci");
 let common = require("core.common");
 let runtime_dns = require("singbox.dns");
+let subscription_recovery = require("singbox.subscription_recovery");
 
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
 // Test-only config preparation failure injection. Empty in production.
@@ -735,6 +736,36 @@ function sing_box_check(config_path, output_path) {
     return { status, reason };
 }
 
+function check_with_subscription_recovery(config_path, output_path) {
+    let result = sing_box_check(config_path, output_path);
+    while (result.status != 0) {
+        let cache_dir = config_path + ".section-cache";
+        let states = [], paths = [];
+        for (let entry in array_or_empty(fs.lsdir(cache_dir))) {
+            if (match(entry, /^[A-Za-z0-9_-]+\.json$/) == null) continue;
+            let path = cache_dir + "/" + entry;
+            let state = common.read_json_file(path);
+            if (type(state) != "object") return result;
+            push(paths, path); push(states, state);
+        }
+        let config = common.read_json_file(config_path);
+        if (type(config) != "object") return result;
+        let repaired = subscription_recovery.recover(config, states, result.reason);
+        if (repaired == null) return result;
+        // Every retry removes at least one proven subscription node. Nothing
+        // is written to the source subscription or live UI/configuration.
+        if (common.write_private_json_file(config_path, repaired.config) == null)
+            return { status: 1, reason: "unable to write recovered configuration" };
+        for (let i = 0; i < length(paths); i++)
+            if (common.write_private_json_file(paths[i], repaired.states[i]) == null)
+                return { status: 1, reason: "unable to write recovered section cache" };
+        for (let tag in repaired.removed)
+            log_message("Skipping incompatible subscription outbound '" + tag + "'; source cache preserved", "warn");
+        result = sing_box_check(config_path, output_path);
+    }
+    return result;
+}
+
 // A full sing-box check parses every outbound eagerly and can briefly use far
 // more memory than the long-running runtime. Call this only when no managed
 // sing-box process is alive (the lifecycle owns that serialization).
@@ -747,7 +778,7 @@ function validate_config_stage(stage_path) {
 
     let result = SINGBOX_CONFIG_FAIL_PHASE == "check"
         ? { status: 1, reason: "injected sing-box configuration check failure" }
-        : sing_box_check(stage_path, check_log);
+        : check_with_subscription_recovery(stage_path, check_log);
     if (result.status != 0)
         log_message("Staged sing-box configuration is invalid: " + result.reason + ". Aborted.", "fatal");
     remove_file(check_log);
@@ -1027,7 +1058,7 @@ function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferre
     if (validate_now !== false) {
         let check_result = SINGBOX_CONFIG_FAIL_PHASE == "check"
             ? { status: 1, reason: "injected sing-box configuration check failure" }
-            : sing_box_check(temp_config, runtime_log);
+            : check_with_subscription_recovery(temp_config, runtime_log);
         if (check_result.status != 0) {
             log_message("Generated sing-box configuration is invalid: " + check_result.reason + ". Aborted.", "fatal");
             remove_files([ temp_config, runtime_log ]);
@@ -1057,6 +1088,11 @@ function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferre
     }
 
     if (as_string(stage_path) != "") {
+        if (file_exists(temp_config + ".section-cache") &&
+            !fs.rename(temp_config + ".section-cache", stage_path + ".section-cache")) {
+            remove_file(runtime_log);
+            exit(1);
+        }
         if (!ensure_parent_dir(stage_path) || !command_success_from_args([ "mv", "-f", temp_config, stage_path ])) {
             remove_file(runtime_log);
             exit(1);
