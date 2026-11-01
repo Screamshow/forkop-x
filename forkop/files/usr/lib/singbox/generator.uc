@@ -2035,6 +2035,8 @@ function apply_link_tls(outbound, scheme, query) {
         let preference = query.support_x25519mlkem768;
         if (preference == null)
             preference = query.supportX25519MLKEM768;
+        if (preference == null)
+            preference = query["support-x25519mlkem768"];
         if (preference != null)
             tls.reality.support_x25519mlkem768 = bool_query(preference);
         if (as_string(query.pqv || "") != "")

@@ -728,6 +728,8 @@ function add_tls(url, security, default_tls) {
         let preference = query.support_x25519mlkem768;
         if (preference == null)
             preference = query.supportX25519MLKEM768;
+        if (preference == null)
+            preference = query["support-x25519mlkem768"];
         if (preference != null)
             tls.reality.support_x25519mlkem768 = is_true(preference);
         // ML-DSA-65 server verification (pqv): kept for the cores that can use

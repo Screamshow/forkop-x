@@ -178,11 +178,20 @@ for (let version in ["1.13.21", "1.14.1", "1.14.1-extended-2.7.1", "unknown", "1
     expect(!exists(o.tls.reality, "support_x25519mlkem768"), "Reality stays unspecified for " + version);
 }
 for (let value in [false,true]) {
-    for (let parameter in ["support_x25519mlkem768", "supportX25519MLKEM768"]) {
+    for (let parameter in ["support_x25519mlkem768", "supportX25519MLKEM768", "support-x25519mlkem768"]) {
         let uri = base + "&" + parameter + "=" + (value ? "true" : "false");
         expect(normalize(uri).tls.reality.support_x25519mlkem768 === value, "explicit subscription URI Reality preference " + parameter);
         let manual = vless_outbound(generate([uri], [], "1.14.1-extended-2.7.2"));
         expect(manual.tls.reality.support_x25519mlkem768 === value, "explicit manual URI Reality preference " + parameter);
+        let cached_alias = normalize(uri);
+        delete cached_alias.tls.reality.support_x25519mlkem768;
+        parser.repair_cached_outbounds([cached_alias]);
+        expect(cached_alias.tls.reality.support_x25519mlkem768 === value,
+            "cached URI Reality preference recovered " + parameter);
+        cached_alias.tls.reality.support_x25519mlkem768 = !value;
+        parser.repair_cached_outbounds([cached_alias]);
+        expect(cached_alias.tls.reality.support_x25519mlkem768 === !value,
+            "explicit cached Reality preference preserved " + parameter);
     }
     let o = normalize(base + "&support_x25519mlkem768=" + (value ? "true" : "false"));
     delete o.share_link;
@@ -190,6 +199,10 @@ for (let value in [false,true]) {
     expect(result.tls.reality.support_x25519mlkem768 === value, "explicit JSON Reality preference");
     expect(normalize(links.serialize_outbound_link(o)).tls.reality.support_x25519mlkem768 === value, "Reality preference round trip");
 }
+expect(normalize(base + "&support_x25519mlkem768=false&support-x25519mlkem768=true")
+    .tls.reality.support_x25519mlkem768 === false, "canonical Reality preference takes precedence");
+expect(normalize(base + "&supportX25519MLKEM768=false&support-x25519mlkem768=true")
+    .tls.reality.support_x25519mlkem768 === false, "existing camelCase Reality preference takes precedence");
 let unspecified = normalize(base);
 delete unspecified.share_link;
 let unspecified_json = vless_outbound(generate([], [sprintf("%J", unspecified)], "1.14.1-extended-2.7.2"));
