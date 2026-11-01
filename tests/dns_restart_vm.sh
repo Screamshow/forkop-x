@@ -45,9 +45,9 @@ echo 'explicit_stop PASS DNS restored'
 if FORKOP_SINGBOX_CONFIG_FAIL_PHASE=generate /usr/bin/forkop restart > "$D/failure.log" 2>&1; then
     echo 'FAIL injected startup error was accepted'; exit 1
 fi
-[ -z "$(dns_value forkop_dns_transaction_id)" ]
-[ "$(dns_value server)" != 127.0.0.42 ]
-echo 'failed_restart PASS DNS restored'
+[ -n "$(dns_value forkop_dns_transaction_id)" ]
+[ "$(dns_value server)" = 127.0.0.42 ]
+echo 'failed_restart PASS previous runtime and DNS preserved'
 /etc/init.d/forkop start > "$D/recovery.log" 2>&1
 /etc/init.d/forkop status
 dig @127.0.0.1 "$domain" A +short +time=2 +tries=1 | grep -Eq '^198\.(18|19)\.'

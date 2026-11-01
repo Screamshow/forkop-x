@@ -54,9 +54,9 @@ grep -Fq 'mode == "validate-config-stage"' "$SINGBOX_RUNTIME_UC" ||
   fail "singbox/runtime.uc must expose staged config validation"
 grep -Fq 'validate-config-stage", staged_singbox_config' "$LIFECYCLE_UC" ||
   fail "reload lifecycle must validate the staged config"
-grep -Fq 'abort_invalid_staged_config(staged_singbox_config)' "$LIFECYCLE_UC" ||
-  fail "an invalid staged configuration must stop Forkop fail-closed"
-grep -Fq 'Forkop stopped: the generated sing-box configuration is invalid' "$LIFECYCLE_UC" ||
+grep -Fq 'return abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, transition_guard_active);' "$LIFECYCLE_UC" ||
+  fail "an invalid staged configuration must attempt guarded rollback"
+grep -Fq 'The generated sing-box configuration is invalid' "$LIFECYCLE_UC" ||
   fail "invalid staged configuration must expose an explicit error"
 grep -Fq 'config_error' "$FORKOP_LIB/service/ui.uc" ||
   fail "LuCI state must expose the staged configuration error"

@@ -1253,20 +1253,25 @@ function abort_reload(status, runtime_changed) {
 function abort_guarded_transition(status, stage_path, backup_path, guard_active) {
     nft_candidate_finish(false);
     discard_singbox_config_stage(stage_path);
-    if (!finish_list_change_files(true))
+    if (!finish_list_change_files(true)) {
+        cleanup_failed_runtime();
         return status || 1;
+    }
 
     if (!guard_active)
         return abort_reload(status, false);
 
-    if (fs.stat(backup_path) != null && restore_guarded_singbox_runtime(backup_path, true))
+    if (fs.stat(backup_path) != null && restore_guarded_singbox_runtime(backup_path, true)) {
+        module_success(PRIORITY_UC, [ "start-runtime" ]);
+        module_success(DNS_FAILOVER_UC, [ "start-runtime" ]);
+        log_message("Configuration apply failed; previous runtime restored", "warn");
         return abort_reload(status, false);
+    }
 
-    // Do not call cleanup_failed_runtime here. The guard intentionally stays
-    // in the old table and drops classified traffic until an operator/retry can
-    // restore a coherent pair; tearing down the table would create a direct
-    // leak window.
-    log_message("Cross-component transition rollback failed; retaining the fail-closed nft guard", "fatal");
+    // This is transition protection, not a persistent kill switch. Only after
+    // rollback has failed restore ordinary DNS and direct internet access.
+    log_message("Cross-component transition rollback failed; restoring direct access", "fatal");
+    cleanup_failed_runtime();
     remove_file(RELOAD_STATE_SNAPSHOT_FILE);
     return status == 0 ? 1 : status;
 }
@@ -1296,17 +1301,6 @@ function abort_hot_transition(status, stage_path, backup_path) {
         return abort_reload(status, false);
     }
     return abort_hot_to_guarded(status, stage_path, backup_path);
-}
-
-function abort_invalid_staged_config(stage_path) {
-    nft_candidate_finish(false);
-    discard_singbox_config_stage(stage_path);
-    finish_list_change_files(true);
-    // A configuration which sing-box itself rejects is a hard fail-closed
-    // condition: do not silently retain a previous policy after the user has
-    // applied new settings.
-    cleanup_failed_runtime();
-    return 1;
 }
 
 function start() {
@@ -1624,7 +1618,7 @@ function reload_reason_for_generation(reason, pending, generation_current) {
     return reason;
 }
 
-function reload(reason) {
+function reload(reason, cold_restart) {
     reason = as_string(reason || "");
     // Retry a completed generation locally only while its source signature
     // matches UCI. Cancelling or replacing a failed edit needs a new generation
@@ -1740,6 +1734,12 @@ function reload(reason) {
         plan.needs_list_update = 0;
         plan.changed_list = 0;
     }
+    if (cold_restart) {
+        plan.has_work = 1;
+        plan.needs_sing_box_reload = 1;
+        plan.needs_nft_rebuild = 1;
+        plan.needs_cron_refresh = 1;
+    }
     write_service_trigger_sync_state(plan.changed_service_triggers);
 
     if (plan.has_work == 0) {
@@ -1836,7 +1836,15 @@ function reload(reason) {
             log_message("Hot reload candidate rejected before changing the running core", "error");
             return abort_reload(hot_plan.status, false);
         }
-        hot_reload = trim(hot_plan.output) == "hot";
+        hot_reload = !cold_restart && trim(hot_plan.output) == "hot";
+        // Keep the rollback config before any live mutation, including a stop
+        // needed for memory-bounded validation of the candidate.
+        if (!hot_reload && (!command_success_from_args([ "cp", "-p", sing_box_config_path, staged_singbox_backup ]) ||
+            !fs.chmod(staged_singbox_backup, 0600))) {
+            discard_singbox_config_stage(staged_singbox_config);
+            remove_file(staged_singbox_backup);
+            return abort_reload(1, false);
+        }
     }
 
     if (plan.needs_nft_rebuild == 1) {
@@ -1918,8 +1926,8 @@ function reload(reason) {
             // still resident. On 256 MiB routers their combined peak can trigger
             // the OOM killer even though either process runs safely on its own.
             if (!module_success(SINGBOX_UC, [ "validate-config-stage", staged_singbox_config ])) {
-                set_runtime_config_error("Forkop stopped: the generated sing-box configuration is invalid. Correct the settings and apply them again; see the system log for details.");
-                return abort_invalid_staged_config(staged_singbox_config);
+                set_runtime_config_error("The generated sing-box configuration is invalid. Previous configuration recovery was requested. Correct the settings and apply them again; see the system log for details.");
+                return abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, transition_guard_active);
             }
             clear_runtime_config_error();
             if (!module_success(SINGBOX_UC, [ "commit-config-stage", staged_singbox_config, staged_singbox_backup ]))
@@ -2054,6 +2062,15 @@ function restart() {
     if (module_success(STATE_UC, [ "sing-box-process-conflict" ])) {
         log_message("Refusing Forkop restart: sing-box process ownership is ambiguous; preserving the existing runtime", "fatal");
         return 1;
+    }
+
+    // Reuse the staged cold transition for a working runtime. Interception
+    // and DNS survive while the core is replaced behind the transition guard.
+    if (module_success(STATE_UC, [ "forkop-running", RT_TABLE_NAME, NFT_TABLE_NAME, NFT_FAKEIP_MARK ])) {
+        let selector_state = capture_selector_state();
+        let status = reload("restart", true);
+        restore_selector_state(selector_state);
+        return status;
     }
 
     let selector_state = capture_selector_state();
