@@ -274,7 +274,8 @@ if (!value.progress || value.progress.completed !== 0 || value.progress.total !=
 }
 NODE
 
-printf '%s\n' "$$" >"$FORKOP_PACKAGE_UPGRADE_QUIESCE_FILE"
+ui_ucode begin-package-upgrade-quiesce "$$" >/dev/null ||
+  fail "package upgrade marker must record the live process identity"
 ui_ucode package-upgrade-transition-active >/dev/null ||
   fail "live package upgrade owner must expose a UI transition"
 if ui_ucode service-action-begin-if-idle restart test >/dev/null 2>&1; then

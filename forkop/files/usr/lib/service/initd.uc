@@ -663,7 +663,12 @@ function restart_service(owner_pid) {
     clear_start_retry(START_RETRY_FILE);
     cancel_scheduled_start_retry(START_RETRY_PID_FILE);
     let job_id = begin_external_service_action("restart", "initd", owner_pid);
-    let status = command_status_from_args(bin_args([ BIN_PATH, "restart" ]));
+    // Public CLI restart shares this lock with UCI/subscription reloads.
+    // Invoke the lifecycle directly to avoid re-entering this dispatcher.
+    let status = command_status_from_args([
+        "env", "FORKOP_LIB=" + LIB_DIR, "FORKOP_UI_ACTION_TRACKED=1",
+        "ucode", "-L", LIB_DIR, LIB_DIR + "/service/lifecycle.uc", "restart"
+    ]);
     release_runtime_dir_lock(RELOAD_LOCK_DIR);
     finish_external_service_action("restart", job_id, status);
     if (status == 0 && active_service_action_value() == "")

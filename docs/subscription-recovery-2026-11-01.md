@@ -28,3 +28,7 @@ Successful hot plans stay hot. When older Xrust reports only a generic candidate
 The broad tests/sing_box_runtime.sh fails at its existing assertion "provider group removes XHTTP member". The identical failure was reproduced in an isolated archive of pre-change commit 05aec522; it is not reported as a passing check. Investigate that baseline discrepancy before release acceptance.
 
 No installed package/service replacement, operator router mutation, main integration, push, public release or PR closure was performed. Full on-device lifecycle acceptance of the packaged release and CI remain required; the VM checks above validate isolated candidate generation/check/recovery, not an installed-package upgrade or end-to-end guarded lifecycle transition.
+
+## Follow-up acceptance
+
+The broad runtime-test discrepancy and package lifecycle acceptance were resolved in [subscription-recovery-vm-acceptance-2026-11-01.md](subscription-recovery-vm-acceptance-2026-11-01.md). The group expectation was repaired with separate reachable/unreachable fixtures; the full runtime suite passes. Installed-package testing also found and fixed public CLI restart bypassing the initd transition lock. The expanded VM sequence passed after that fix, and original signed packages/configuration were restored as detailed in the report. CI and other platforms remain unverified.

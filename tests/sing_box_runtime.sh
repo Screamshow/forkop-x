@@ -28,6 +28,8 @@ grep -Fq '#!/usr/bin/ucode' "$FORKOP_BIN" ||
   fail "forkop entrypoint must be a direct ucode executable"
 grep -Fq 'service/lifecycle.uc' "$CLI_UC" ||
   fail "service/cli.uc must dispatch lifecycle orchestration through service/lifecycle.uc"
+grep -Fq 'restart: [ "service/initd.uc", "restart-service", 0 ]' "$CLI_UC" ||
+  fail "public CLI restart must share the runtime transition lock"
 grep -Fq 'singbox/runtime.uc' "$LIFECYCLE_UC" ||
   fail "service/lifecycle.uc must call singbox/runtime.uc for sing-box runtime operations"
 if grep -R -n -E 'sing_box_runtime_ucode|rulesets_ucode|sing_box_configure_service|sing_box_init_config|get_service_listen_address|get_device_ipv4_address|get_download_detour_tag' "$FORKOP_BIN" "$FORKOP_LIB" --include='*.sh' >/dev/null 2>&1; then
@@ -1190,6 +1192,10 @@ generate_config_with_subscription_cache "$WORK_DIR/subscription-metadata-fixture
 generate_config_with_subscription_cache "$WORK_DIR/subscription-group-fixture.json" "$WORK_DIR/subscription-group.json"
 generate_config_with_subscription_cache "$WORK_DIR/subscription-group-disabled-fixture.json" "$WORK_DIR/subscription-group-disabled.json"
 generate_config_with_subscription_cache "$WORK_DIR/subscription-xhttp-fixture.json" "$WORK_DIR/subscription-xhttp-extended.json" 1
+ucode -e 'let fs=require("fs"); let c=json(fs.readfile(ARGV[0])); delete c.urltest; delete c.priority_group; delete c.priority_level; fs.writefile(ARGV[1],sprintf("%J",c));' \
+  "$WORK_DIR/subscription-xhttp-fixture.json" "$WORK_DIR/subscription-xhttp-provider-fixture.json"
+generate_config_with_subscription_cache "$WORK_DIR/subscription-xhttp-provider-fixture.json" "$WORK_DIR/subscription-xhttp-provider-stable.json" 0 2>"$WORK_DIR/provider-stable.stderr"
+generate_config_with_subscription_cache "$WORK_DIR/subscription-xhttp-provider-fixture.json" "$WORK_DIR/subscription-xhttp-provider-extended.json" 1
 generate_config_with_subscription_cache "$WORK_DIR/subscription-xhttp-fixture.json" "$WORK_DIR/subscription-xhttp-stable.json" 0 \
   2>"$WORK_DIR/subscription-xhttp-stable.stderr"
 grep -Fq "Moscow XHTTP (installed sing-box does not advertise XHTTP support)" "$WORK_DIR/subscription-xhttp-stable.stderr" ||
@@ -1640,6 +1646,10 @@ assert(outbound(xhttp_stable, "recursive-dependent") == null, "stable sing-box r
 // provider group is pruned from runtime, while compatible leaves remain.
 assert(outbound(xhttp_stable, "Provider XHTTP Group") == null, "stable sing-box prunes unused provider group");
 assert(outbound(xhttp_stable, "plain-node") != null, "stable sing-box retains compatible subscription leaf");
+assert(outbound(xhttp_stable, "Provider XHTTP Group") == null, "unused provider group pruned when custom groups select leaves");
+let stable_provider_group = outbound(cfg("subscription-xhttp-provider-stable"), "Provider XHTTP Group");
+assert(stable_provider_group && length(stable_provider_group.outbounds) == 1 && stable_provider_group.outbounds[0] == "plain-node", "provider group removes XHTTP member");
+assert(stable_provider_group.default == null, "stable sing-box provider URLTest removes unsupported default field");
 let stable_urltest = outbound(xhttp_stable, "xhttp-urltest-ut_xhttp-out");
 assert(stable_urltest && length(stable_urltest.outbounds) == 1 && stable_urltest.outbounds[0] == "plain-node", "URLTest receives only compatible subscription leaves");
 let stable_priority = outbound(xhttp_stable, "xhttp-priority-pg_xhttp-out");
@@ -1653,6 +1663,8 @@ for (let tag in [ "xhttp-urltest-ut_xhttp-out", "xhttp-priority-pg_xhttp-out" ])
     let group = outbound(xhttp_extended, tag);
     assert(group && contains(group.outbounds, "xhttp-node") && contains(group.outbounds, "plain-node"), "extended configured group retains both supported transports");
 }
+assert(outbound(xhttp_extended, "Provider XHTTP Group") == null, "unused extended provider group pruned");
+assert(outbound(cfg("subscription-xhttp-provider-extended"), "Provider XHTTP Group").default == null, "extended sing-box provider URLTest also removes unsupported default field");
 assert(outbound(xhttp_extended, "depends-on-xhttp").detour == "xhttp-node", "extended sing-box keeps XHTTP detour chain");
 assert(outbound(xhttp_extended, "recursive-dependent").detour == "depends-on-xhttp", "extended sing-box keeps recursive detour chain");
 
