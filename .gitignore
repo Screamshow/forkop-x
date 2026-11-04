@@ -20,6 +20,7 @@ ops/deployed-nginx/
 /tests/
 !/tests/
 /tests/*
+!/tests/vless_encryption_capabilities.sh
 !/tests/subscription_recovery.uc
 !/tests/subscription_recovery.sh
 !/tests/luci_save_apply.cjs

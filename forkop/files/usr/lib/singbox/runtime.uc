@@ -322,6 +322,12 @@ function sing_box_supports_bittorrent_direct(version, version_output) {
         output_has_feature(version_output, "sniff.bittorrent-extended");
 }
 
+function sing_box_supports_vless_encryption(version, version_output) {
+    if (index(as_string(version), "-rust-x.") < 0)
+        return true;
+    return output_has_feature(version_output, "outbound.vless.encryption");
+}
+
 function sing_box_supports_tailscale(version, version_output) {
     version = as_string(version);
     version_output = as_string(version_output);
@@ -1028,7 +1034,8 @@ function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferre
             deferred_sections,
             core_version,
             sing_box_supports_trojan(core_version, version_output) ? "1" : "0",
-            sing_box_supports_bittorrent_direct(core_version, version_output) ? "1" : "0"
+            sing_box_supports_bittorrent_direct(core_version, version_output) ? "1" : "0",
+            sing_box_supports_vless_encryption(core_version, version_output) ? "1" : "0"
         ]) + " >" + shell_quote(runtime_log) + " 2>&1"
     );
     if (SINGBOX_CONFIG_FAIL_PHASE == "generate")
@@ -1199,6 +1206,8 @@ else if (mode == "supports-tailscale")
     exit(sing_box_supports_tailscale(ARGV[1], ARGV[2]) ? 0 : 1);
 else if (mode == "supports-bittorrent-direct")
     exit(sing_box_supports_bittorrent_direct(ARGV[1], ARGV[2]) ? 0 : 1);
+else if (mode == "supports-vless-encryption")
+    exit(sing_box_supports_vless_encryption(ARGV[1], ARGV[2]) ? 0 : 1);
 else if (mode == "variant")
     print(sing_box_variant(), "\n");
 else {

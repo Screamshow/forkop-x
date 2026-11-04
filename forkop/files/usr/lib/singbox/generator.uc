@@ -615,8 +615,8 @@ function outbound_excluded_protocol(outbound) {
     return RUST_X_EXCLUDED_OUTBOUND_TYPES[t] ? t : "";
 }
 
-// Xrust has no VLESS encryption layer and refuses any encryption other than
-// "none" at check time; such a node would otherwise run as plain VLESS.
+// Older Xrust builds refuse encrypted VLESS. Require an explicit capability
+// so enabling the layer never turns encrypted nodes into plain VLESS.
 function outbound_unsupported_vless_encryption(outbound) {
     if (runtime_supports_vless_encryption || type(outbound) != "object" ||
         lc(as_string(outbound.type || "")) != "vless")
@@ -3599,7 +3599,7 @@ function enabled_sections(deferred_sections) {
     return result;
 }
 
-function generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan, supports_bittorrent_direct) {
+function generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan, supports_bittorrent_direct, supports_vless_encryption) {
     // Provenance and UI metadata belong to this candidate, never the live cache.
     runtime_subscription.set_section_cache_dir(output_path + ".section-cache");
     runtime_prunable_outbounds = {};
@@ -3612,7 +3612,7 @@ function generate_config(output_path, service_address, mwan3_active, supports_xh
     runtime_supports_legacy_protocols = !rust_x_core_version(sing_box_version);
     runtime_supports_trojan = cli_bool(supports_trojan);
     runtime_supports_all_fingerprints = !rust_x_core_version(sing_box_version);
-    runtime_supports_vless_encryption = !rust_x_core_version(sing_box_version);
+    runtime_supports_vless_encryption = !rust_x_core_version(sing_box_version) || cli_bool(supports_vless_encryption);
     runtime_supports_reality_mldsa65 = !rust_x_core_version(sing_box_version);
     runtime_supports_xhttp = supports_xhttp == null || as_string(supports_xhttp) == ""
         ? true
@@ -3684,11 +3684,11 @@ function generate_config(output_path, service_address, mwan3_active, supports_xh
     }
 }
 
-function generate_config_fixture(fixture_path, output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan, supports_bittorrent_direct) {
+function generate_config_fixture(fixture_path, output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan, supports_bittorrent_direct, supports_vless_encryption) {
     use_fixture_cursor(fixture_path);
     runtime_subscription.set_section_cache_dir(output_path + ".section-cache");
     runtime_ruleset_folder = output_path + ".rulesets";
-    generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan, supports_bittorrent_direct);
+    generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan, supports_bittorrent_direct, supports_vless_encryption);
 }
 
 function stdin_contains(needle) {
@@ -3730,9 +3730,9 @@ function service_route_check_section_fixture() {
 let mode = ARGV[0] || "";
 
 if (mode == "generate-config")
-    generate_config(ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5] || "", ARGV[6] || "", ARGV[7] || "", ARGV[8] || "0");
+    generate_config(ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5] || "", ARGV[6] || "", ARGV[7] || "", ARGV[8] || "0", ARGV[9] || "0");
 else if (mode == "generate-config-fixture")
-    generate_config_fixture(ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5], ARGV[6] || "", ARGV[7] || "", ARGV[8] || "", ARGV[9] || "0");
+    generate_config_fixture(ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5], ARGV[6] || "", ARGV[7] || "", ARGV[8] || "", ARGV[9] || "0", ARGV[10] || "0");
 else if (mode == "stdin-contains")
     exit(stdin_contains(ARGV[1]) ? 0 : 1);
 else if (mode == "csv-to-json-array")
