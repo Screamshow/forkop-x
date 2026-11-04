@@ -3,6 +3,28 @@ import { FORKOP_UCI_PACKAGE as FORKOP_CBI_PREFIX } from '../../../constants';
 
 export const styles = `
 
+#cbi-${FORKOP_CBI_PREFIX}-diagnostic-_mount_node {
+    display: block;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+#cbi-${FORKOP_CBI_PREFIX}-diagnostic-_mount_node > .cbi-value-title {
+    display: none;
+}
+
+#cbi-${FORKOP_CBI_PREFIX}-diagnostic-_mount_node > .cbi-value-field {
+    margin-left: 0;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    flex: 1 1 100%;
+    float: none;
+    box-sizing: border-box;
+}
+
 #cbi-${FORKOP_CBI_PREFIX}-diagnostic-_mount_node > div {
     width: 100%;
 }
@@ -12,6 +34,8 @@ export const styles = `
 }
 
 .fkp_diagnostic-page {
+    width: 100%;
+    min-width: 0;
     display: grid;
     grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
     grid-column-gap: 10px;

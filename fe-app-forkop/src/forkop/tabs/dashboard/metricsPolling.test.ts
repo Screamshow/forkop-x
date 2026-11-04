@@ -25,6 +25,7 @@ describe('dashboard metrics through LuCI', () => {
       uploadTotal: 100,
       downloadTotal: 200,
       connections: 2,
+      closedConnections: 0,
       memory: 4096,
     });
     await vi.advanceTimersByTimeAsync(3000);

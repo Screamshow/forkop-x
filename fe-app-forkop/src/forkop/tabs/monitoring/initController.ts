@@ -1,3 +1,13 @@
+import {
+  activeConnections,
+  closedConnections,
+  moveConnectionToClosed,
+  trimClosedConnections,
+  observeConnections,
+  type ClashConnection,
+  type ClashConnectionsPayload,
+  type MonitoredConnection,
+} from '../../services/connectionHistory';
 import { canUseDirectClashApi, getClashWsUrl, onMount } from '../../../helpers';
 import { prettyBytes } from '../../../helpers/prettyBytes';
 import { showToast } from '../../../helpers/showToast';
@@ -64,39 +74,6 @@ interface MonitoringControllerDependencies {
   loadLocalDeviceChoices?: () => Promise<LocalDeviceChoices>;
 }
 
-interface ClashConnectionMetadata {
-  destinationIP?: string;
-  destinationPort?: string | number;
-  host?: string;
-  sniffHost?: string;
-  network?: string;
-  processPath?: string;
-  sourceIP?: string;
-  sourcePort?: string | number;
-  type?: string;
-}
-
-interface ClashConnection {
-  chains?: string[];
-  download?: number;
-  id?: string;
-  metadata?: ClashConnectionMetadata;
-  rule?: string;
-  rulePayload?: string;
-  start?: string;
-  upload?: number;
-}
-
-interface ClashConnectionsPayload {
-  connections?: ClashConnection[];
-}
-
-interface MonitoredConnection extends ClashConnection {
-  id: string;
-  closedAt?: number;
-  lastSeenAt: number;
-}
-
 function normalizeConnectionsPayload(value: unknown): ClashConnectionsPayload {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {};
@@ -107,7 +84,6 @@ function normalizeConnectionsPayload(value: unknown): ClashConnectionsPayload {
 
 const RENDER_INTERVAL_MS = 500;
 const CONNECTIONS_RPC_POLL_INTERVAL_MS = 1500;
-const CLOSED_CONNECTION_LIMIT = 300;
 const ALL_FILTER_VALUE = 'all';
 
 let dependencies: MonitoringControllerDependencies = {};
@@ -139,8 +115,6 @@ let monitoringPaused = false;
 let monitoringPausedAt: number | null = null;
 let serviceAvailability: ServiceAvailability = 'loading';
 
-const activeConnections = new Map<string, MonitoredConnection>();
-const closedConnections = new Map<string, MonitoredConnection>();
 const closingConnectionIds = new Set<string>();
 
 function normalizeString(value?: string | number | null): string {
@@ -472,25 +446,6 @@ function getVisibleConnections(): MonitoredConnection[] {
   });
 }
 
-function moveConnectionToClosed(connection: MonitoredConnection, now: number) {
-  closedConnections.set(connection.id, {
-    ...connection,
-    closedAt: now,
-    lastSeenAt: now,
-  });
-}
-
-function trimClosedConnections() {
-  const sorted = sortConnections(
-    Array.from(closedConnections.values()),
-    'closed',
-  );
-
-  sorted.slice(CLOSED_CONNECTION_LIMIT).forEach((connection) => {
-    closedConnections.delete(connection.id);
-  });
-}
-
 function applyConnectionsPayload(payload: ClashConnectionsPayload) {
   if (monitoringPaused) {
     pendingConnectionsPayload = payload;
@@ -498,35 +453,7 @@ function applyConnectionsPayload(payload: ClashConnectionsPayload) {
   }
 
   const mountId = monitoringMountId;
-  const now = Date.now();
-  const incomingIds = new Set<string>();
-  const rawConnections = Array.isArray(payload.connections)
-    ? payload.connections
-    : [];
-
-  rawConnections.forEach((rawConnection) => {
-    const id = normalizeString(rawConnection.id);
-    if (!id) {
-      return;
-    }
-
-    incomingIds.add(id);
-    closedConnections.delete(id);
-    activeConnections.set(id, {
-      ...rawConnection,
-      id,
-      lastSeenAt: now,
-    });
-  });
-
-  Array.from(activeConnections.entries()).forEach(([id, connection]) => {
-    if (!incomingIds.has(id)) {
-      activeConnections.delete(id);
-      moveConnectionToClosed(connection, now);
-    }
-  });
-
-  trimClosedConnections();
+  observeConnections(payload.connections);
   loading = false;
   failed = false;
 
@@ -1573,8 +1500,6 @@ function resetMonitoringState() {
   monitoringPausedAt = null;
   serviceAvailability = 'loading';
   pendingConnectionsPayload = null;
-  activeConnections.clear();
-  closedConnections.clear();
   closingConnectionIds.clear();
 
   const searchInput = document.getElementById(

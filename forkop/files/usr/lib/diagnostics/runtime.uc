@@ -1804,6 +1804,86 @@ function clash_api(action, arg1, arg2, arg3) {
     return 1;
 }
 
+function automatic_latency_sweep(start_kind, proxy_tags, pending_signature,
+    pending_generation, config_path, owner_pid, sing_box_pid_before, progress_path) {
+    log_message((as_string(start_kind) == "resume" ? "Resuming interrupted" : "Starting new") +
+        " automatic latency test for " + length(proxy_tags) + " independent proxy outbounds", "info");
+    let status = 0;
+    let completed = 0;
+    let batch_size = AUTOMATIC_LATENCY_BATCH_SIZE > 0 ? AUTOMATIC_LATENCY_BATCH_SIZE : 4;
+    let progress = { completed: 0, failed: 0, total: length(proxy_tags), path: progress_path };
+    let plan = { base_url: clash_api_url(), auth: clash_auth_args(), proxy_types: {},
+        test_url: latency_test_url(), timeout: "5000" };
+    for (let offset = 0; offset < length(proxy_tags); offset += batch_size) {
+        if (!automatic_latency_marker_matches(pending_signature, pending_generation)) {
+            module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
+            module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
+            log_message("Automatic latency test was canceled because its pending generation was replaced", "info");
+            return 0;
+        }
+        if (module_success(SERVICE_UI_UC, [ "package-upgrade-transition-active" ])) {
+            module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
+            module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
+            log_message("Automatic latency test yielded to a Forkop package upgrade", "info");
+            return 0;
+        }
+        let batch = [];
+        for (let i = offset; i < length(proxy_tags) && i < offset + batch_size; i++)
+            push(batch, proxy_tags[i]);
+        progress = probe_proxy_latencies(plan, batch, progress);
+        if (progress.failed > 0)
+            status = 1;
+        completed = progress.completed;
+
+        if (completed < length(proxy_tags) && completed % batch_size == 0) {
+            module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
+            let pending_reload_requested = fs.stat(PENDING_RELOAD_FILE) != null;
+            if (pending_reload_requested) {
+                module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
+                automatic_latency_yield_to_pending_reload();
+                log_message("Automatic latency test yielded to a pending Forkop reload", "info");
+                return 0;
+            }
+            command_success_from_args([ "sleep", AUTOMATIC_LATENCY_BATCH_PAUSE ]);
+            let reacquired = module_success(SERVICE_STATE_UC, [
+                "acquire-runtime-dir-lock-wait-until-package-upgrade", RELOAD_LOCK_DIR, owner_pid, "300"
+            ]);
+            if (!reacquired || !module_success(SERVICE_STATE_UC, [ "single-ready-sing-box-runtime" ]) ||
+                sing_box_pid_before != trim(module_output(SERVICE_STATE_UC, [ "sing-box-service-runtime-pid" ]))) {
+                if (reacquired)
+                    module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
+                module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
+                if (pending_reload_requested) {
+                    log_message("Automatic latency test was interrupted by reload; the pending reload will resume it after sing-box is ready", "info");
+                }
+                else {
+                    log_message("Automatic latency test was interrupted by reload; resuming automatically after sing-box is ready", "info");
+                    automatic_latency_schedule_resume();
+                }
+                return 0;
+            }
+        }
+    }
+    module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
+    module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
+    // A reload is normally detected between batches through its PID/lock. A
+    // non-restarting config change can still replace the proxy set, so never
+    // acknowledge the old marker after its semantic generation changed.
+    if (proxy_outbounds_signature_value(config_path) != pending_signature) {
+        log_message("Automatic latency test finished against a stale proxy generation; the pending marker was retained", "info");
+        return 0;
+    }
+    if (status == 0) {
+        automatic_latency_remove_marker(pending_signature, pending_generation);
+        log_message("Automatic latency test completed successfully; the pending marker was removed", "info");
+    }
+    else {
+        automatic_latency_record_failure(pending_signature, pending_generation);
+        log_message("Automatic latency test completed with errors; the pending marker was retained with a retry pause", "warn");
+    }
+    return status;
+}
+
 function automatic_latency_test(start_kind) {
     if (module_success(SERVICE_UI_UC, [ "package-upgrade-transition-active" ])) {
         log_message("Automatic latency test yielded because a Forkop package upgrade is stopping the runtime", "info");
@@ -1911,75 +1991,14 @@ function automatic_latency_test(start_kind) {
         return 1;
     }
 
-    log_message((as_string(start_kind) == "resume" ? "Resuming interrupted" : "Starting new") +
-        " automatic latency test for " + length(proxy_tags) + " independent proxy outbounds", "info");
-    let status = 0;
-    let completed = 0;
-    let batch_size = AUTOMATIC_LATENCY_BATCH_SIZE > 0 ? AUTOMATIC_LATENCY_BATCH_SIZE : 4;
-    for (let proxy_tag in proxy_tags) {
-        if (!automatic_latency_marker_matches(pending_signature, pending_generation)) {
-            module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
-            module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
-            log_message("Automatic latency test was canceled because its pending generation was replaced", "info");
-            return 0;
-        }
-        if (module_success(SERVICE_UI_UC, [ "package-upgrade-transition-active" ])) {
-            module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
-            module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
-            log_message("Automatic latency test yielded to a Forkop package upgrade", "info");
-            return 0;
-        }
-        if (clash_api("get_proxy_latency", proxy_tag, "5000", "") != 0)
-            status = 1;
-        completed++;
-
-        if (completed < length(proxy_tags) && completed % batch_size == 0) {
-            module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
-            let pending_reload_requested = fs.stat(PENDING_RELOAD_FILE) != null;
-            if (pending_reload_requested) {
-                module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
-                automatic_latency_yield_to_pending_reload();
-                log_message("Automatic latency test yielded to a pending Forkop reload", "info");
-                return 0;
-            }
-            command_success_from_args([ "sleep", AUTOMATIC_LATENCY_BATCH_PAUSE ]);
-            let reacquired = module_success(SERVICE_STATE_UC, [
-                "acquire-runtime-dir-lock-wait-until-package-upgrade", RELOAD_LOCK_DIR, owner_pid, "300"
-            ]);
-            if (!reacquired || !module_success(SERVICE_STATE_UC, [ "single-ready-sing-box-runtime" ]) ||
-                sing_box_pid_before != trim(module_output(SERVICE_STATE_UC, [ "sing-box-service-runtime-pid" ]))) {
-                if (reacquired)
-                    module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
-                module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
-                if (pending_reload_requested) {
-                    log_message("Automatic latency test was interrupted by reload; the pending reload will resume it after sing-box is ready", "info");
-                }
-                else {
-                    log_message("Automatic latency test was interrupted by reload; resuming automatically after sing-box is ready", "info");
-                    automatic_latency_schedule_resume();
-                }
-                return 0;
-            }
-        }
-    }
-    module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
-    module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
-    // A reload is normally detected between batches through its PID/lock. A
-    // non-restarting config change can still replace the proxy set, so never
-    // acknowledge the old marker after its semantic generation changed.
-    if (proxy_outbounds_signature_value(config_path) != pending_signature) {
-        log_message("Automatic latency test finished against a stale proxy generation; the pending marker was retained", "info");
-        return 0;
-    }
-    if (status == 0) {
-        automatic_latency_remove_marker(pending_signature, pending_generation);
-        log_message("Automatic latency test completed successfully; the pending marker was removed", "info");
-    }
-    else {
-        automatic_latency_record_failure(pending_signature, pending_generation);
-        log_message("Automatic latency test completed with errors; the pending marker was retained with a retry pause", "warn");
-    }
-    return status;
+    let progress_path = trim(module_output(SERVICE_UI_UC, [
+        "automatic-latency-start", owner_pid, sprintf("%J", proxy_tags)
+    ]));
+    let result = automatic_latency_sweep(start_kind, proxy_tags, pending_signature,
+        pending_generation, config_path, owner_pid, sing_box_pid_before, progress_path);
+    if (progress_path != "")
+        module_success(SERVICE_UI_UC, [ "automatic-latency-finish", progress_path, result ]);
+    return result;
 }
 
 function print_global(message) {

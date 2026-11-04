@@ -2906,3 +2906,183 @@ msgstr ""
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:380
 msgid "You can select Output Network Interface, by default autodetect"
 msgstr ""
+
+msgid "Closed Connections"
+msgstr ""
+
+msgid "Recognized torrent connections bypass proxy and VPN."
+msgstr ""
+
+msgid "Checking status…"
+msgstr ""
+
+msgid "Enter an auth key for your Tailscale network."
+msgstr ""
+
+msgid "Auth key"
+msgstr ""
+
+msgid "No events yet."
+msgstr ""
+
+msgid "Connection logs"
+msgstr ""
+
+msgid "Connect"
+msgstr ""
+
+msgid "Disconnect"
+msgstr ""
+
+msgid "Tailscale is disconnected"
+msgstr ""
+
+msgid "Connecting to Tailscale…"
+msgstr ""
+
+msgid "Reconnecting to Tailscale…"
+msgstr ""
+
+msgid "Router is connected to Tailscale"
+msgstr ""
+
+msgid "Connection error"
+msgstr ""
+
+msgid "Update Xrust to use native Tailscale"
+msgstr ""
+
+msgid "Unknown status"
+msgstr ""
+
+msgid "Forkop 2.3.4 or later is required"
+msgstr ""
+
+msgid "Available only when Xrust is selected"
+msgstr ""
+
+msgid "Router Tailscale address: "
+msgstr ""
+
+msgid "Device connections"
+msgstr ""
+
+msgid "region "
+msgstr ""
+
+msgid "Device"
+msgstr ""
+
+msgid "Name unavailable"
+msgstr ""
+
+msgid "Current path"
+msgstr ""
+
+msgid "Direct"
+msgstr ""
+
+msgid "Via DERP"
+msgstr ""
+
+msgid "Checking connection"
+msgstr ""
+
+msgid "Latency"
+msgstr ""
+
+msgid " ms"
+msgstr ""
+
+msgid "No device connections yet."
+msgstr ""
+
+msgid "Inbound fallback: DERP · "
+msgstr ""
+
+msgid "Xrust 0.0.17 or later is required"
+msgstr ""
+
+msgid "LAN: waiting for connection."
+msgstr ""
+
+msgid "LAN: failed to configure access."
+msgstr ""
+
+msgid "LAN: access allowed ("
+msgstr ""
+
+msgid "LAN: awaiting approval ("
+msgstr ""
+
+msgid "). In the Tailscale admin console: this router → Edit route settings → approve the route."
+msgstr ""
+
+msgid "Exit Node: update Xrust to continue."
+msgstr ""
+
+msgid "Exit Node: waiting for connection."
+msgstr ""
+
+msgid "Exit Node: failed to configure access."
+msgstr ""
+
+msgid "Exit Node: awaiting approval. In the Tailscale admin console: this router → Edit route settings → Use as exit node."
+msgstr ""
+
+msgid "Tailscale action failed"
+msgstr ""
+
+msgid "Failed to retrieve status"
+msgstr ""
+
+msgid "Enter a Tailscale auth key"
+msgstr ""
+
+msgid "Failed to connect"
+msgstr ""
+
+msgid "Remote access"
+msgstr ""
+
+msgid "Allow SSH access to this router through Tailscale on port 22."
+msgstr ""
+
+msgid "Allow SSH"
+msgstr ""
+
+msgid "Allow LAN access"
+msgstr ""
+
+msgid "Allow devices on your tailnet to access the internet through this router and Forkop rules. LAN and SSH access are enabled separately."
+msgstr ""
+
+msgid "Use this router as an Exit Node"
+msgstr ""
+
+msgid "Connecting to Tailscale"
+msgstr ""
+
+msgid "Reconnecting"
+msgstr ""
+
+msgid "Native Tailscale is unavailable"
+msgstr ""
+
+msgid "LAN access allowed"
+msgstr ""
+
+msgid "Exit Node approved"
+msgstr ""
+
+msgid "Exit Node awaiting approval"
+msgstr ""
+
+msgid "Invalid Tailscale auth key"
+msgstr ""
+
+msgid "Failed to pass the auth key"
+msgstr ""
+
+msgid "Failed to determine the local IPv4 network"
+msgstr ""

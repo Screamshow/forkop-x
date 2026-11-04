@@ -5,6 +5,11 @@ export const styles = `
 #cbi-${FORKOP_CBI_PREFIX}-monitoring-_mount_node {
     margin: 16px 0 22px;
     padding: 0;
+    display: block;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    box-sizing: border-box;
 }
 
 #cbi-${FORKOP_CBI_PREFIX}-monitoring-_mount_node > .cbi-value-title {
@@ -14,6 +19,11 @@ export const styles = `
 #cbi-${FORKOP_CBI_PREFIX}-monitoring-_mount_node > .cbi-value-field {
     margin-left: 0;
     width: 100%;
+    max-width: none;
+    min-width: 0;
+    flex: 1 1 100%;
+    float: none;
+    box-sizing: border-box;
 }
 
 #cbi-${FORKOP_CBI_PREFIX}-monitoring-_mount_node > div {

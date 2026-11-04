@@ -302,6 +302,41 @@ describe('applyUiStateToStore', () => {
     expect(store.get().diagnosticsActions.restart.loading).toBe(false);
   });
 
+  it('shows automatic sweep progress on every dashboard section and clears it', () => {
+    const data = [
+      { sectionName: 'main' },
+      { sectionName: 'new-subscription' },
+    ] as unknown as ReturnType<typeof store.get>['sectionsWidget']['data'];
+    store.set({ sectionsWidget: { ...store.get().sectionsWidget, data } });
+    applyUiStateToStore(
+      createUiState({
+        latency: [
+          {
+            success: true,
+            running: true,
+            kind: 'latency',
+            latency_type: 'proxy_list',
+            section: '*',
+            tag: '[]',
+            job_id: 'automatic-1',
+            progress: { completed: 4, total: 12, failed: 1 },
+          },
+        ],
+      }),
+    );
+    expect(store.get().sectionsWidget.latencyFetchingSections).toEqual({
+      main: true,
+      'new-subscription': true,
+    });
+    expect(store.get().sectionsWidget.latencyProgressSections.main).toEqual({
+      completed: 4,
+      total: 12,
+      failed: 1,
+    });
+    applyUiStateToStore(createUiState());
+    expect(store.get().sectionsWidget.latencyProgressSections).toEqual({});
+  });
+
   it('preserves local latency progress while waiting for runtime progress', () => {
     setLocalLatencyAction('gemini', true);
     store.set({

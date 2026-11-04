@@ -151,7 +151,7 @@ export interface StoreType {
   systemInfoWidget: {
     loading: boolean;
     failed: boolean;
-    data: { connections: number; memory: number };
+    data: { connections: number; closedConnections?: number; memory: number };
   };
   servicesInfoWidget: {
     loading: boolean;

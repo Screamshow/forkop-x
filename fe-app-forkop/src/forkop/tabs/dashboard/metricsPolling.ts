@@ -1,9 +1,14 @@
+import {
+  observeConnections,
+  closedConnections,
+} from '../../services/connectionHistory';
 export type DashboardMetrics = {
   up: number;
   down: number;
   uploadTotal: number;
   downloadTotal: number;
   connections: number;
+  closedConnections: number;
   memory: number;
 };
 
@@ -55,12 +60,14 @@ export function pollDashboardMetrics(
         elapsed > 0 && before != null && value >= before
           ? (value - before) / elapsed
           : 0;
+      observeConnections(data.connections);
       onMetrics({
         up: rate(data.uploadTotal, previous?.up),
         down: rate(data.downloadTotal, previous?.down),
         uploadTotal: data.uploadTotal,
         downloadTotal: data.downloadTotal,
         connections: data.connections.length,
+        closedConnections: closedConnections.size,
         memory: data.memory,
       });
       previous = { up: data.uploadTotal, down: data.downloadTotal, at: now };

@@ -1,3 +1,7 @@
+import {
+  observeConnections,
+  closedConnections,
+} from '../../services/connectionHistory';
 import { pollDashboardMetrics } from './metricsPolling';
 import {
   getClashWsUrl,
@@ -518,7 +522,11 @@ function startMetricsPolling(dataUpdatesId: number) {
           systemInfoWidget: {
             loading: false,
             failed: false,
-            data: { connections: data.connections, memory: data.memory },
+            data: {
+              connections: data.connections,
+              closedConnections: data.closedConnections,
+              memory: data.memory,
+            },
           },
         });
       },
@@ -618,6 +626,7 @@ async function connectToClashSockets(dataUpdatesId: number) {
 
         connectionsReceived = true;
         const parsedMsg = JSON.parse(msg);
+        observeConnections(parsedMsg.connections);
 
         store.set({
           trafficTotalWidget: {
@@ -633,6 +642,7 @@ async function connectToClashSockets(dataUpdatesId: number) {
             failed: false,
             data: {
               connections: parsedMsg.connections?.length,
+              closedConnections: closedConnections.size,
               memory: parsedMsg.memory,
             },
           },
@@ -1822,6 +1832,10 @@ async function renderSystemInfoWidget() {
       {
         key: _('Active Connections'),
         value: String(systemInfoWidget.data.connections),
+      },
+      {
+        key: _('Closed Connections'),
+        value: String(systemInfoWidget.data.closedConnections ?? 0),
       },
     ],
   });

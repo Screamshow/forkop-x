@@ -78,16 +78,22 @@ case "$*" in
     ;;
   */delay*)
     printf 'latency\n' >>"$TEST_CURL_LOG"
-    if [ -n "${TEST_CHANGE_PID_FILE:-}" ] && [ "$(wc -l <"$TEST_CURL_LOG")" -eq 1 ]; then
+    if [ -n "${TEST_CHANGE_PID_FILE:-}" ]; then
       printf '456\n' >"$TEST_CHANGE_PID_FILE"
     fi
-    if [ -n "${TEST_CHANGE_CONFIG_FILE:-}" ] && [ "$(wc -l <"$TEST_CURL_LOG")" -eq 1 ]; then
+    if [ -n "${TEST_CHANGE_CONFIG_FILE:-}" ]; then
       cp "$TEST_CHANGED_CONFIG" "$TEST_CHANGE_CONFIG_FILE"
     fi
-    if [ -n "${TEST_CANCEL_MARKER_FILE:-}" ] && [ "$(wc -l <"$TEST_CURL_LOG")" -eq 1 ]; then
+    if [ -n "${TEST_CANCEL_MARKER_FILE:-}" ]; then
       rm -f "$TEST_CANCEL_MARKER_FILE"
     fi
-    [ -n "${TEST_CURL_DELAY:-}" ] && sleep "$TEST_CURL_DELAY"
+    if [ -n "${TEST_CURL_DELAY:-}" ]; then
+      mkdir "$TEST_CURL_LOG.active.$$"
+      set -- "$TEST_CURL_LOG".active.*
+      [ "$#" -gt 1 ] && : >"$TEST_CURL_LOG.parallel"
+      sleep "$TEST_CURL_DELAY"
+      rmdir "$TEST_CURL_LOG.active.$$"
+    fi
     [ "${TEST_CURL_FAIL:-0}" = 1 ] && { printf 'not-json\n'; exit 0; }
     printf '%s\n' '{"delay":25}'
     ;;
@@ -102,6 +108,9 @@ export TEST_CURL_LOG="$WORK_DIR/curl.log"
 export TEST_PID_FILE="$WORK_DIR/pid"
 export TEST_RELOAD_COUNT_FILE="$WORK_DIR/reload-count"
 export TEST_RELOAD_FAIL_FLAG="$WORK_DIR/fail-reacquire"
+export FORKOP_UI_STATE_DIR="$WORK_DIR/ui"
+export FORKOP_UI_COMPONENT_ACTION_DIR="$WORK_DIR/components"
+export FORKOP_UI_SUBSCRIPTION_ACTION_DIR="$WORK_DIR/subscriptions"
 export FORKOP_LIB FORKOP_UCI_STATE_FILE="$WORK_DIR/uci.state"
 export FORKOP_SERVICE_STATE_UC="$WORK_DIR/state-stub.uc"
 export FORKOP_AUTOMATIC_LATENCY_PENDING_FILE="$WORK_DIR/automatic-latency.pending"
@@ -157,6 +166,8 @@ wait "$first_pid"
 wait "$second_pid"
 [ "$(wc -l <"$TEST_CURL_LOG")" -eq 9 ] || fail "concurrent workers did not coalesce"
 [ ! -e "$FORKOP_AUTOMATIC_LATENCY_PENDING_FILE" ] || fail "successful full test did not remove marker"
+[ -e "$TEST_CURL_LOG.parallel" ] || fail "automatic sweep did not overlap latency requests"
+ucode -e 'let fs = require("fs"); let paths = fs.glob(getenv("FORKOP_UI_STATE_DIR") + "/latency-actions/*.json"); assert(length(paths) == 1, "automatic progress job missing or duplicated"); let value = json(fs.readfile(paths[0])); assert(value.section == "*" && value.running == false && value.success == true, "automatic job did not finish"); assert(value.progress.completed == 9 && value.progress.total == 9 && value.progress.failed == 0, "automatic progress was not updated");'
 [ "$(grep -Fc 'Automatic latency test progress:' "$TEST_LOG" || true)" -eq 0 ] ||
   fail "latency batching emitted intermediate syslog progress"
 

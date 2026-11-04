@@ -530,7 +530,7 @@ function createSettingsContent(section) {
     form.Flag,
     "bittorrent_direct",
     _("Route detected BitTorrent directly"),
-    _("Recognized torrent connections bypass proxy and VPN. Encrypted and other unrecognized traffic follows normal routing."),
+    _("Recognized torrent connections bypass proxy and VPN."),
   );
   o.default = "0";
   o.rmempty = false;
@@ -558,7 +558,7 @@ function createSettingsContent(section) {
     this.readonly = !supported;
     this.default = supported ? "1" : "0";
     this.description = supported
-      ? _("Recognized torrent connections bypass proxy and VPN. Encrypted and other unrecognized traffic follows normal routing.")
+      ? _("Recognized torrent connections bypass proxy and VPN.")
       : rustX ? _("Update Xrust to enable this setting") : _("Available only for Xrust");
     return loadBitTorrent.call(this, section_id);
   };

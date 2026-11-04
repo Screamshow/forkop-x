@@ -1501,6 +1501,22 @@ function latency_worker(path, latency_type, tag, timeout) {
         write_finished_action_state(path, false, "Latency test failed", status);
 }
 
+function automatic_latency_start(pid, tags) {
+    ensure_dirs();
+    let path = job_state_path_value(LATENCY_ACTION_DIR, job_id());
+    let value = running_latency_action_value("proxy_list", "*", tags, now_seconds());
+    value.pid = int(pid);
+    if (path != "" && value.pid > 0 && write_state_file(path, value))
+        print(path, "\n");
+}
+
+function automatic_latency_finish(path, status) {
+    if (!latency_action_path_allowed(path))
+        return false;
+    return write_finished_action_state(path, int(status) == 0,
+        "Automatic latency test finished", int(status));
+}
+
 // A lock whose owner is gone must not refuse the next test. The worker takes
 // over a stale lock when it acquires, so refusing here on the directory alone
 // let one killed worker block every manual test until the next automatic
@@ -1675,6 +1691,10 @@ else if (mode == "service-action-update-pid")
     update_service_action_pid_mode(ARGV[1], ARGV[2]);
 else if (mode == "service-action-finish")
     finish_service_action_mode(ARGV[1], ARGV[2], ARGV[3], ARGV[4]);
+else if (mode == "automatic-latency-start")
+    automatic_latency_start(ARGV[1], ARGV[2]);
+else if (mode == "automatic-latency-finish")
+    exit(automatic_latency_finish(ARGV[1], ARGV[2]) ? 0 : 1);
 else if (mode == "latency-progress-state")
     update_latency_progress_state_mode(ARGV[1], ARGV[2], ARGV[3], ARGV[4]);
 else if (mode == "service-action-finish-after-command")

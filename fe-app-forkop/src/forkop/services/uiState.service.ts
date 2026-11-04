@@ -155,13 +155,19 @@ function applyActionState(actions: UiActionMap = {}) {
 
   for (const state of actions.latency || []) {
     if (isRunningAction(state) && state.section) {
-      latencyFetchingSections[state.section] = true;
+      const sections =
+        state.section === '*'
+          ? current.sectionsWidget.data.map((section) => section.sectionName)
+          : [state.section];
       const progress = normalizeLatencyProgress(state.progress);
-      if (progress) {
-        latencyProgressSections[state.section] = progress;
-      } else if (currentLatencyProgressSections[state.section]) {
-        latencyProgressSections[state.section] =
-          currentLatencyProgressSections[state.section];
+      for (const section of sections) {
+        latencyFetchingSections[section] = true;
+        if (progress) {
+          latencyProgressSections[section] = progress;
+        } else if (currentLatencyProgressSections[section]) {
+          latencyProgressSections[section] =
+            currentLatencyProgressSections[section];
+        }
       }
     }
   }
