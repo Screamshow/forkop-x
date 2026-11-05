@@ -139,6 +139,7 @@ function command_spec(command) {
         stop: [ "service/lifecycle.uc", "stop", 0 ],
         reload: [ "service/initd.uc", "reload-service", 1 ],
         dns_failover_apply: [ "service/lifecycle.uc", "dns-failover-apply", 1 ],
+        provider_dns: [ "singbox/provider_dns.uc", "show", 0 ],
         restart: [ "service/initd.uc", "restart-service", 0 ],
         manual_restart: [ "service/lifecycle.uc", "manual-restart", 0 ],
         enable: [ "service/lifecycle.uc", "enable", 0 ],

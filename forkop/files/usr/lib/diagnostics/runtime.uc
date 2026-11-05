@@ -1011,8 +1011,8 @@ function dns_check_timeout_seconds(value) {
 
 function check_dns_available() {
     let cfg = settings();
-    let dns_type = option(cfg, "dns_type", "");
     let active = runtime_dns.active_values(cfg);
+    let dns_type = active.state.dns_type;
     let dns_server = active.main;
     let bootstrap_dns_server = active.bootstrap;
     let dont_touch_dhcp = bool_option(cfg, "dont_touch_dhcp", false) ? 1 : 0;

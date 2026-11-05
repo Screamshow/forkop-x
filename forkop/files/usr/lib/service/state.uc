@@ -8,6 +8,7 @@ let runtime_health = require("core.runtime_health");
 let core_ip = require("core.ip");
 let rule_config = require("config.rule");
 let connections = require("config.connections");
+let provider_dns = require("singbox.provider_dns");
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
 const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
 const DEFAULT_PENDING_RELOAD_FILE = getenv("FORKOP_PENDING_RELOAD_FILE") || "/var/run/forkop/reload.pending";
@@ -1643,6 +1644,10 @@ function sing_box_signature_body(settings, sections, mwan3_active) {
     body = signature_add_value(body, "runtime.ipv6_tproxy", core_ip.ipv6_tproxy_enabled() ? "1" : "0");
 
     body = signature_add_value(body, "settings.dns_type", option(settings, "dns_type", "doh"));
+    let provider_enabled = bool_option_value(settings, "dns_use_provider", false);
+    body = signature_add_value(body, "settings.dns_use_provider", provider_enabled);
+    if (provider_enabled == "1")
+        body = signature_add_value(body, "runtime.provider_dns", sprintf("%J", provider_dns.discover()));
     body = signature_add_value(body, "settings.dns_strategy", option(settings, "dns_strategy", "prefer_ipv4"));
     for (let value in list_option(settings, "dns_server", "77.88.8.8"))
         body = signature_add_value(body, "settings.dns_server", value);

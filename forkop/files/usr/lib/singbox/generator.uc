@@ -479,6 +479,10 @@ function base_config(settings, service_address, runtime_context) {
     let rewrite_ttl = int_option(settings, "dns_rewrite_ttl", "60");
     let cache_path = cache_identity.path(option(settings, "cache_path", "/tmp/sing-box/cache.db"), object_or_empty(runtime_context).core_version);
     let dns_config = runtime_dns.config(settings);
+    if (dns_config.provider_unavailable) {
+        warn(dns_config.unsupported, "\n");
+        exit(runtime_constants.PROVIDER_DNS_UNAVAILABLE);
+    }
     if (dns_config.unsupported)
         runtime_generate_unsupported(dns_config.unsupported);
 
@@ -534,6 +538,12 @@ function base_config(settings, service_address, runtime_context) {
 
     runtime_context.dns_health_inbounds = dns_config.sniff_inbounds;
     runtime_context.default_domain_resolver = runtime_dns.default_domain_resolver(settings);
+    let base_outbounds = [
+        { type: "direct", tag: runtime_constants.DIRECT_OUTBOUND_TAG },
+        { type: "direct", tag: runtime_constants.BYPASS_OUTBOUND_TAG }
+    ];
+    for (let outbound in (dns_config.outbounds || []))
+        push(base_outbounds, outbound);
 
     return {
         log: {
@@ -552,10 +562,7 @@ function base_config(settings, service_address, runtime_context) {
         certificate: {},
         endpoints: [],
         inbounds,
-        outbounds: [
-            { type: "direct", tag: runtime_constants.DIRECT_OUTBOUND_TAG },
-            { type: "direct", tag: runtime_constants.BYPASS_OUTBOUND_TAG }
-        ],
+        outbounds: base_outbounds,
         route: runtime_route.config(settings, runtime_context),
         services: [],
         experimental: {

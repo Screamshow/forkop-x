@@ -2214,3 +2214,15 @@ msgstr "Не удалось передать ключ"
 
 msgid "Failed to determine the local IPv4 network"
 msgstr "Не удалось определить локальную IPv4-сеть"
+
+msgid "Use provider DNS"
+msgstr "Использовать DNS провайдера"
+
+msgid "Use DNS supplied by online WAN interfaces for main and Bootstrap DNS. With mwan3, each DNS uses its own WAN. Manual settings are preserved."
+msgstr "Основной и Bootstrap DNS берутся с доступных WAN. С mwan3 каждый DNS использует свой WAN. Ручные настройки сохраняются."
+
+msgid "No online WAN supplies usable DNS"
+msgstr "Нет доступного WAN с подходящими DNS"
+
+msgid "Unable to read provider DNS"
+msgstr "Не удалось получить DNS провайдера"

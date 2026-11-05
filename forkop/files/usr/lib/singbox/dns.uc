@@ -4,6 +4,7 @@ let common = require("core.common");
 let core_ip = require("core.ip");
 let runtime_constants = require("singbox.constants");
 let runtime_url = require("core.url");
+let provider_dns = require("singbox.provider_dns");
 
 let as_string = common.as_string;
 let bool_option = common.bool_option;
@@ -38,6 +39,8 @@ function arrays_equal(left, right) {
 }
 
 function detour_tag(settings) {
+    if (bool_option(settings, "dns_use_provider", false))
+        return "";
     if (!bool_option(settings, "dns_detour_enabled", false))
         return "";
     let section_name = option(settings, "dns_detour_section", "");
@@ -45,12 +48,19 @@ function detour_tag(settings) {
 }
 
 function state_template(settings) {
+    let provider = bool_option(settings, "dns_use_provider", false);
+    let routes = provider ? provider_dns.discover() : [];
+    let servers = [];
+    for (let route in routes)
+        push(servers, route.server);
     return {
         version: 1,
-        dns_type: option(settings, "dns_type", "udp"),
+        provider,
+        provider_routes: routes,
+        dns_type: provider ? "udp" : option(settings, "dns_type", "udp"),
         dns_detour: detour_tag(settings),
-        main_servers: server_list(settings, "dns_server", "77.88.8.8"),
-        bootstrap_servers: server_list(settings, "bootstrap_dns_server", "77.88.8.8"),
+        main_servers: provider ? servers : server_list(settings, "dns_server", "77.88.8.8"),
+        bootstrap_servers: provider ? servers : server_list(settings, "bootstrap_dns_server", "77.88.8.8"),
         main_index: 0,
         bootstrap_index: 0
     };
@@ -61,6 +71,8 @@ function state_matches(template, state) {
     return int(state.version || 0) == 1 &&
         as_string(state.dns_type) == template.dns_type &&
         as_string(state.dns_detour) == template.dns_detour &&
+        !!state.provider == !!template.provider &&
+        sprintf("%J", state.provider_routes || []) == sprintf("%J", template.provider_routes || []) &&
         arrays_equal(state.main_servers, template.main_servers) &&
         arrays_equal(state.bootstrap_servers, template.bootstrap_servers);
 }
@@ -144,24 +156,36 @@ function bootstrap_server(tag_name, value) {
     };
 }
 
+function bind_provider(server, state, index_value) {
+    if (!state.provider) return server;
+    let route = (state.provider_routes || [])[int(index_value)];
+    if (route == null)
+        return { unsupported: "No online WAN has usable provider DNS and routing. Check WAN DHCP/PPPoE and mwan3." };
+    // DNS dial fields are not implemented by every supported core. A direct
+    // outbound detour applies the binding consistently to UDP and TCP retries.
+    server.detour = "provider-dns-wan-" + route.interface;
+    return server;
+}
+
 function server_config(settings, override_state) {
     let active = active_values(settings, override_state);
-    return server_from_options(
+    return bind_provider(server_from_options(
         runtime_constants.DNS_SERVER_TAG,
         active.state.dns_type,
         active.main,
         active.state.dns_detour
-    );
+    ), active.state, active.state.main_index);
 }
 
 function bootstrap_config(settings, override_state) {
     let active = active_values(settings, override_state);
-    return bootstrap_server(runtime_constants.BOOTSTRAP_DNS_SERVER_TAG, active.bootstrap);
+    return bind_provider(bootstrap_server(runtime_constants.BOOTSTRAP_DNS_SERVER_TAG, active.bootstrap),
+        active.state, active.state.bootstrap_index);
 }
 
 function failover_enabled(settings) {
     let state = state_template(settings);
-    return length(state.main_servers) > 1 || length(state.bootstrap_servers) > 1;
+    return state.provider || length(state.main_servers) > 1 || length(state.bootstrap_servers) > 1;
 }
 
 function health_tag(kind, index_value, suffix) {
@@ -194,9 +218,9 @@ function add_active_health_inbound(result) {
 function add_health_candidate(result, kind, index_value, server) {
     let server_tag = health_tag(kind, index_value, "server");
     let inbound_tag = health_tag(kind, index_value, "in");
-    let dns_server = kind == "main"
+    let dns_server = bind_provider(kind == "main"
         ? server_from_options(server_tag, result.state.dns_type, server, result.state.dns_detour)
-        : bootstrap_server(server_tag, server);
+        : bootstrap_server(server_tag, server), result.state, index_value);
 
     if (dns_server.unsupported) {
         result.unsupported = dns_server.unsupported;
@@ -219,36 +243,60 @@ function add_health_candidate(result, kind, index_value, server) {
     push(result.sniff_inbounds, inbound_tag);
 }
 
+function add_health_slot(result, kind, index_value) {
+    let tag = health_tag(kind, index_value, "in");
+    push(result.inbounds, { type: "direct", tag,
+        listen: DNS_HEALTH_ADDRESS, listen_port: health_port(kind, index_value) });
+    push(result.rules, { action: "route", inbound: tag,
+        server: kind == "main" ? runtime_constants.DNS_SERVER_TAG : runtime_constants.BOOTSTRAP_DNS_SERVER_TAG,
+        disable_cache: true });
+    push(result.sniff_inbounds, tag);
+}
+
 function config(settings, override_state) {
     let state = runtime_state(settings, override_state);
     let main = server_config(settings, state);
     if (main.unsupported)
-        return { unsupported: main.unsupported };
+        return { unsupported: main.unsupported, provider_unavailable: state.provider && length(state.provider_routes) == 0 };
 
     let result = {
         state,
         servers: [ bootstrap_config(settings, state), main ],
+        outbounds: [],
         inbounds: [],
         rules: [],
         sniff_inbounds: []
     };
+    let seen_provider = {};
+    for (let route in state.provider_routes) {
+        if (seen_provider[route.interface]) continue;
+        seen_provider[route.interface] = true;
+        let outbound = { type: "direct", tag: "provider-dns-wan-" + route.interface,
+            bind_interface: route.device };
+        if (route.mark > 0) outbound.routing_mark = route.mark;
+        push(result.outbounds, outbound);
+    }
 
-    if (length(state.main_servers) > 1 || length(state.bootstrap_servers) > 1)
-        add_active_health_inbound(result);
-
-    if (length(state.main_servers) > 1)
-        for (let i = 0; i < length(state.main_servers); i++)
-            add_health_candidate(result, "main", i, state.main_servers[i]);
-
-    if (length(state.bootstrap_servers) > 1)
-        for (let i = 0; i < length(state.bootstrap_servers); i++)
-            add_health_candidate(result, "bootstrap", i, state.bootstrap_servers[i]);
+    // Reserve loopback health listeners independently of selected DNS mode.
+    // Changing listeners requires a cold core restart. Eight slots per kind
+    // covers normal dual/multi-WAN lists without adding duplicate resolvers.
+    // Larger existing lists remain supported (their capacity changes may restart).
+    add_active_health_inbound(result);
+    for (let kind in [ "main", "bootstrap" ]) {
+        let values = kind == "main" ? state.main_servers : state.bootstrap_servers;
+        for (let i = 0; i < max(8, length(values)); i++) {
+            if (length(values) > 1 && i < length(values))
+                add_health_candidate(result, kind, i, values[i]);
+            else
+                add_health_slot(result, kind, i);
+        }
+    }
 
     return result;
 }
 
 function default_domain_resolver(settings) {
-    return bool_option(settings, "dns_detour_enabled", false)
+    return !bool_option(settings, "dns_use_provider", false) && bool_option(settings, "dns_detour_enabled", false)
         ? runtime_constants.BOOTSTRAP_DNS_SERVER_TAG
         : runtime_constants.DNS_SERVER_TAG;
 }

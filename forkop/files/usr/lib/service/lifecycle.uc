@@ -3,6 +3,7 @@
 let fs = require("fs");
 let common = require("core.common");
 let constants = require("core.constants");
+let runtime_constants = require("singbox.constants");
 let uci_core = require("core.uci");
 
 function as_string(value) {
@@ -1000,6 +1001,10 @@ function start_main() {
     }
 
     status = singbox_init_config();
+    if (status == runtime_constants.PROVIDER_DNS_UNAVAILABLE) {
+        clear_start_failure();
+        return status;
+    }
     if (status != 0) {
         // A generator rejection is a deterministic configuration problem;
         // retrying it every time WAN comes up cannot make it valid.
@@ -1558,6 +1563,53 @@ function wait_dns_failover_state(candidate_state_path, attempts) {
     return 1;
 }
 
+// Returns 3 only when the core explicitly requires the legacy cold path.
+function dns_failover_hot_apply(candidate_state_path) {
+    let prepared = module_capture(SINGBOX_UC, [ "prepare-dns-config", candidate_state_path ]);
+    if (prepared.status != 0) return prepared.status == 3 ? 1 : prepared.status;
+    let fields = split(trim(prepared.output), "\t");
+    let backup = as_string(fields[1] || "");
+    let stage = as_string(fields[2] || "");
+    if (stage == "" || backup == "") return 1;
+    let changed = fields[0] == "1";
+    let status = 0;
+    let published = false;
+    let keep_backup = false;
+    if (changed) {
+        let plan = module_capture(HOT_RELOAD_UC, [ "plan", stage ]);
+        if (plan.status != 0) status = 1;
+        else if (trim(plan.output) != "hot") status = 3;
+        else {
+            let current = config_get(CONFIG_NAME + ".settings.config_path", "");
+            if (current == "" || !command_success_from_args([ "cp", "-p", stage, current ])) status = 1;
+            else {
+                published = true;
+                status = module_success(HOT_RELOAD_UC, [ "apply", stage + ".hot-plan" ]) ? 0 : 1;
+                if (status != 0) log_message("DNS failover hot reload was not acknowledged", "error");
+            }
+        }
+    }
+    if (status == 0) {
+        status = wait_dns_failover_state(candidate_state_path, 8);
+        if (status != 0) log_message("DNS failover runtime DNS verification failed", "error");
+    }
+    if (status == 0 && !module_success(DNS_FAILOVER_UC, [ "commit-state", candidate_state_path ])) {
+        log_message("DNS failover state publication failed", "error");
+        status = 1;
+    }
+    if (status != 0 && published) {
+        log_message("DNS hot failover failed; restoring the acknowledged previous configuration", "error");
+        keep_backup = !module_success(HOT_RELOAD_UC, [ "restore", stage + ".hot-plan", backup ]);
+        if (keep_backup)
+            log_message("DNS hot failover rollback failed; recovery configuration retained at " + backup, "fatal");
+    }
+    remove_file(stage + ".hot-plan");
+    remove_file(stage);
+    if (!keep_backup) remove_file(backup);
+    if (status == 0 && changed) log_message("DNS failover applied with acknowledged hot reload", "info");
+    return status;
+}
+
 function dns_failover_apply(candidate_state_path) {
     candidate_state_path = as_string(candidate_state_path);
     if (candidate_state_path == "" || fs.stat(candidate_state_path) == null)
@@ -1565,6 +1617,12 @@ function dns_failover_apply(candidate_state_path) {
 
     if (!module_success(STATE_UC, [ "acquire-runtime-dir-lock-wait", RELOAD_LOCK_DIR, owner_pid(), "2" ]))
         return 2;
+
+    let hot_status = dns_failover_hot_apply(candidate_state_path);
+    if (hot_status != 3) {
+        release_reload_lock();
+        return hot_status;
+    }
 
     // Do not publish config.json while a vendor-provided init script can be
     // watching it. Its watcher is outside Forkop's ownership and can otherwise

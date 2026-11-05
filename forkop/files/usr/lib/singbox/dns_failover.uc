@@ -256,7 +256,7 @@ function failover_confirmed(failures, kind, current_index, selected, threshold) 
 function worker() {
     let cfg = settings();
     let state = runtime_dns.normalize_state(cfg, common.read_json_file(STATE_FILE));
-    if (length(state.main_servers) <= 1 && length(state.bootstrap_servers) <= 1)
+    if (!state.provider && length(state.main_servers) <= 1 && length(state.bootstrap_servers) <= 1)
         return 0;
     if (!write_state(STATE_FILE, state))
         return 1;
@@ -274,8 +274,32 @@ function worker() {
     while (true) {
         let now = now_seconds();
         let current_cfg = settings();
-        if (!runtime_dns.state_matches(runtime_dns.state_template(current_cfg), state))
-            return 0;
+        if (now >= next_active || !state.provider) {
+            let expected = runtime_dns.state_template(current_cfg);
+            if (!runtime_dns.state_matches(expected, state)) {
+                if (state.provider && expected.provider) {
+                    // Keep the last valid runtime while every WAN is offline.
+                    // Retry discovery without manufacturing a public DNS fallback.
+                    if (length(expected.main_servers) == 0) {
+                        next_active = now + active_interval;
+                        command_success_from_args([ "sleep", "1" ]);
+                        continue;
+                    }
+                    log_message("WAN DNS or mwan3 availability changed; regenerating DNS routes", "info");
+                    // Exit before reload stops/replaces this worker; never hold
+                    // a service action open from the process it must terminate.
+                    command_status("(sleep 1; " + command_from_args([ SERVICE_BIN, "reload" ]) +
+                        ") >/dev/null 2>&1 1000>&- &");
+                }
+                return 0;
+            }
+        }
+
+        if (state.provider && length(state.main_servers) <= 1 && length(state.bootstrap_servers) <= 1) {
+            next_active = now + active_interval;
+            command_success_from_args([ "sleep", as_string(active_interval) ]);
+            continue;
+        }
 
         if (now >= next_active || now >= next_recovery) {
             let provenance = null;

@@ -4,6 +4,7 @@ let fs = require("fs");
 let uci_core = require("core.uci");
 let common = require("core.common");
 let runtime_dns = require("singbox.dns");
+let runtime_constants = require("singbox.constants");
 let subscription_recovery = require("singbox.subscription_recovery");
 
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
@@ -925,7 +926,7 @@ function replace_dns_server(config, replacement) {
     return false;
 }
 
-function patch_dns_config(state_path) {
+function patch_dns_config(state_path, prepare_only) {
     let settings = uci_settings();
     let candidate_state = common.read_json_file(state_path);
     let expected = runtime_dns.state_template(settings);
@@ -969,6 +970,10 @@ function patch_dns_config(state_path) {
     remove_file(check_log);
 
     let changed = md5_file(config_path) != md5_file(temp_config);
+    if (prepare_only) {
+        print(changed ? "1" : "0", "\t", backup_path, "\t", temp_config, "\n");
+        return;
+    }
     if (!save_config_file(temp_config, config_path)) {
         remove_file(backup_path);
         exit(1);
@@ -1042,9 +1047,10 @@ function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferre
         generate_status = 1;
     if (generate_status != 0) {
         let reason = generator_failure_reason(runtime_log, generate_status);
-        log_message("Failed to generate sing-box configuration: " + reason, "fatal");
+        let retryable = generate_status == runtime_constants.PROVIDER_DNS_UNAVAILABLE;
+        log_message("Failed to generate sing-box configuration: " + reason, retryable ? "warn" : "fatal");
         remove_files([ temp_config, runtime_log ]);
-        exit(1);
+        exit(retryable ? generate_status : 1);
     }
     log_file_lines(runtime_log, "warn", "sing-box config generator: ");
 
@@ -1156,6 +1162,8 @@ else if (mode == "generator-failure-reason-fixture")
     print(generator_failure_reason(ARGV[1] || "", int(ARGV[2] || "1")), "\n");
 else if (mode == "patch-dns-config")
     patch_dns_config(ARGV[1] || "");
+else if (mode == "prepare-dns-config")
+    patch_dns_config(ARGV[1] || "", true);
 else if (mode == "restore-dns-config")
     exit(restore_dns_config(ARGV[1] || "") ? 0 : 1);
 else if (mode == "managed-service-installed")

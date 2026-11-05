@@ -229,6 +229,63 @@ function createSettingsContent(section) {
       },
     );
   };
+  const providerOption = section.option(
+    form.Flag,
+    "dns_use_provider",
+    _("Use provider DNS"),
+    _("Use DNS supplied by online WAN interfaces for main and Bootstrap DNS. With mwan3, each DNS uses its own WAN. Manual settings are preserved."),
+  );
+  providerOption.default = "0";
+  providerOption.rmempty = false;
+  const providerFields = [];
+  const providerEdits = new Map();
+  const providerEnabled = (sectionId) => {
+    const value = providerEdits.has(sectionId)
+      ? providerEdits.get(sectionId)
+      : uci.get(UCI_PACKAGE, sectionId, "dns_use_provider");
+    return value === "1" || value === true;
+  };
+  let providerCandidates = [];
+  const setProviderVisibility = (field, active) => {
+    // LuCI/theme styles can override the browser's default [hidden] rule.
+    field.manual.hidden = active;
+    field.provider.hidden = !active;
+    field.manual.style.setProperty("display", active ? "none" : "", "important");
+    field.provider.style.setProperty("display", active ? "" : "none", "important");
+  };
+  const refreshProviderFields = (sectionId) => {
+    const active = providerEnabled(sectionId);
+    for (const field of providerFields) {
+      setProviderVisibility(field, active);
+      field.provider.value = providerCandidates.length
+        ? providerCandidates.map((entry) => `${entry.server} (${entry.interface})`).join(", ")
+        : _("No online WAN supplies usable DNS");
+    }
+  };
+  providerOption.onchange = function (_event, sectionId, value) {
+    providerEdits.set(sectionId, value);
+    refreshProviderFields(sectionId);
+  };
+  const renderProviderList = (option) => {
+    const render = option.renderWidget;
+    option.renderWidget = function (sectionId, ...args) {
+      return Promise.resolve(render.call(this, sectionId, ...args)).then((node) => {
+        const manual = E("div", {}, [node]);
+        const provider = E("input", { type: "text", readonly: true, class: "cbi-input-text" });
+        providerFields.push({ manual, provider });
+        const active = providerEnabled(sectionId);
+        setProviderVisibility({ manual, provider }, active);
+        fs.exec("/usr/bin/forkop", ["provider_dns"]).then((result) => {
+          try { providerCandidates = JSON.parse(result.stdout || "{}").candidates || []; }
+          catch (_error) { providerCandidates = []; }
+          provider.value = providerCandidates.length
+            ? providerCandidates.map((entry) => `${entry.server} (${entry.interface})`).join(", ")
+            : _("No online WAN supplies usable DNS");
+        }).catch(() => { provider.value = _("Unable to read provider DNS"); });
+        return E("div", {}, [manual, provider]);
+      });
+    };
+  };
   let o = section.option(
     form.ListValue,
     "dns_type",
@@ -240,6 +297,8 @@ function createSettingsContent(section) {
   o.value("udp", _("UDP (Unprotected DNS)"));
   o.default = "udp";
   o.rmempty = false;
+  o.depends("dns_use_provider", "0");
+  o.retain = true;
 
   const dnsOption = section.option(
     form.DynamicList,
@@ -250,6 +309,7 @@ function createSettingsContent(section) {
     ),
   );
   configureDnsList(dnsOption, main.DNS_SERVER_OPTIONS, "77.88.8.8");
+  renderProviderList(dnsOption);
 
   const bootstrapOption = section.option(
     form.DynamicList,
@@ -265,6 +325,7 @@ function createSettingsContent(section) {
     "77.88.8.8",
     main.validateBootstrapDNS,
   );
+  renderProviderList(bootstrapOption);
 
   o = section.option(
     form.Value,
@@ -328,13 +389,16 @@ function createSettingsContent(section) {
     _("Route main DNS requests through the selected section."),
   );
   configureDownloadViaProxyFlag(o, "dns_detour_section");
+  o.depends("dns_use_provider", "0");
+  o.retain = true;
 
   o = section.option(
     form.ListValue,
     "dns_detour_section",
     _("DNS requests through section"),
   );
-  o.depends("dns_detour_enabled", "1");
+  o.depends({ dns_detour_enabled: "1", dns_use_provider: "0" });
+  o.retain = true;
   configureDownloadSectionOption(o, "dns_detour_section");
 
   o = section.option(

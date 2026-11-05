@@ -780,7 +780,7 @@ function validate_dns_settings(settings, sections, context) {
             fail_validation("DNS failover failure threshold must be a positive integer. Aborted.");
     }
 
-    if (!bool_option(settings, "dns_detour_enabled", false))
+    if (bool_option(settings, "dns_use_provider", false) || !bool_option(settings, "dns_detour_enabled", false))
         return;
 
     let target_name = option(settings, "dns_detour_section", "");

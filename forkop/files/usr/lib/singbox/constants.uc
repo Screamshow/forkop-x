@@ -80,6 +80,7 @@ function domain_resolver_tag(section_name) {
 }
 
 return {
+    PROVIDER_DNS_UNAVAILABLE: 75,
     DNS_SERVER_TAG,
     FAKEIP_DNS_SERVER_TAG,
     BOOTSTRAP_DNS_SERVER_TAG,
