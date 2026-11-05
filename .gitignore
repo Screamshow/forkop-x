@@ -198,3 +198,5 @@ ops/deployed-nginx/
 !/docs/releases/next.md
 !/docs/releases/2.6.4.md
 !/tests/restart_transition_recovery.sh
+
+!/tests/native_tailscale_marks.uc
