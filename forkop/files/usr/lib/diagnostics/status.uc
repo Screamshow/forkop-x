@@ -1,6 +1,7 @@
 #!/usr/bin/env ucode
 
 let fs = require("fs");
+let mark_rules = require("diagnostics.mark_rules");
 
 function as_string(value) {
     return value == null ? "" : "" + value;
@@ -727,16 +728,20 @@ function global_nft_other_mark_exists() {
 function nft_ruleset_other_mark_lines(table_name) {
     table_name = as_string(table_name);
     let in_forkop_table = false;
+    let family = "";
+    let current_table = "";
 
     for (let line in split(read_stdin(), "\n")) {
         line = as_string(line);
-        if (index(line, "table inet " + table_name) >= 0) {
-            in_forkop_table = true;
+        let header = match(line, /^table ([^ ]+) ([^ ]+) \{/);
+        if (header != null) {
+            family = header[1];
+            current_table = header[2];
+            in_forkop_table = family == "inet" && current_table == table_name;
             continue;
         }
-
-        if (match(line, /^table/) != null)
-            in_forkop_table = false;
+        if (mark_rules.is_native_tailscale_mark(family, current_table, line))
+            continue;
 
         if (!in_forkop_table && (index(line, "mark set") >= 0 || index(line, "meta mark") >= 0))
             print_line(line);

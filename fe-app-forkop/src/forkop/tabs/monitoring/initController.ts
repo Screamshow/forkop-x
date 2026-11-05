@@ -1,3 +1,4 @@
+import { startDirectConnections } from './connectionsTransport';
 import {
   activeConnections,
   closedConnections,
@@ -545,7 +546,7 @@ function setButtonActive(button: HTMLElement | null, active: boolean) {
   button.classList.toggle('fkp_monitoring-page__tab--active', active);
 }
 
-function renderTabButtonContent(label: string, count: number) {
+function renderTabButtonContent(label: string, count: number | string) {
   return [
     E('span', { class: 'fkp_monitoring-page__tab-label' }, label),
     E('span', { class: 'fkp_monitoring-page__tab-badge' }, String(count)),
@@ -568,7 +569,10 @@ function renderControls() {
 
   if (activeButton) {
     activeButton.replaceChildren(
-      ...renderTabButtonContent(_('Active'), activeConnections.size),
+      ...renderTabButtonContent(
+        _('Active'),
+        failed || loading ? '—' : activeConnections.size,
+      ),
     );
     activeButton.disabled = serviceAvailability === 'stopped';
   }
@@ -586,7 +590,9 @@ function renderControls() {
   if (closeAllButton) {
     closeAllButton.replaceChildren(renderXIcon24());
     closeAllButton.disabled =
-      serviceAvailability === 'stopped' ||
+      serviceAvailability !== 'running' ||
+      failed ||
+      loading ||
       activeConnections.size === 0 ||
       closingAll;
   }
@@ -1315,6 +1321,7 @@ async function pollConnectionsSnapshot() {
   }
 
   const mountId = monitoringMountId;
+  const updatesId = connectionsUpdatesId;
   pollingConnections = true;
 
   try {
@@ -1323,6 +1330,7 @@ async function pollConnectionsSnapshot() {
     if (
       !monitoringMounted ||
       mountId !== monitoringMountId ||
+      updatesId !== connectionsUpdatesId ||
       serviceAvailability !== 'running'
     ) {
       return;
@@ -1331,6 +1339,7 @@ async function pollConnectionsSnapshot() {
     if (!response.success) {
       failed = true;
       loading = false;
+      renderControls();
       renderConnections();
       return;
     }
@@ -1340,6 +1349,7 @@ async function pollConnectionsSnapshot() {
     if (
       !monitoringMounted ||
       mountId !== monitoringMountId ||
+      updatesId !== connectionsUpdatesId ||
       serviceAvailability !== 'running'
     ) {
       return;
@@ -1348,6 +1358,7 @@ async function pollConnectionsSnapshot() {
     logger.error('[MONITORING]', 'connections polling failed', error);
     failed = true;
     loading = false;
+    renderControls();
     renderConnections();
   } finally {
     pollingConnections = false;
@@ -1365,53 +1376,32 @@ function startConnectionsPolling() {
   }, CONNECTIONS_RPC_POLL_INTERVAL_MS);
 }
 
-async function connectToConnectionsSocket(updatesId: number) {
+function connectToConnectionsSocket(updatesId: number) {
   const mountId = monitoringMountId;
-  const clashApiSecret = await getClashApiSecret();
-
-  if (
-    !monitoringMounted ||
-    mountId !== monitoringMountId ||
-    updatesId !== connectionsUpdatesId ||
-    serviceAvailability !== 'running'
-  ) {
-    return;
-  }
-
-  const connectionsSocketUrl = `${getClashWsUrl()}/connections?token=${clashApiSecret}`;
-  connectionsSocketUnsubscribe?.();
-
-  connectionsSocketUnsubscribe = socket.subscribe(
-    connectionsSocketUrl,
-    (msg) => {
-      if (
-        updatesId !== connectionsUpdatesId ||
-        serviceAvailability !== 'running'
-      ) {
-        return;
-      }
-
-      try {
-        applyConnectionsPayload(JSON.parse(msg) as ClashConnectionsPayload);
-      } catch (error) {
-        logger.error('[MONITORING]', 'connections socket parse failed', error);
-      }
-    },
-    (_err) => {
-      if (
-        !monitoringMounted ||
-        mountId !== monitoringMountId ||
-        updatesId !== connectionsUpdatesId ||
-        serviceAvailability !== 'running'
-      ) {
-        return;
-      }
-
+  connectionsSocketUnsubscribe = startDirectConnections({
+    loadSecret: getClashApiSecret,
+    isCurrent: () =>
+      monitoringMounted &&
+      mountId === monitoringMountId &&
+      updatesId === connectionsUpdatesId &&
+      serviceAvailability === 'running',
+    subscribe: (secret, onData, onError) =>
+      socket.subscribe(
+        `${getClashWsUrl()}/connections?token=${secret}`,
+        onData,
+        onError,
+      ),
+    onData: (message) =>
+      applyConnectionsPayload(JSON.parse(message) as ClashConnectionsPayload),
+    onFallback: () => {
+      stopConnectionsUpdates();
       failed = true;
       loading = false;
+      renderControls();
       renderConnections();
+      startConnectionsPolling();
     },
-  );
+  });
 }
 
 function startConnectionsUpdates() {

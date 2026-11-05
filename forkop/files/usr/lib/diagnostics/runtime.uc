@@ -1,6 +1,7 @@
 #!/usr/bin/env ucode
 
 let fs = require("fs");
+let mark_rules = require("diagnostics.mark_rules");
 let common = require("core.common");
 let process_memory = require("core.process_memory");
 let constants = require("core.constants");
@@ -1100,7 +1101,12 @@ function nft_chain_counter_status(chain) {
 
 function nft_table_has_other_mark_rules(family, table_name) {
     let output = command_output_from_args([ "nft", "list", "table", family, table_name ]);
-    return status_success([ "stdin-contains", "meta mark set" ], output);
+    for (let line in split(output, "\n")) {
+        if (index(line, "meta mark set") >= 0 &&
+            !mark_rules.is_native_tailscale_mark(family, table_name, line))
+            return true;
+    }
+    return false;
 }
 
 function check_nft_rules() {
