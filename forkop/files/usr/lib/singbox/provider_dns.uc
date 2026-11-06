@@ -10,6 +10,14 @@ function read_json(command) {
     try { return status == 0 ? json(data) : null; } catch (e) { return null; }
 }
 
+function read_rules(family) {
+    let args = ' ' + family + ' -j rule show';
+    let rules = read_json('/usr/libexec/ip-full' + args);
+    if (type(rules) == 'array') return rules;
+    rules = read_json('ip' + args);
+    return type(rules) == 'array' ? rules : null;
+}
+
 // Match installed mwan3 routing rules rather than assuming interface order,
 // table numbers or the default mask. No firewall or routing mutation.
 function interface_mark(rules, device) {
@@ -66,7 +74,7 @@ function discover() {
         let state = fs.readfile('/var/run/mwan3/iface_state/' + iface.interface);
         if (state != null) states[iface.interface] = trim(state);
     }
-    return select_candidates(dump, read_json('ip -4 -j rule show'), read_json('ip -6 -j rule show'), states);
+    return select_candidates(dump, read_rules('-4'), read_rules('-6'), states);
 }
 
 if (ARGV[0] == 'show') {

@@ -19,6 +19,31 @@ tproxy=$SB_TPROXY_INBOUND_PORT
 case "$table:$interfaces" in *[!a-zA-Z0-9_:]*) exit 1;; esac
 case "$mark" in 0x*[!0-9a-fA-F]*) exit 1;; esac
 case "$tproxy" in ''|*[!0-9]*) exit 1;; esac
+
+# /sbin/ip can resolve to BusyBox even when the ip-full package is installed.
+# A fresh IPv4 routing table may not exist yet, which iproute2 reports as an error.
+supports_route_table() {
+    for family in -4 -6; do
+        if output=$(LC_ALL=C "$1" "$family" route show table 52743 2>&1); then
+            continue
+        fi
+        case "$output" in
+            'Error: ipv4: FIB table does not exist.'*|'Error: ipv6: FIB table does not exist.'*) ;;
+            *) return 1;;
+        esac
+    done
+}
+
+ip_command=/usr/libexec/ip-full
+if [ ! -x "$ip_command" ] || ! supports_route_table "$ip_command"; then
+    ip_command=$(command -v ip)
+    if [ -z "$ip_command" ] || ! supports_route_table "$ip_command"; then
+        echo "Tailscale LAN and Exit Node require ip with IPv4 and IPv6 routing table 52743 support (ip-full)." >&2
+        exit 1
+    fi
+fi
+ip() { "$ip_command" "$@"; }
+
 cleanup() {
     for chain in forward input; do
         nft -a list chain inet fw4 "$chain" 2>/dev/null | sed -n '/comment "forkop-native-tailscale"/s/.*# handle \([0-9][0-9]*\).*/\1/p' | while read -r handle; do

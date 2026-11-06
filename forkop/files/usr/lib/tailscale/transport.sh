@@ -18,7 +18,10 @@ cleanup() {
 [ ! -f /var/run/forkop/ui-state/tailscale-stopping ] || exit 1
 [ -f /etc/forkop-tailscale/enabled ] || { cleanup; exit 0; }
 [ "$(cat /etc/forkop/sing-box-variant 2>/dev/null)" = rust-x ] || exit 1
-devices=$( { ip -4 route show default; ip -6 route show default; } | awk '{for(i=1;i<NF;i++) if($i=="dev") print $(i+1)}' | sort -u)
+default_routes() {
+    /usr/libexec/ip-full "$1" route show default 2>/dev/null || ip "$1" route show default
+}
+devices=$( { default_routes -4; default_routes -6; } | awk '{for(i=1;i<NF;i++) if($i=="dev") print $(i+1)}' | sort -u)
 [ -n "$devices" ] || { cleanup; exit 1; }
 elements=''
 for device in $devices; do
