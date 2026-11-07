@@ -173,6 +173,20 @@ FORKOP_RULESET_CACHE_MANIFEST="$WORK_DIR/partial-cache/manifest.json" \
 grep -Fq 'new.test' "$good_path" || fail "successful rule-set refresh was not committed"
 grep -Fq 'old.test' "$bad_path" || fail "failed rule-set refresh did not retain last-known-good data"
 
+export FORKOP_RULESET_CACHE_DIR="$WORK_DIR/partial-cache"
+export FORKOP_RULESET_CACHE_MANIFEST="$WORK_DIR/partial-cache/manifest.json"
+status=0
+PATH="$WORK_DIR/bin:$PATH" RULESET_TEST_SOURCE_JSON="$WORK_DIR/partial-new.json" \
+  ucode -L "$FORKOP_LIB" "$RULESET_CACHE_UC" refresh-for-restart || status=$?
+[ "$status" = 1 ] || fail "manual refresh must accept a valid cache when a source is offline"
+
+printf 'invalid cache\n' >"$bad_path"
+status=0
+PATH="$WORK_DIR/bin:$PATH" RULESET_TEST_SOURCE_JSON="$WORK_DIR/partial-old.json" \
+  ucode -L "$FORKOP_LIB" "$RULESET_CACHE_UC" refresh-for-restart || status=$?
+[ "$status" = 2 ] || fail "manual refresh must reject invalid cache even if another source changed"
+unset FORKOP_RULESET_CACHE_DIR FORKOP_RULESET_CACHE_MANIFEST
+
 cat >"$WORK_DIR/offline.json" <<'EOF'
 {"route":{"rule_set":[{"type":"remote","tag":"offline","format":"binary","url":"https://offline.test/missing.srs"}]}}
 EOF

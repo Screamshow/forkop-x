@@ -149,21 +149,34 @@ function verification_plan(previous, candidate) {
     };
 }
 
-function verify_state(path) {
+function verify_state(path, preflight, report) {
     let cfg = settings();
     let state = common.read_json_file(path);
     let expected = runtime_dns.state_template(cfg);
-    if (!runtime_dns.state_matches(expected, state))
+    if (!runtime_dns.state_matches(expected, state)) {
+        if (report) log_message("candidate no longer matches current DNS settings", "warn");
         return false;
+    }
 
     state = runtime_dns.normalize_state(cfg, state);
     let previous = runtime_dns.normalize_state(cfg, common.read_json_file(STATE_FILE));
     let plan = verification_plan(previous, state);
     let timeout_seconds = probe_timeout(common.option(cfg, "dns_check_timeout", "2s"));
-    if (plan.main && !probe_canonical_main(timeout_seconds))
+    // Before publishing, the main candidate still uses the current bootstrap.
+    // A simultaneous bootstrap change must verify main after both are applied.
+    let main_ok = !plan.main || (preflight
+        ? plan.bootstrap || probe_port("main", state.main_index, timeout_seconds)
+        : probe_canonical_main(timeout_seconds));
+    if (!main_ok) {
+        if (report) log_message((preflight ? "preflight" : "runtime") +
+            " main DNS probe failed for priority " + as_string(state.main_index + 1) + " (" + state.dns_type + ")", "warn");
         return false;
-    if (plan.bootstrap && !probe_port("bootstrap", state.bootstrap_index, timeout_seconds))
+    }
+    if (plan.bootstrap && !probe_port("bootstrap", state.bootstrap_index, timeout_seconds)) {
+        if (report) log_message((preflight ? "preflight" : "runtime") +
+            " bootstrap DNS probe failed for priority " + as_string(state.bootstrap_index + 1), "warn");
         return false;
+    }
     return true;
 }
 
@@ -425,7 +438,9 @@ else if (mode == "stop-runtime")
 else if (mode == "worker")
     exit(worker());
 else if (mode == "verify-state")
-    exit(verify_state(ARGV[1]) ? 0 : 1);
+    exit(verify_state(ARGV[1], false, ARGV[2] == "report") ? 0 : 1);
+else if (mode == "probe-candidate")
+    exit(verify_state(ARGV[1], true, true) ? 0 : 1);
 else if (mode == "commit-state")
     exit(commit_state(ARGV[1]) ? 0 : 1);
 else if (mode == "select-fixture")
@@ -433,6 +448,6 @@ else if (mode == "select-fixture")
 else if (mode == "verification-plan-fixture")
     common.write_json(verification_plan(common.read_json_file(ARGV[1]), common.read_json_file(ARGV[2])));
 else {
-    warn("Usage: singbox/dns_failover.uc <start-runtime|stop-runtime|worker|verify-state|commit-state|select-fixture|verification-plan-fixture> ...\n");
+    warn("Usage: singbox/dns_failover.uc <start-runtime|stop-runtime|worker|verify-state|probe-candidate|commit-state|select-fixture|verification-plan-fixture> ...\n");
     exit(1);
 }

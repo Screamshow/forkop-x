@@ -1554,7 +1554,7 @@ function sing_box_runtime_pid() {
 function wait_dns_failover_state(candidate_state_path, attempts) {
     attempts = int(attempts || 1);
     for (let i = 0; i < attempts; i++) {
-        let status = module_status(DNS_FAILOVER_UC, [ "verify-state", candidate_state_path ]);
+        let status = module_status(DNS_FAILOVER_UC, [ "verify-state", candidate_state_path, i + 1 == attempts ? "report" : "" ]);
         if (status == 0)
             return 0;
         if (i + 1 < attempts)
@@ -1579,6 +1579,7 @@ function dns_failover_hot_apply(candidate_state_path) {
         let plan = module_capture(HOT_RELOAD_UC, [ "plan", stage ]);
         if (plan.status != 0) status = 1;
         else if (trim(plan.output) != "hot") status = 3;
+        else if (!module_success(DNS_FAILOVER_UC, [ "probe-candidate", candidate_state_path ])) status = 1;
         else {
             let current = config_get(CONFIG_NAME + ".settings.config_path", "");
             if (current == "" || !command_success_from_args([ "cp", "-p", stage, current ])) status = 1;
@@ -2212,7 +2213,7 @@ function manual_restart() {
     let ruleset_proxy_address = setting_bool("download_lists_via_proxy", false)
         ? SB_SERVICE_MIXED_INBOUND_ADDRESS + ":" + as_string(SB_SERVICE_MIXED_INBOUND_PORT)
         : "";
-    let ruleset_status = module_status(RULESET_CACHE_UC, [ "refresh", ruleset_proxy_address ]);
+    let ruleset_status = module_status(RULESET_CACHE_UC, [ "refresh-for-restart", ruleset_proxy_address ]);
     if (ruleset_status > 1) {
         module_success(STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
         log_message("Manual restart aborted: remote rule sets could not be prepared; the running runtime was preserved", "error");

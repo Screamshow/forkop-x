@@ -20,14 +20,14 @@ for required in \
   'FORKOP_LIST_UPDATE_PREPARE_ONLY: "1"' \
   'FORKOP_MANUAL_RESTART_LOCK_HELD: "1"' \
   'let ruleset_proxy_address = setting_bool("download_lists_via_proxy", false)' \
-  '"refresh", ruleset_proxy_address' \
+  '"refresh-for-restart", ruleset_proxy_address' \
   'let status = restart();'; do
   grep -Fq "$required" <<<"$manual_body" || fail "manual restart is missing $required"
 done
 
 subscription_line="$(grep -nF 'subscription-prepare-only' <<<"$manual_body" | head -n1 | cut -d: -f1)"
 list_line="$(grep -nF 'FORKOP_LIST_UPDATE_PREPARE_ONLY: "1"' <<<"$manual_body" | head -n1 | cut -d: -f1)"
-ruleset_line="$(grep -nF '"refresh", ruleset_proxy_address' <<<"$manual_body" | head -n1 | cut -d: -f1)"
+ruleset_line="$(grep -nF '"refresh-for-restart", ruleset_proxy_address' <<<"$manual_body" | head -n1 | cut -d: -f1)"
 restart_line="$(grep -nF 'let status = restart();' <<<"$manual_body" | head -n1 | cut -d: -f1)"
 [ "$subscription_line" -lt "$list_line" ] && [ "$list_line" -lt "$ruleset_line" ] && [ "$ruleset_line" -lt "$restart_line" ] ||
   fail "manual restart does not prepare subscriptions, lists, and rulesets before restart"
