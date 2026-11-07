@@ -233,7 +233,7 @@ function createSettingsContent(section) {
     form.Flag,
     "dns_use_provider",
     _("Use provider DNS"),
-    _("Use DNS supplied by online WAN interfaces for main and Bootstrap DNS. With mwan3, each DNS uses its own WAN. Manual settings are preserved."),
+    _("Use DNS supplied by online WAN interfaces for main and Bootstrap DNS. With mwan3, each DNS uses its own WAN."),
   );
   providerOption.default = "0";
   providerOption.rmempty = false;
