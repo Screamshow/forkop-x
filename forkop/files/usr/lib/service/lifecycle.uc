@@ -1551,11 +1551,12 @@ function sing_box_runtime_pid() {
     return result.status == 0 ? trim(result.output) : "";
 }
 
-function wait_dns_failover_state(candidate_state_path, attempts) {
-    attempts = int(attempts || 1);
+function wait_dns_failover_state(candidate_state_path, attempts, required_successes) {
+    let consecutive_successes = 0;
     for (let i = 0; i < attempts; i++) {
         let status = module_status(DNS_FAILOVER_UC, [ "verify-state", candidate_state_path, i + 1 == attempts ? "report" : "" ]);
-        if (status == 0)
+        consecutive_successes = status == 0 ? consecutive_successes + 1 : 0;
+        if (consecutive_successes == required_successes)
             return 0;
         if (i + 1 < attempts)
             command_success_from_args([ "sleep", "1" ]);
@@ -1591,7 +1592,7 @@ function dns_failover_hot_apply(candidate_state_path) {
         }
     }
     if (status == 0) {
-        status = wait_dns_failover_state(candidate_state_path, 8);
+        status = wait_dns_failover_state(candidate_state_path, 8, changed ? 2 : 1);
         if (status != 0) log_message("DNS failover runtime DNS verification failed", "error");
     }
     if (status == 0 && !module_success(DNS_FAILOVER_UC, [ "commit-state", candidate_state_path ])) {
@@ -1649,7 +1650,7 @@ function dns_failover_apply(candidate_state_path) {
     if (changed) {
         status = module_status(STATE_UC, [ "start-managed-sing-box-runtime", transition_timeout ]);
         if (status == 0)
-            status = wait_dns_failover_state(candidate_state_path, 8);
+            status = wait_dns_failover_state(candidate_state_path, 8, 2);
     }
     else {
         status = module_status(STATE_UC, [ "start-managed-sing-box-runtime", transition_timeout ]);
