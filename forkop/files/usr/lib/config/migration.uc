@@ -50,7 +50,15 @@ const CURRENT_SECONDARY_RULESET_IDS = {
     ccp: true, electronicarts: true, epicgames: true, google: true,
     nintendo: true, play2go: true, riot: true, roblox: true, sony: true,
     twitch: true,
-    taketwo: true, ubisoft: true, valve: true, wargaming: true, xbox: true
+    taketwo: true, ubisoft: true, valve: true, wargaming: true, xbox: true,
+    apexlegends_rocketleague: true, arknights: true, armareforger: true,
+    battlefield6: true, bluearchive: true, callofduty: true,
+    companyofheroes2: true, darktide: true, deadbydaylight: true,
+    fallout76_aws: true, gearsofwar: true, goosegooseduck: true,
+    magicthegathering: true, minecraft_extra: true, mortalkombat1: true,
+    mortalkombat11: true, outlasttrials: true, photonengine: true,
+    streetfighter6: true, vrchat: true, wardogs: true, warframe: true,
+    wutheringwaves: true
 };
 const RETIRED_SECONDARY_RULESET_IDS = {
     aeza: true, akamai: true, amazon: true, belcloud: true, buyvm: true,

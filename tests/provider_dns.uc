@@ -34,8 +34,10 @@ print('custom interface names and policy tables checks passed\n');
 let fs = require('fs');
 fs.popen = function(command, mode) {
     let value = index(command, 'network.interface dump') >= 0 ? dump :
-        (index(command, 'ip -4') >= 0 ? rules : []);
-    return { read:function() { return sprintf('%J',value); }, close:function() { return 0; } };
+        (index(command, '/usr/libexec/ip-full -4') >= 0 ? rules : []);
+    // BusyBox ip cannot supply JSON rules; ip-full must be tried first.
+    let status = index(command, 'ip -4') == 0 ? 1 : 0;
+    return { read:function() { return sprintf('%J',value); }, close:function() { return status; } };
 };
 fs.readfile = function(path) {
     if (index(path,'iface_state/wanb') >= 0) return 'online\n';

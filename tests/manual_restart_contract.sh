@@ -25,10 +25,10 @@ for required in \
   grep -Fq "$required" <<<"$manual_body" || fail "manual restart is missing $required"
 done
 
-subscription_line="$(grep -nF 'subscription-prepare-only' <<<"$manual_body" | head -n1 | cut -d: -f1)"
-list_line="$(grep -nF 'FORKOP_LIST_UPDATE_PREPARE_ONLY: "1"' <<<"$manual_body" | head -n1 | cut -d: -f1)"
-ruleset_line="$(grep -nF '"refresh-for-restart", ruleset_proxy_address' <<<"$manual_body" | head -n1 | cut -d: -f1)"
-restart_line="$(grep -nF 'let status = restart();' <<<"$manual_body" | head -n1 | cut -d: -f1)"
+subscription_line="$(grep -nF 'subscription-prepare-only' <<<"$manual_body" | sed -n '1p' | cut -d: -f1)"
+list_line="$(grep -nF 'FORKOP_LIST_UPDATE_PREPARE_ONLY: "1"' <<<"$manual_body" | sed -n '1p' | cut -d: -f1)"
+ruleset_line="$(grep -nF '"refresh-for-restart", ruleset_proxy_address' <<<"$manual_body" | sed -n '1p' | cut -d: -f1)"
+restart_line="$(grep -nF 'let status = restart();' <<<"$manual_body" | sed -n '1p' | cut -d: -f1)"
 [ "$subscription_line" -lt "$list_line" ] && [ "$list_line" -lt "$ruleset_line" ] && [ "$ruleset_line" -lt "$restart_line" ] ||
   fail "manual restart does not prepare subscriptions, lists, and rulesets before restart"
 
@@ -41,8 +41,8 @@ grep -Fq 'FORKOP_MANUAL_RESTART_LOCK_HELD' "$UPDATES" || fail "prepare workers d
 prepare_finish="$(sed -n '/^function finish_list_update/,/^function dns_probe_passed/p' "$UPDATES")"
 grep -Fq 'exit(status == 0 ? 0 : 1);' <<<"$prepare_finish" ||
   fail "list prepare-only mode does not stop before runtime apply"
-prepare_exit_line="$(grep -nF 'exit(status == 0 ? 0 : 1);' <<<"$prepare_finish" | head -n1 | cut -d: -f1)"
-runtime_reload_line="$(grep -nF '[ SERVICE_INIT, "reload", "list-content" ]' <<<"$prepare_finish" | head -n1 | cut -d: -f1)"
+prepare_exit_line="$(grep -nF 'exit(status == 0 ? 0 : 1);' <<<"$prepare_finish" | sed -n '1p' | cut -d: -f1)"
+runtime_reload_line="$(grep -nF '[ SERVICE_INIT, "reload", "list-content" ]' <<<"$prepare_finish" | sed -n '1p' | cut -d: -f1)"
 [ "$prepare_exit_line" -lt "$runtime_reload_line" ] ||
   fail "list prepare-only mode can invoke an intermediate runtime reload"
 
