@@ -4545,37 +4545,44 @@ function loadRulesetValues(option) {
   });
 }
 
-function hideSelectedRulesetChoices(option, choices) {
-  option.renderWidget = function (section_id, _option_index, cfgvalue) {
-    const values = L.toArray(cfgvalue != null ? cfgvalue : this.default);
-    const labels = Object.fromEntries(
-      choices.map(({ value, label }) => [value, label]),
-    );
-    const widget = new ui.DynamicList(values, labels, {
-      id: this.cbid(section_id),
-      sort: this.keylist,
-      allowduplicates: false,
-      optional: this.optional || this.rmempty,
-      datatype: this.datatype,
-      placeholder: this.placeholder,
-      validate: L.bind(this.validate, this, section_id),
-      disabled: this.readonly != null ? this.readonly : this.map.readonly,
-    });
-    const node = widget.render();
-    const refreshChoices = () => {
-      const selected = new Set(L.toArray(widget.getValue()));
-      const available = choices.filter(({ value }) => !selected.has(value));
-      widget.clearChoices();
-      widget.addChoices(
-        available.map(({ value }) => value),
-        labels,
-      );
-    };
-    node.addEventListener("cbi-dynlist-change", refreshChoices);
-    refreshChoices();
-    return node;
-  };
-}
+const RulesetMultiValue = form.MultiValue.extend({
+  renderWidget(section_id, option_index, cfgvalue) {
+    if (!document.getElementById("fkp-ruleset-picker-styles")) {
+      document.head.appendChild(E("style", { id: "fkp-ruleset-picker-styles" }, `
+        .cbi-dropdown.fkp-ruleset-picker:not(.btn):not(.cbi-button) {
+          height: auto;
+          max-width: 100%;
+        }
+        .cbi-dropdown.fkp-ruleset-picker[empty] > ul:not(.dropdown) {
+          display: none;
+        }
+        .fkp-ruleset-picker:not([empty]):not([open]) > ul,
+        .fkp-ruleset-picker:not([empty])[open] > ul.preview {
+          flex-wrap: wrap;
+          gap: 4px;
+        }
+        .cbi-dropdown.fkp-ruleset-picker:not([empty]) > ul:not(.dropdown) {
+          padding: 5px 0 5px 6px;
+        }
+        .cbi-dropdown.fkp-ruleset-picker > ul:not(.dropdown) > li[display] {
+          flex: 0 1 auto;
+          min-height: 0;
+          max-width: 100%;
+          padding: 2px 8px;
+          border: 0;
+          border-radius: 6px;
+          background: var(--border-color-low, rgba(127, 127, 127, .16));
+          white-space: normal;
+          overflow-wrap: anywhere;
+        }
+      `));
+    }
+    this.display_size = this.keylist.length;
+    const widget = this.super("renderWidget", [section_id, option_index, cfgvalue]);
+    widget.classList.add("fkp-ruleset-picker");
+    return widget;
+  },
+});
 
 function isBuiltinRulesetValue(value) {
   return Object.prototype.hasOwnProperty.call(main.DOMAIN_LIST_OPTIONS, value);
@@ -5349,7 +5356,7 @@ function createSectionContent(section) {
 
   const builtInRulesetOption = section.taboption(
     "conditions",
-    form.DynamicList,
+    RulesetMultiValue,
     "community_lists",
     _("Built-in rule sets"),
     _("Select a predefined domain list"),
@@ -5366,17 +5373,10 @@ function createSectionContent(section) {
   builtInRulesetOption.remove = function (section_id) {
     uci.unset(UCI_PACKAGE, section_id, "community_lists");
   };
-  hideSelectedRulesetChoices(
-    builtInRulesetOption,
-    Object.entries(main.DOMAIN_LIST_OPTIONS).map(([value, label]) => ({
-      value,
-      label: _(label),
-    })),
-  );
 
   const secondaryRulesetOption = section.taboption(
     "conditions",
-    form.DynamicList,
+    RulesetMultiValue,
     "secondary_rule_sets",
     `${_("Built-in rule sets")} #2`,
     _("Select a predefined IP rule set from b4geoip-forkop"),
@@ -5387,7 +5387,7 @@ function createSectionContent(section) {
     refreshOptionChoices(
       this,
       Object.entries(main.SECONDARY_RULESET_OPTIONS || {}).map(
-        ([value, label]) => ({ value, label }),
+        ([value, label]) => ({ value, label: _(label) }),
       ),
     );
     return getSecondaryRulesetReferences(section_id);
@@ -5398,12 +5398,6 @@ function createSectionContent(section) {
   secondaryRulesetOption.remove = function (section_id) {
     writeSecondaryRulesetReferences(section_id, []);
   };
-  hideSelectedRulesetChoices(
-    secondaryRulesetOption,
-    Object.entries(main.SECONDARY_RULESET_OPTIONS || {}).map(
-      ([value, label]) => ({ value, label: _(label) }),
-    ),
-  );
 
   const ruleSetOption = section.taboption(
     "conditions",

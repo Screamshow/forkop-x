@@ -1,4 +1,8 @@
-import { renderLoaderCircleIcon24, renderInfoIcon24 } from '../../../../icons';
+import {
+  renderLoaderCircleIcon24,
+  renderInfoIcon24,
+  renderRotateCcwIcon24,
+} from '../../../../icons';
 import { svgEl } from '../../../../helpers';
 import { prettyBytes } from '../../../../helpers/prettyBytes';
 import { Forkop } from '../../../types';
@@ -257,6 +261,8 @@ function renderDefaultState({
   isPriorityMembersExpanded,
   onPriorityMembersToggle,
 }: IRenderSectionsProps) {
+  const latencyTestCodes = new Set(section.latencyTestCodes);
+
   function renderPriorityMembers(outbound: Forkop.Outbound) {
     const members = outbound.priorityInfo?.outbounds || [];
 
@@ -354,6 +360,21 @@ function renderDefaultState({
   }
 
   function renderOutbound(outbound: Forkop.Outbound) {
+    const canTestOutbound =
+      section.withTagSelect &&
+      outbound.runtimeAvailable !== false &&
+      !outbound.urlTestInfo &&
+      !outbound.priorityInfo &&
+      latencyTestCodes.has(outbound.code);
+    const latency = E(
+      'span',
+      {
+        class: getDashboardLatencyClass(outbound.latency),
+        'data-latency-section': section.sectionName,
+        'data-latency-outbound': outbound.code,
+      },
+      outbound.latency ? `${outbound.latency}ms` : 'N/A',
+    );
     const footerLabel = getOutboundFooterLabel(outbound);
     const priorityMembers = renderPriorityMembers(outbound);
     const selectorSwitching = Boolean(selectorSwitchingTag);
@@ -386,7 +407,9 @@ function renderDefaultState({
         class: className,
         'aria-busy': outboundSwitching ? 'true' : undefined,
         'aria-disabled':
-          section.withTagSelect && !canChooseOutbound ? 'true' : undefined,
+          section.withTagSelect && !canChooseOutbound && !canTestOutbound
+            ? 'true'
+            : undefined,
         click: () =>
           canChooseOutbound &&
           onChooseOutbound(section.sectionName, section.code, outbound.code),
@@ -412,6 +435,26 @@ function renderDefaultState({
           : []),
         E('div', { class: 'fkp_dashboard-page__outbound-grid__item__header' }, [
           E('b', {}, renderFlagEmojis(outbound.displayName)),
+          ...(canTestOutbound
+            ? [
+                E(
+                  'button',
+                  {
+                    type: 'button',
+                    class:
+                      'btn fkp_dashboard-page__outbound-grid__item__copy-button',
+                    title: _('Test latency'),
+                    'aria-label': `${_('Test latency')}: ${outbound.displayName}`,
+                    'aria-disabled': latencyFetching ? 'true' : undefined,
+                    click: (event: MouseEvent) => {
+                      event.stopPropagation();
+                      if (!latencyFetching) onTestLatency([outbound.code]);
+                    },
+                  },
+                  renderRotateCcwIcon24(),
+                ),
+              ]
+            : []),
           ...(outbound.urlTestInfo
             ? [
                 E(
@@ -457,15 +500,7 @@ function renderDefaultState({
             { class: 'fkp_dashboard-page__outbound-grid__item__type' },
             renderFlagEmojis(footerLabel),
           ),
-          E(
-            'div',
-            {
-              class: getDashboardLatencyClass(outbound.latency),
-              'data-latency-section': section.sectionName,
-              'data-latency-outbound': outbound.code,
-            },
-            outbound.latency ? `${outbound.latency}ms` : 'N/A',
-          ),
+          latency,
         ]),
         ...(priorityMembers ? [priorityMembers] : []),
       ],
