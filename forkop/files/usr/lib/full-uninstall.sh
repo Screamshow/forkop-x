@@ -52,6 +52,11 @@ installed() {
     else opkg status "$1" 2>/dev/null | grep -q '^Status: .* installed$'; fi
 }
 
+remove_packages() {
+    if [ "$MANAGER" = apk ]; then apk del "$@"
+    else opkg remove "$@"; fi
+}
+
 state() {
     printf '{"state":"%s","phase":"%s"}\n' "$1" "$PHASE" > "$STATUS.new"
     chmod 644 "$STATUS.new"
@@ -98,10 +103,13 @@ run() {
         "$ROOT/etc/init.d/forkop-support" disable || true
     fi
     if [ -x "$ROOT/etc/init.d/forkop" ]; then
-        "$ROOT/etc/init.d/forkop" stop
-        "$ROOT/etc/init.d/forkop" disable
+        "$ROOT/etc/init.d/forkop" stop || echo "Forkop service did not stop cleanly" >&2
+        "$ROOT/etc/init.d/forkop" disable || echo "Forkop service could not be disabled" >&2
     fi
-    if [ -x "$BIN" ]; then "$BIN" dnsmasq_restore; fi
+    if [ -x "$BIN" ] && ! "$BIN" dnsmasq_restore; then
+        echo "Could not restore dnsmasq; removal stopped before deleting packages" >&2
+        return 1
+    fi
     # Direct proxy is served by the Forkop-managed sing-box runtime, so
     # stopping Forkop above closes its listener. TorrServer Direct owns a
     # separate service and nftables table: stop both explicitly before its
@@ -114,8 +122,8 @@ run() {
         "$UCODE_BIN" -L "$ROOT/usr/lib/forkop" "$TORRSERVER_DIRECT_UC" remove || true
     fi
     if [ -x "$ROOT/etc/init.d/sing-box" ]; then
-        "$ROOT/etc/init.d/sing-box" stop
-        "$ROOT/etc/init.d/sing-box" disable
+        "$ROOT/etc/init.d/sing-box" stop || echo "sing-box service did not stop cleanly" >&2
+        "$ROOT/etc/init.d/sing-box" disable || echo "sing-box service could not be disabled" >&2
     fi
 
     PHASE=repositories
@@ -133,13 +141,20 @@ run() {
     for package in $PACKAGES; do
         if installed "$package"; then set -- "$@" "$package"; fi
     done
-    if [ "$#" -gt 0 ]; then
-        if [ "$MANAGER" = apk ]; then apk del "$@"
-        else opkg remove "$@"; fi
+    if [ "$#" -gt 0 ] && ! remove_packages "$@"; then
+        echo "Batch removal failed; retrying remaining packages individually" >&2
+        for package in "$@"; do
+            if installed "$package"; then remove_packages "$package" || true; fi
+        done
     fi
+    remaining=
     for package in $PACKAGES; do
-        if installed "$package"; then echo "Package was not removed: $package" >&2; return 1; fi
+        if installed "$package"; then remaining="$remaining $package"; fi
     done
+    if [ -n "$remaining" ]; then
+        echo "Packages were not removed:$remaining" >&2
+        return 1
+    fi
 
     PHASE=files
     state running

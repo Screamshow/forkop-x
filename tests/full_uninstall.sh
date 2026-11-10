@@ -29,7 +29,7 @@ fixture() {
     cat > "$ROOT/usr/bin/forkop" <<'SH'
 #!/bin/sh
 printf '%s\n' "$*" >> "$FORKOP_UNINSTALL_ROOT/service-calls"
-exit "${FAIL_STOP:-0}"
+exit "${FAIL_DNS_RESTORE:-0}"
 SH
     cat > "$ROOT/etc/init.d/forkop-torrserver-direct" <<'SH'
 #!/bin/sh
@@ -58,8 +58,9 @@ SH
 case "$1" in
  status) [ -e "$FORKOP_UNINSTALL_ROOT/packages/$2" ] && echo 'Status: install ok installed';;
  remove)
-  [ "${FAIL_PACKAGE:-0}" = 0 ] || exit 1
   shift
+  if [ "${FAIL_BATCH:-0}" = 1 ] && [ "$#" -gt 1 ]; then exit 1; fi
+  for p in "$@"; do [ "$p" != "${FAIL_PACKAGE:-}" ] || exit 1; done
   for p in "$@"; do rm -f "$FORKOP_UNINSTALL_ROOT/packages/$p"; done;;
  *) exit 1;;
 esac
@@ -137,10 +138,24 @@ printf 'firmware repositories\n' > "$ROOT/rom/etc/opkg/distfeeds.conf"
 run_case complete
 grep -Fq 'mirror.51343.ru' "$ROOT/etc/opkg/distfeeds.conf"
 
+fixture failed_stop_and_batch
+cat > "$ROOT/etc/init.d/forkop" <<'SH'
+#!/bin/sh
+exit 1
+SH
+chmod +x "$ROOT/etc/init.d/forkop"
+FAIL_BATCH=1 run_case complete
+[ ! -e "$ROOT/packages/forkop" ] && [ ! -e "$ROOT/usr/lib/forkop/test" ]
+grep -Fq 'Forkop service did not stop cleanly' "$ROOT"/tmp/forkop-uninstall.*/output.log
+
 fixture failed_package
-export FAIL_PACKAGE=1
-run_case failed
-unset FAIL_PACKAGE
+FAIL_PACKAGE=forkop run_case failed
+[ -e "$ROOT/packages/forkop" ] && [ -e "$ROOT/usr/lib/forkop/test" ]
+[ ! -e "$ROOT/packages/rust-x" ]
+grep -Fq 'Packages were not removed: forkop' "$ROOT"/tmp/forkop-uninstall.*/output.log
+
+fixture failed_dns_restore
+FAIL_DNS_RESTORE=1 run_case failed
 [ -e "$ROOT/packages/forkop" ] && [ -e "$ROOT/usr/lib/forkop/test" ]
 
 fixture apk

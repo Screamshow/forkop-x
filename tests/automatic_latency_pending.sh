@@ -78,6 +78,13 @@ case "$*" in
     ;;
   */delay*)
     printf 'latency\n' >>"$TEST_CURL_LOG"
+    case "$*" in
+      *"/proxies/${TEST_HTTP_ERROR_TAG:-never}/delay"*)
+        case " $* " in *" -fs "*) exit 22;; esac
+        printf '%s\n' '{"message":"Service unavailable"}'
+        exit 0
+        ;;
+    esac
     if [ -n "${TEST_CHANGE_PID_FILE:-}" ]; then
       printf '456\n' >"$TEST_CHANGE_PID_FILE"
     fi
@@ -170,6 +177,25 @@ wait "$second_pid"
 ucode -e 'let fs = require("fs"); let paths = fs.glob(getenv("FORKOP_UI_STATE_DIR") + "/latency-actions/*.json"); assert(length(paths) == 1, "automatic progress job missing or duplicated"); let value = json(fs.readfile(paths[0])); assert(value.section == "*" && value.running == false && value.success == true, "automatic job did not finish"); assert(value.progress.completed == 9 && value.progress.total == 9 && value.progress.failed == 0, "automatic progress was not updated");'
 [ "$(grep -Fc 'Automatic latency test progress:' "$TEST_LOG" || true)" -eq 0 ] ||
   fail "latency batching emitted intermediate syslog progress"
+
+# An HTTP error with a JSON body must count as a failed probe in a mixed batch.
+result="$(TEST_HTTP_ERROR_TAG=proxy-a ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" \
+  clash-api get_proxy_latencies '["proxy-a","proxy-b"]')" || fail "partial manual sweep failed"
+ucode -e 'let r = json(ARGV[0]); assert(r.success && r.count == 2 && r.failed);' "$result"
+if result="$(TEST_HTTP_ERROR_TAG=proxy-a ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" \
+  clash-api get_proxy_latency proxy-a)"; then
+  fail "individual latency request accepted an HTTP error"
+fi
+ucode -e 'assert(json(ARGV[0]).error == "Clash API latency probe failed");' "$result"
+if result="$(TEST_HTTP_ERROR_TAG=proxy-a ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" \
+  clash-api get_proxy_latencies '["proxy-a"]')"; then
+  fail "sweep with no successful probes passed"
+fi
+ucode -e 'let r = json(ARGV[0]); assert(!r.success && r.count == 1 && r.failed);' "$result"
+ucode -L "$FORKOP_LIB" "$UPDATES_UC" schedule-automatic-latency-test "$sig_changed"
+TEST_HTTP_ERROR_TAG=proxy-a ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" automatic-latency-test new
+[ ! -e "$FORKOP_AUTOMATIC_LATENCY_PENDING_FILE" ] || fail "partial sweep was scheduled for retry"
+grep -Fq '8 of 9 probes succeeded' "$TEST_LOG" || fail "partial automatic sweep did not record the failure"
 
 # A manual restart invalidates the pending marker before it creates a new
 # runtime. Its old worker must stop at the next batch boundary rather than

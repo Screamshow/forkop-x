@@ -1033,13 +1033,14 @@ function clash_proxy_tags_lines(proxy_tags_json) {
 }
 
 function clash_proxy_latencies_result(count, failed) {
-    let has_failed = as_string(failed) != "0";
+    count = int(as_string(count || "0"), 10) || 0;
+    failed = int(as_string(failed || "0"), 10) || 0;
     write_json({
-        success: !has_failed,
-        count: int(as_string(count || "0"), 10) || 0,
-        failed: has_failed
+        success: count > failed,
+        count,
+        failed: failed > 0
     });
-    if (has_failed)
+    if (count <= failed)
         exit(1);
 }
 
