@@ -1985,8 +1985,8 @@ msgstr "ссылки vless://, vmess://, ss://, trojan://, socks4/5://, hy2/hyst
 msgid "Waiting for TorrServer"
 msgstr "Ожидание TorrServer"
 
-msgid "What Forkop should do when this section matches"
-msgstr "Что Forkop должен делать при совпадении этой секции"
+msgid "Action when this section matches"
+msgstr "Действие при совпадении условий секции"
 
 msgid "WhatsApp DNS settings need attention"
 msgstr "Проверьте настройки DNS для WhatsApp"

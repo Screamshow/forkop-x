@@ -2866,7 +2866,7 @@ msgid "Waiting for TorrServer"
 msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:4809
-msgid "What Forkop should do when this section matches"
+msgid "Action when this section matches"
 msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/whatsapp.js:37

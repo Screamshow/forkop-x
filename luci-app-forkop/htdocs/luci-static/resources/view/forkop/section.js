@@ -4913,7 +4913,7 @@ function createSectionContent(section) {
     form.ListValue,
     "action",
     _("Action"),
-    _("What Forkop should do when this section matches"),
+    _("Action when this section matches"),
   );
   populateActionOptionValues(o);
   o.default = "connection";
