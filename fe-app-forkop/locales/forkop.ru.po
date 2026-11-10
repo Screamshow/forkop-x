@@ -2210,7 +2210,7 @@ msgstr "Отправлять DNS-запросы для доменов этой �
 msgid "DNS for this section"
 msgstr "DNS для этой секции"
 
-msgid "Choose a preset or enter a DNS server address. If you leave this field blank, Forkop X uses its main DNS server and protocol."
+msgid "Choose a preset or enter a DNS server address. Leave this field blank to use the primary DNS server and protocol configured in Forkop X."
 msgstr "Выберите готовый вариант или введите адрес DNS-сервера. Если оставить поле пустым, будут использованы основной DNS-сервер и протокол Forkop X."
 
 msgid "Expected an IPv4 or IPv6 address"

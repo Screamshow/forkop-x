@@ -5061,7 +5061,7 @@ function createSectionContent(section) {
   o.retain = true;
   o = section.taboption(
     "settings", form.Value, "native_tunnel_dns_address", _("DNS for this section"),
-    _("Choose a preset or enter a DNS server address. If you leave this field blank, Forkop X uses its main DNS server and protocol."),
+    _("Choose a preset or enter a DNS server address. Leave this field blank to use the primary DNS server and protocol configured in Forkop X."),
   );
   for (const address of ["1.1.1.1", "8.8.8.8", "9.9.9.9"])
     o.value(address, main.DNS_SERVER_OPTIONS[address]);

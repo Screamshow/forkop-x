@@ -3102,7 +3102,7 @@ msgstr ""
 msgid "DNS for this section"
 msgstr ""
 
-msgid "Choose a preset or enter a DNS server address. If you leave this field blank, Forkop X uses its main DNS server and protocol."
+msgid "Choose a preset or enter a DNS server address. Leave this field blank to use the primary DNS server and protocol configured in Forkop X."
 msgstr ""
 
 msgid "Expected an IPv4 or IPv6 address"
