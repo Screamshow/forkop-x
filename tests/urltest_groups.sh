@@ -911,4 +911,65 @@ if (!urltest || length(urltest.outbounds || []) != 1 || urltest.outbounds[0] != 
     die("cached country.is metadata was not applied to URLTest filtering\n");
 ' "$country_is_config" || fail "URLTest country.is cached filtering"
 
+ucode -e '
+function node(tag, uuid, extra) {
+    return { type: "vless", tag, server: "test.example", server_port: 443, uuid, ...extra };
+}
+let uuid = "00000000-0000-4000-8000-000000000001";
+printf("%J\n", { version: 1, format: "sing-box-json", outbounds: [
+    { type: "urltest", tag: "Automatic", outbounds: ["proxy-14", "proxy-15"], __forkop_allow_group: true },
+    node("proxy-14", uuid, { __forkop_hidden: true }),
+    node("proxy-15", "00000000-0000-4000-8000-000000000002", { __forkop_hidden: true }),
+    node("Helsinki", uuid, {}),
+    node("Uses detour", uuid, { detour: "proxy-14" })
+] });
+' >"$WORK_DIR/duplicate-urltest-feed.json"
+prepare_subscription_cache proxy 1 https://test.example/sub "$WORK_DIR/duplicate-urltest-feed.json"
+
+for scenario in on off legacy both; do
+  ucode -e '
+let url = "https://test.example/sub";
+let fixture = {
+    settings: { ".name": "settings", ".type": "settings" },
+    section: [{ ".name": "proxy", ".type": "section", enabled: "1", action: "connection",
+        subscription_urls: [url], subscription_url_settings: sprintf("%J", {
+            [url]: { include_urltest_groups: ARGV[0] == "on" ? "1" : "0" }
+        })
+    }]
+};
+if (ARGV[0] == "legacy" || ARGV[0] == "both")
+    fixture.urltest = [{ ".name": "local", ".type": "urltest", section: "proxy",
+        name: "Local", filter_mode: "include",
+        include_outbounds: ARGV[0] == "both" ? ["proxy-14", "Helsinki"] : ["proxy-14"]
+    }];
+printf("%J\n", fixture);
+' "$scenario" >"$WORK_DIR/duplicate-urltest-fixture.json"
+  output="$WORK_DIR/duplicate-urltest-$scenario.json"
+  generate_config "$WORK_DIR/duplicate-urltest-fixture.json" "$output"
+  ucode -e '
+let config = json(require("fs").readfile(ARGV[0]));
+let by_tag = {};
+for (let outbound in config.outbounds)
+    by_tag[outbound.tag] = outbound;
+let selector = by_tag["proxy-out"].outbounds;
+let scenario = ARGV[1];
+if (scenario == "on") {
+    if (!("Automatic" in selector) || "proxy-14" in selector ||
+        !("proxy-14" in by_tag.Automatic.outbounds) || by_tag["Uses detour"].detour != "proxy-14")
+        die("enabled provider URLTest changed\n");
+} else {
+    if (by_tag.Automatic || by_tag["proxy-14"] || !("Helsinki" in selector))
+        die("duplicate provider member remained after disabling import\n");
+    if (scenario == "off") {
+        if (!("proxy-15" in selector) || by_tag["Uses detour"].detour != "Helsinki")
+            die("distinct member or detour reference was lost\n");
+    } else {
+        let local = by_tag["proxy-urltest-local-out"]?.outbounds;
+        if (length(local) != 1 || local[0] != "Helsinki")
+            die("saved URLTest selection did not resolve to the standalone node\n");
+    }
+}
+' "$output" "$scenario" || fail "subscription URLTest duplicate handling ($scenario)"
+done
+
 printf 'URLTest group checks passed\n'

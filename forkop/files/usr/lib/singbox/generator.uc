@@ -291,6 +291,19 @@ function subscription_hidden_outbound(outbound, refs, hide_urltest_group_outboun
     return internal_flag(outbound.__forkop_hidden) && !hidden_by_urltest && !hidden_by_detour;
 }
 
+function unique_string_array(values) {
+    let result = [];
+    let seen = {};
+    for (let value in array_or_empty(values)) {
+        value = as_string(value);
+        if (value == "" || seen[value])
+            continue;
+        seen[value] = true;
+        push(result, value);
+    }
+    return result;
+}
+
 function merge_subscription_urltest_members(outbounds, refs, hide_detour_outbounds) {
     let standalone = {};
     let replacements = {};
@@ -1301,19 +1314,6 @@ function array_contains(values, needle) {
             return true;
     }
     return false;
-}
-
-function unique_string_array(values) {
-    let result = [];
-    let seen = {};
-    for (let value in array_or_empty(values)) {
-        value = as_string(value);
-        if (value == "" || seen[value])
-            continue;
-        seen[value] = true;
-        push(result, value);
-    }
-    return result;
 }
 
 function object_keys_set(values) {
