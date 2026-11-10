@@ -6,6 +6,7 @@ let core_ip = require("core.ip");
 let uci_core = require("core.uci");
 let runtime_constants = require("singbox.constants");
 let cache_identity = require("singbox.cache_identity");
+let filter_identity = require("subscription.filter_identity");
 let filter_selection = require("subscription.filter_selection");
 // Keep private connection identities out of outboundMetadata/UI caches.
 let subscription_filter_connections = {};
@@ -32,6 +33,7 @@ let runtime_settings_cache = null;
 let runtime_ruleset_folder = runtime_constants.TMP_RULESET_FOLDER;
 let runtime_supports_xhttp = true;
 let runtime_supports_certificate_pins = false;
+let runtime_supports_native_tunnels = false;
 let runtime_supports_dns_response_matching = false;
 let runtime_supports_legacy_protocols = true;
 let runtime_supports_trojan = true;
@@ -287,6 +289,34 @@ function subscription_hidden_outbound(outbound, refs, hide_urltest_group_outboun
     if (hidden_by_detour && hide_detour_outbounds !== false)
         return true;
     return internal_flag(outbound.__forkop_hidden) && !hidden_by_urltest && !hidden_by_detour;
+}
+
+function merge_subscription_urltest_members(outbounds, refs, hide_detour_outbounds) {
+    let standalone = {};
+    let replacements = {};
+    for (let outbound in outbounds) {
+        if (subscription_outbound_tag(outbound) == "" || subscription_urltest_group_member(outbound, refs) ||
+            subscription_hidden_outbound(outbound, refs, false, hide_detour_outbounds))
+            continue;
+        let key = filter_identity.connection_key(outbound);
+        if (key != "")
+            standalone[key] ||= outbound;
+    }
+    for (let outbound in outbounds) {
+        if (!subscription_urltest_group_member(outbound, refs))
+            continue;
+        let target = standalone[filter_identity.connection_key(outbound)];
+        if (!target)
+            continue;
+
+        // Keep legacy filter names and route references when the member's
+        // standalone copy takes its place.
+        target.__forkop_filter_names = unique_string_array([
+            ...array_or_empty(target.__forkop_filter_names), ...filter_identity.names(outbound)
+        ]);
+        replacements[outbound.tag] = target.tag;
+    }
+    return replacements;
 }
 
 function tag(base, postfix) {
@@ -922,7 +952,7 @@ function string_array_contains(values, needle) {
     return false;
 }
 
-function rewrite_subscription_outbound_references(outbounds, tag_map, source_refs) {
+function rewrite_subscription_outbound_references(outbounds, tag_map, source_refs, merged_members) {
     for (let outbound in outbounds) {
         if (type(outbound) != "object")
             continue;
@@ -940,7 +970,7 @@ function rewrite_subscription_outbound_references(outbounds, tag_map, source_ref
                 if (tag_map[tag_name])
                     push(rewritten, tag_map[tag_name]);
             }
-            outbound.outbounds = rewritten;
+            outbound.outbounds = merged_members ? unique_string_array(rewritten) : rewritten;
 
             if (as_string(outbound.type || "") == "urltest") {
                 delete outbound.default;
@@ -1060,6 +1090,8 @@ function add_subscription_source_with_state(config, section, source_index, sourc
         hide_urltest_group_outbounds = false;
     let exclude_flintnet_urltest_members =
         include_urltest_groups === false && flintnet_subscription_source(source_entry);
+    let replacements = include_urltest_groups === false
+        ? merge_subscription_urltest_members(outbounds, visibility_refs, hide_detour_outbounds) : {};
     node_prefix = trim(as_string(node_prefix));
     let prepared = [];
     let display_names = [];
@@ -1072,6 +1104,8 @@ function add_subscription_source_with_state(config, section, source_index, sourc
     for (let i = 0; i < length(outbounds); i++) {
         let outbound = outbounds[i];
         if (include_urltest_groups === false && subscription_urltest_group_outbound(outbound))
+            continue;
+        if (replacements[outbound.tag])
             continue;
         if (exclude_flintnet_urltest_members && subscription_urltest_group_member(outbound, visibility_refs))
             continue;
@@ -1107,7 +1141,10 @@ function add_subscription_source_with_state(config, section, source_index, sourc
     if (length(keys(skipped)) > 0)
         warn("skipped unsupported subscription outbounds for rule '", section_name, "': ", subscription_skip_summary(skipped), "\n");
 
-    rewrite_subscription_outbound_references(prepared, tag_map, subscription_reference_set(source_outbounds));
+    let replaced_tags = keys(replacements);
+    for (let old_tag in replaced_tags)
+        tag_map[old_tag] = tag_map[replacements[old_tag]];
+    rewrite_subscription_outbound_references(prepared, tag_map, subscription_reference_set(source_outbounds), length(replaced_tags) > 0);
     for (let i = 0; i < length(prepared); i++) {
         let outbound = prepared[i];
         if (group_flags[i] === true && as_string(outbound.type || "") == "urltest")
@@ -1793,6 +1830,24 @@ function mixed_proxy_enabled_action(action) {
     return action == "connection" || action == "proxy" || action == "outbound" || action == "vpn";
 }
 
+function add_native_tunnel_resolve(config, section, route_rule) {
+    if (!connections.native_tunnel_dns_enabled(section) || route_rule.action != "route")
+        return;
+
+    let matchers = {};
+    for (let key, value in route_rule)
+        if (key != "action" && key != "outbound")
+            matchers[key] = value;
+    // Leave literal IPs alone. After a successful resolve the destination is
+    // an IP, so the reject rule can only match if resolution failed.
+    let rules = [ matchers, { ip_cidr: [ "0.0.0.0/0", "::/0" ], invert: true } ];
+    push(config.route.rules, {
+        type: "logical", mode: "and", rules,
+        action: "resolve", server: runtime_dns.tunnel_dns_tag(section[".name"])
+    });
+    push(config.route.rules, { type: "logical", mode: "and", rules, action: "reject" });
+}
+
 function add_mixed_proxy_for_section(config, section, service_address) {
     if (!bool_option(section, "mixed_proxy_enabled", false))
         return;
@@ -1827,11 +1882,13 @@ function add_mixed_proxy_for_section(config, section, service_address) {
         inbound.users = [{ username, password }];
     }
     push(config.inbounds, inbound);
-    push(config.route.rules, {
+    let route_rule = {
         action: "route",
         inbound: inbound.tag,
         outbound: runtime_constants.outbound_tag(section[".name"])
-    });
+    };
+    add_native_tunnel_resolve(config, section, route_rule);
+    push(config.route.rules, route_rule);
 }
 
 function add_service_mixed_proxy_inbound(config, tag_name, listen_port, outbound) {
@@ -2590,6 +2647,41 @@ function add_connections_outbound(config, section, taken) {
     let state = runtime_subscription.new_section_state(section_name);
     let cascade_start = length(array_or_empty(config.outbounds));
 
+    let tunnel = connections.native_tunnel(section);
+    if (tunnel != "") {
+        if (!runtime_supports_native_tunnels)
+            runtime_generate_unsupported("Native WARP and AmneziaWG require Xrust 0.0.36 or newer");
+        let profile = parse_outbound_json(option(section, "native_tunnel_profile", ""));
+        let expected = tunnel == "warp" ? "masque" : tunnel == "amneziawg" ? "wireguard" : "";
+        if (expected == "" || profile == null || profile.type != expected ||
+            (expected == "masque" && (profile.profile != "cloudflare" ||
+                profile.skip_cert_verify || profile.tls?.insecure || profile.tls?.enabled === false)) ||
+            (expected == "wireguard" && (profile.system || length(array_or_empty(profile.peers)) != 1)))
+            runtime_generate_unsupported("Invalid native tunnel profile for section " + section_name);
+
+        let tag = unique_tag(connection_item_tag(section_name, "tunnel", 1), taken);
+        taken[tag] = true;
+        profile.tag = tag;
+        if (tunnel == "warp")
+            push(config.outbounds, profile);
+        else
+            push(config.endpoints, profile);
+        push(selector_tags, tag);
+        push(urltest_candidate_tags, tag);
+        runtime_subscription.remember_outbound_metadata(state, tag, tunnel == "warp" ? "WARP" : "AmneziaWG", profile);
+        if (connections.native_tunnel_dns_enabled(section)) {
+            let address = connections.native_tunnel_dns_address(section);
+            for (let server in config.dns.servers) {
+                if (server.tag == runtime_constants.DNS_SERVER_TAG) {
+                    push(config.dns.servers, runtime_dns.tunnel_dns_server(
+                        server, runtime_dns.tunnel_dns_tag(section_name), tag, address,
+                        connections.native_tunnel_dns_type(section)));
+                    break;
+                }
+            }
+        }
+    }
+
     add_connection_manual_links(config, state, section, taken, selector_tags, urltest_candidate_tags);
     add_connection_subscriptions(config, state, section, taken, selector_tags, urltest_candidate_tags);
     // Apply before interface and JSON items are added: those source kinds are intentionally excluded.
@@ -3038,7 +3130,16 @@ function add_section_dns_matcher_rule(config, section, matchers, rewrite_ttl) {
     matchers.action = "route";
     matchers.server = section_dns_server(section);
     matchers.rewrite_ttl = rewrite_ttl;
+    let tunnel_dns = null;
+    if (connections.native_tunnel_dns_enabled(section)) {
+        tunnel_dns = copy_dns_matchers(matchers);
+        tunnel_dns.server = runtime_dns.tunnel_dns_tag(section[".name"]);
+        if (matchers.type == "logical")
+            matchers.rules = slice(matchers.rules, 0);
+    }
     push_dns_matcher_rule(config, matchers);
+    if (tunnel_dns != null)
+        push_dns_matcher_rule(config, tunnel_dns);
 }
 
 function append_unique(values, additions) {
@@ -3325,11 +3426,14 @@ function add_fully_routed_ips_rules(config, section) {
     let quic_rule = runtime_route.quic_rule(runtime_settings(), section, route_rule);
     if (quic_rule != null)
         push(config.route.rules, exclude_sources_from_route_rule(quic_rule, section));
-    push(config.route.rules, exclude_sources_from_route_rule(route_rule, section));
+    route_rule = exclude_sources_from_route_rule(route_rule, section);
+    add_native_tunnel_resolve(config, section, route_rule);
+    push(config.route.rules, route_rule);
 }
 
 function push_section_route_rule(config, section, route_rule) {
-    let resolve = runtime_route.resolve_rule_for_section(section, route_rule);
+    let resolve = connections.native_tunnel_dns_enabled(section)
+        ? null : runtime_route.resolve_rule_for_section(section, route_rule);
     if (type(resolve) == "object" && resolve.warning)
         warn(resolve.warning, "\n");
     else if (type(resolve) == "object" && resolve.rule)
@@ -3337,7 +3441,9 @@ function push_section_route_rule(config, section, route_rule) {
     let quic_rule = runtime_route.quic_rule(runtime_settings(), section, route_rule);
     if (quic_rule != null)
         push(config.route.rules, exclude_sources_from_route_rule(quic_rule, section));
-    push(config.route.rules, exclude_sources_from_route_rule(route_rule, section));
+    route_rule = exclude_sources_from_route_rule(route_rule, section);
+    add_native_tunnel_resolve(config, section, route_rule);
+    push(config.route.rules, route_rule);
 }
 
 function add_combined_route_for_section(config, section) {
@@ -3570,12 +3676,14 @@ function service_route_check_section(sections) {
 function add_service_route_rules(config, sections) {
     let first = service_route_check_section(sections);
     if (first != null) {
-        push(config.route.rules, {
+        let route_rule = {
             action: "route",
             inbound: tproxy_inbound_matcher(),
             outbound: outbound_tag(first[".name"]),
             domain: runtime_constants.CHECK_PROXY_IP_DOMAIN
-        });
+        };
+        add_native_tunnel_resolve(config, first, route_rule);
+        push(config.route.rules, route_rule);
     }
     push(config.route.rules, {
         // Keep the direct-IP reference outside all user proxy sections.
@@ -3614,6 +3722,9 @@ function generate_config(output_path, service_address, mwan3_active, supports_xh
     // Verified for Xrust; Go X 1.0.4 and Extended 2.7.2 do not support this
     // whole-certificate pin. Never substitute an SPKI pin or remove the pin.
     runtime_supports_certificate_pins = rust_x_core_version(sing_box_version);
+    let xrust_version = match(as_string(sing_box_version), /rust-x[.-]([0-9]+)\.([0-9]+)\.([0-9]+)/);
+    runtime_supports_native_tunnels = xrust_version != null &&
+        (int(xrust_version[1]) > 0 || int(xrust_version[2]) > 0 || int(xrust_version[3]) >= 36);
     // Xrust is built without vmess, shadowsocks and socks outbounds; only
     // builds declaring outbound.trojan include the Trojan client.
     runtime_supports_legacy_protocols = !rust_x_core_version(sing_box_version);

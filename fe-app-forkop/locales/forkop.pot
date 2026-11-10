@@ -3086,3 +3086,33 @@ msgstr ""
 
 msgid "Failed to determine the local IPv4 network"
 msgstr ""
+
+msgid "Tunnel profile"
+msgstr ""
+
+msgid "Paste or import a single-peer AmneziaWG .conf or a WireGuard JSON profile."
+msgstr ""
+
+msgid "DNS through tunnel"
+msgstr ""
+
+msgid "Send DNS queries for this section through the tunnel."
+msgstr ""
+
+msgid "DNS for this section"
+msgstr ""
+
+msgid "Choose a preset or enter a DNS server address. If you leave this field blank, Forkop X uses its main DNS server and protocol."
+msgstr ""
+
+msgid "Expected an IPv4 or IPv6 address"
+msgstr ""
+
+msgid "Invalid tunnel profile"
+msgstr ""
+
+msgid "Import tunnel profile"
+msgstr ""
+
+msgid "Could not read tunnel profile"
+msgstr ""

@@ -3,6 +3,7 @@
 let fs = require("fs");
 let uci_core = require("core.uci");
 let common = require("core.common");
+let connections = require("config.connections");
 let runtime_dns = require("singbox.dns");
 let runtime_constants = require("singbox.constants");
 let subscription_recovery = require("singbox.subscription_recovery");
@@ -947,6 +948,17 @@ function patch_dns_config(state_path, prepare_only) {
     if (main.unsupported || !replace_dns_server(config, main) || !replace_dns_server(config, bootstrap)) {
         log_message("Cannot locate or build canonical DNS servers for failover", "error");
         exit(1);
+    }
+
+    let servers = config.dns.servers;
+    for (let i = 0; i < length(servers); i++) {
+        let server = servers[i];
+        if (index(as_string(server.tag), runtime_dns.TUNNEL_DNS_TAG_PREFIX) != 0)
+            continue;
+        let section_name = substr(server.tag, length(runtime_dns.TUNNEL_DNS_TAG_PREFIX));
+        let section = uci_core.get_all(CONFIG_NAME, section_name);
+        servers[i] = runtime_dns.tunnel_dns_server(main, server.tag, server.detour,
+            connections.native_tunnel_dns_address(section), connections.native_tunnel_dns_type(section));
     }
 
     let backup_path = temp_path();

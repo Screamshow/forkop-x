@@ -414,6 +414,7 @@ function isUrlTestEnabled(section: Forkop.ConfigSection) {
 
 function shouldUseProxyGroup(section: Forkop.ConfigSection) {
   return (
+    hasNativeTunnel(section) ||
     getManualProxyLinks(section).length > 0 ||
     hasSubscriptionSources(section) ||
     getConnectionInterfaces(section).length > 0 ||
@@ -423,7 +424,14 @@ function shouldUseProxyGroup(section: Forkop.ConfigSection) {
   );
 }
 
+function hasNativeTunnel(section: Forkop.ConfigSection) {
+  return section.native_tunnel === 'warp' || section.native_tunnel === 'amneziawg';
+}
+
 function getSectionProxyConfigType(section: Forkop.ConfigSection) {
+  if (hasNativeTunnel(section)) {
+    return 'outbound' as const;
+  }
   if (hasSubscriptionSources(section)) {
     return 'subscription' as const;
   }
@@ -1139,11 +1147,12 @@ function buildProxyGroupOutbounds(
   const proxyByCode = getProxyEntryByCode(proxies);
   const selectorTag = getOutboundTagBySection(sectionName);
   const selector = proxyByCode.get(selectorTag);
-  const urlTestConfigs = getUrlTestConfigs(section);
+  const nativeTunnel = hasNativeTunnel(section);
+  const urlTestConfigs = nativeTunnel ? [] : getUrlTestConfigs(section);
   const urlTestConfigByCode = new Map(
     urlTestConfigs.map((config) => [config.code, config]),
   );
-  const priorityConfigs = getPriorityConfigs(section);
+  const priorityConfigs = nativeTunnel ? [] : getPriorityConfigs(section);
   const priorityConfigByCode = new Map(
     priorityConfigs.map((config) => [config.code, config]),
   );
@@ -1464,7 +1473,9 @@ export async function getDashboardSections(): Promise<IGetDashboardSectionsRespo
         const proxyConfigType = getSectionProxyConfigType(section);
 
         if (isConnectionAction(sectionAction) && shouldUseProxyGroup(section)) {
-          const subscriptionSourceCount = getSubscriptionSourceCount(section);
+          const subscriptionSourceCount = hasNativeTunnel(section)
+            ? 0
+            : getSubscriptionSourceCount(section);
           const subscriptionEnabled = subscriptionSourceCount > 0;
           const dashboardCache = await readDashboardSectionCache(sectionName);
           const outboundMetadata = getOutboundMetadata(dashboardCache);

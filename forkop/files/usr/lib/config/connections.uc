@@ -310,15 +310,34 @@ function action(section) {
     return normalize_action(option(section, "action", ""));
 }
 
+function native_tunnel(section) {
+    return action(section) == "connection" ? option(section, "native_tunnel", "") : "";
+}
+
+function native_tunnel_dns_enabled(section) {
+    return native_tunnel(section) != "" && bool_option(section, "native_tunnel_dns", true);
+}
+
+function native_tunnel_dns_address(section) {
+    return trim(option(section, "native_tunnel_dns_address", ""));
+}
+
+function native_tunnel_dns_type(section) {
+    return option(section, "native_tunnel_dns_type", "udp");
+}
+
 function connection_urls(section) {
+    if (native_tunnel(section) != "") return [];
     return whitespace_list_value(section, "selector_proxy_links");
 }
 
 function subscription_urls(section) {
+    if (native_tunnel(section) != "") return [];
     return child_values(section, "subscription_url", "url", "subscription_urls");
 }
 
 function interfaces(section) {
+    if (native_tunnel(section) != "") return [];
     let items = child_values(section, "section_interface", "name", "");
     if (length(items) > 0)
         return items;
@@ -333,6 +352,7 @@ function interfaces(section) {
 }
 
 function outbound_jsons(section) {
+    if (native_tunnel(section) != "") return [];
     let result = list_value(section, "outbound_jsons");
     if (length(result) == 0) {
         let value = option(section, "outbound_json", "");
@@ -343,6 +363,7 @@ function outbound_jsons(section) {
 }
 
 function urltests(section) {
+    if (native_tunnel(section) != "") return [];
     let result = [];
     for (let child in child_items(section, "urltest")) {
         let id = section_name(child);
@@ -356,6 +377,7 @@ function urltests(section) {
 }
 
 function priority_groups(section) {
+    if (native_tunnel(section) != "") return [];
     let result = [];
     for (let child in child_items(section, "priority_group")) {
         let id = section_name(child);
@@ -471,6 +493,8 @@ function rule_sets_with_subnets_value(section) {
 }
 
 function has_connection_sources(section) {
+    if (native_tunnel(section) != "")
+        return option(section, "native_tunnel_profile", "") != "";
     return length(connection_urls(section)) > 0 ||
         length(subscription_urls(section)) > 0 ||
         length(interfaces(section)) > 0 ||
@@ -1016,6 +1040,10 @@ return {
     subscription_urls,
     interfaces,
     outbound_jsons,
+    native_tunnel,
+    native_tunnel_dns_enabled,
+    native_tunnel_dns_address,
+    native_tunnel_dns_type,
     urltests,
     community_lists,
     rule_sets,

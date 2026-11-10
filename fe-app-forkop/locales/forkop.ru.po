@@ -1893,7 +1893,7 @@ msgid "Update"
 msgstr "Обновить"
 
 msgid "Update all subscriptions"
-msgstr ""
+msgstr "Обновить все подписки"
 
 msgid "Update is available"
 msgstr "Доступно обновление"
@@ -2194,3 +2194,33 @@ msgstr "Не удалось передать ключ"
 
 msgid "Failed to determine the local IPv4 network"
 msgstr "Не удалось определить локальную IPv4-сеть"
+
+msgid "Tunnel profile"
+msgstr "Профиль туннеля"
+
+msgid "Paste or import a single-peer AmneziaWG .conf or a WireGuard JSON profile."
+msgstr "Вставьте или импортируйте профиль AmneziaWG .conf с одним пиром либо профиль WireGuard в формате JSON."
+
+msgid "DNS through tunnel"
+msgstr "DNS через туннель"
+
+msgid "Send DNS queries for this section through the tunnel."
+msgstr "Отправлять DNS-запросы для доменов этой секции через туннель."
+
+msgid "DNS for this section"
+msgstr "DNS для этой секции"
+
+msgid "Choose a preset or enter a DNS server address. If you leave this field blank, Forkop X uses its main DNS server and protocol."
+msgstr "Выберите готовый вариант или введите адрес DNS-сервера. Если оставить поле пустым, будут использованы основной DNS-сервер и протокол Forkop X."
+
+msgid "Expected an IPv4 or IPv6 address"
+msgstr "Введите адрес IPv4 или IPv6."
+
+msgid "Invalid tunnel profile"
+msgstr "Некорректный профиль туннеля"
+
+msgid "Import tunnel profile"
+msgstr "Импортировать профиль туннеля"
+
+msgid "Could not read tunnel profile"
+msgstr "Не удалось прочитать профиль туннеля"

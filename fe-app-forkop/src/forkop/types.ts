@@ -229,6 +229,7 @@ export namespace Forkop {
     label?: string;
     enabled?: string;
     action?: RuleAction;
+    native_tunnel?: string;
     connection_type?: LegacyConnectionType;
     proxy_config_type?: ProxyConfigType;
     node?: string;

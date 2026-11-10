@@ -5,6 +5,7 @@
 "require network";
 "require ui";
 "require uci";
+"require validation";
 "require view.forkop.local_devices as localDevices";
 "require view.forkop.main as main";
 "require view.forkop.whatsapp as whatsapp";
@@ -12,6 +13,7 @@ const _ = main.translateForkop;
 
 const UCI_PACKAGE = main.FORKOP_UCI_PACKAGE;
 const RULE_SET_ITEM_SETTINGS_KEY = "rule_set_settings";
+const NATIVE_TUNNELS = { amneziawg: "AmneziaWG" };
 const ROUTING_ACTIONS = [
   "connection",
   "proxy",
@@ -19,6 +21,7 @@ const ROUTING_ACTIONS = [
   "vpn",
   "bypass",
   "block",
+  ...Object.keys(NATIVE_TUNNELS),
 ];
 const CONNECTION_ACTIONS = ["connection", "proxy", "outbound", "vpn"];
 const CONNECTIONS_BLOCKED_INTERFACES = [
@@ -142,7 +145,7 @@ function dependsOnRoutingAction(option) {
 
 // Actions that produce an outbound and can therefore back a local inbound.
 function dependsOnConnectionAction(option, extraConditions) {
-  CONNECTION_ACTIONS.forEach((action) =>
+  [...CONNECTION_ACTIONS, ...Object.keys(NATIVE_TUNNELS)].forEach((action) =>
     option.depends(
       extraConditions ? { action, ...extraConditions } : { action: action },
     ),
@@ -3298,6 +3301,9 @@ function showRuleSetSettingsModal(section_id, itemValue, option, widget) {
 
 function getRuleConfiguredAction(section_id) {
   const action = uci.get(UCI_PACKAGE, section_id, "action");
+  const tunnel = uci.get(UCI_PACKAGE, section_id, "native_tunnel");
+  if (action === "connection" && Object.hasOwn(NATIVE_TUNNELS, tunnel))
+    return tunnel;
   return action ? `${action}` : null;
 }
 
@@ -3306,6 +3312,7 @@ function getRuleResolvedAction(section_id) {
 }
 
 function getActionOptionLabel(action) {
+  if (Object.hasOwn(NATIVE_TUNNELS, action)) return NATIVE_TUNNELS[action];
   switch (`${action}`) {
     case "block":
       return "Block";
@@ -3341,6 +3348,99 @@ function populateActionOptionValues(option) {
   option.value("bypass", "Bypass");
   option.value("block", "Block");
   option.value("dns", "DNS");
+  option.value("amneziawg", NATIVE_TUNNELS.amneziawg);
+}
+
+function isTunnelDnsAddress(address) {
+  return Boolean(validation.parseIPv4(address) || validation.parseIPv6(address));
+}
+
+function parseAmneziaProfile(text) {
+  const interfaceAliases = {
+    headerprotectionkey: "header_protection_key",
+    contentpaddingaddition: "content_padding_addition",
+    rekeyaftertime: "rekey_after_time",
+    rekeytimeout: "rekey_timeout",
+    rejectaftertime: "reject_after_time",
+    keepalivetimeout: "keepalive_timeout",
+    maxhandshakeattempts: "max_handshake_attempts",
+    randomtrailers: "random_trailers",
+    disablecookies: "disable_cookies",
+  };
+  const iface = Object.create(null);
+  const peer = Object.create(null);
+  let current;
+  for (const line of text.split(/\r?\n/)) {
+    const value = line.replace(/(?:^|\s)[#;].*$/, "").trim();
+    if (!value) continue;
+    if (value.toLowerCase() === "[interface]" && !current) {
+      current = iface;
+      continue;
+    }
+    if (value.toLowerCase() === "[peer]" && current === iface) {
+      current = peer;
+      continue;
+    }
+    const item = /^([a-z][a-z\d_]*)\s*=\s*(.+)$/i.exec(value);
+    if (!current || !item) throw new Error();
+    const name = item[1].toLowerCase();
+    const key = current === iface && Object.hasOwn(interfaceAliases, name)
+      ? interfaceAliases[name] : name;
+    if (Object.hasOwn(current, key)) throw new Error();
+    current[key] = item[2];
+  }
+  const endpoint = /^(?:\[([^\]]+)\]|([^\s:\[\]]+)):(\d+)$/.exec(peer.endpoint || "");
+  if (!endpoint || +endpoint[3] < 1 || +endpoint[3] > 65535 ||
+      !iface.privatekey || !iface.address || !peer.publickey || !peer.allowedips)
+    throw new Error();
+
+  const list = (value) => value.split(",").map((item) => item.trim()).filter(Boolean);
+  const number = (value) => {
+    if (!/^\d+$/.test(value) || !Number.isSafeInteger(+value)) throw new Error();
+    return +value;
+  };
+  const profile = {
+    type: "wireguard",
+    private_key: iface.privatekey,
+    address: list(iface.address).map((address) =>
+      address.includes("/") ? address : `${address}/${address.includes(":") ? 128 : 32}`,
+    ),
+    peers: [{
+      address: endpoint[1] || endpoint[2],
+      port: +endpoint[3],
+      public_key: peer.publickey,
+      allowed_ips: list(peer.allowedips),
+    }],
+  };
+  for (const [key, value] of Object.entries(iface)) {
+    if (["privatekey", "address", "dns"].includes(key)) continue;
+    if (/^(?:mtu|jc|jmin|jmax|s[1-4])$/.test(key)) profile[key] = number(value);
+    else if (/^h[1-4]$/.test(key)) profile[key] = /^\d+$/.test(value) ? number(value) : value;
+    else if (/^i[1-5]$/.test(key) || ["header_protection_key", "content_padding_addition",
+      "rekey_after_time", "rekey_timeout", "reject_after_time", "keepalive_timeout",
+      "max_handshake_attempts"].includes(key)) profile[key] = value;
+    else if (["random_trailers", "disable_cookies"].includes(key) && /^(1|true|on|yes|0|false|off|no)$/i.test(value))
+      profile[key] = /^(1|true|on|yes)$/i.test(value);
+    else throw new Error();
+  }
+  for (const [key, value] of Object.entries(peer)) {
+    if (["endpoint", "publickey", "allowedips"].includes(key)) continue;
+    if (key === "presharedkey") profile.peers[0].pre_shared_key = value;
+    else if (key === "persistentkeepalive")
+      profile.peers[0].persistent_keepalive_interval = /^\d+$/.test(value) ? number(value) : value;
+    else throw new Error();
+  }
+  return { profile, dnsAddress: iface.dns ? list(iface.dns).find(isTunnelDnsAddress) : undefined };
+}
+
+function parseNativeTunnelProfile(text) {
+  text = `${text || ""}`.trim();
+  if (!text.startsWith("{")) return parseAmneziaProfile(text);
+  const profile = JSON.parse(text);
+  if (profile?.type === "wireguard" && !profile.system &&
+      profile.private_key && profile.address?.length && profile.peers?.length === 1)
+    return { profile };
+  throw new Error();
 }
 
 function getConfigListValues(section_id, key) {
@@ -4826,6 +4926,153 @@ function createSectionContent(section) {
     populateActionOptionValues(this);
     return this.cfgvalue(section_id);
   };
+  o.write = function (section_id, value) {
+    const tunnel = Object.hasOwn(NATIVE_TUNNELS, value);
+    uci.set(UCI_PACKAGE, section_id, "action", tunnel ? "connection" : value);
+    if (tunnel) {
+      uci.set(UCI_PACKAGE, section_id, "native_tunnel", value);
+    } else {
+      uci.unset(UCI_PACKAGE, section_id, "native_tunnel");
+      uci.unset(UCI_PACKAGE, section_id, "native_tunnel_profile");
+      uci.unset(UCI_PACKAGE, section_id, "native_tunnel_dns");
+      uci.unset(UCI_PACKAGE, section_id, "native_tunnel_dns_type");
+      uci.unset(UCI_PACKAGE, section_id, "native_tunnel_dns_address");
+    }
+  };
+  function selectedAction(option, section_id) {
+    // LuCI clones options for the modal. Read the action from that modal's map.
+    const action = option.map.lookupOption("action", section_id);
+    return action ? action[0].formvalue(action[1]) : getRuleResolvedAction(section_id);
+  }
+  function dependsOnTunnelDns(option) {
+    for (const mode of Object.keys(NATIVE_TUNNELS))
+      option.depends({ action: mode, native_tunnel_dns: "1" });
+  }
+  function preserveConnectionSources(option) {
+    const remove = option.remove;
+    option.remove = function (section_id) {
+      if (!Object.hasOwn(NATIVE_TUNNELS, selectedAction(this, section_id)))
+        return remove.apply(this, arguments);
+    };
+  }
+  for (const mode of Object.keys(NATIVE_TUNNELS)) {
+    o = section.taboption(
+      "settings", form.TextValue, `_native_tunnel_profile_${mode}`, _("Tunnel profile"),
+      _("Paste or import a single-peer AmneziaWG .conf or a WireGuard JSON profile."),
+    );
+    o.depends("action", mode);
+    o.load = function (section_id) {
+      return uci.get(UCI_PACKAGE, section_id, "native_tunnel") === mode
+        ? uci.get(UCI_PACKAGE, section_id, "native_tunnel_profile")
+        : "";
+    };
+    o.modalonly = true;
+    o.rmempty = false;
+    o.retain = true;
+    o.rows = 6;
+    o.validate = function (section_id, value) {
+      try {
+        parseNativeTunnelProfile(mode, value);
+        return true;
+      } catch (_error) {
+        return _("Invalid tunnel profile");
+      }
+    };
+    o.write = function (section_id, value) {
+      const { profile } = parseNativeTunnelProfile(mode, value);
+      uci.set(UCI_PACKAGE, section_id, "native_tunnel_profile", JSON.stringify(profile));
+    };
+    const renderTunnelText = o.renderWidget;
+    o.renderWidget = function (section_id, option_index, cfgvalue) {
+      const widget = renderTunnelText.call(this, section_id, option_index, cfgvalue);
+      const textarea = widget.matches("textarea") ? widget : widget.querySelector("textarea");
+      textarea.setAttribute("wrap", "soft");
+      textarea.style.overflowWrap = "anywhere";
+      textarea.spellcheck = false;
+      // LuCI's Textarea validates on keyup and blur. Pasting and file imports
+      // can update the value without either event.
+      textarea.addEventListener("input", () => {
+        this.getUIElement(section_id)?.triggerValidation();
+        const [protocol, protocolSection] = this.map.lookupOption("native_tunnel_dns_type", section_id) || [];
+        if ((protocol?.formvalue(protocolSection) || "udp") !== "udp") return;
+        const [dnsOption, dnsSection] = this.map.lookupOption("native_tunnel_dns_address", section_id) || [];
+        const field = dnsOption?.getUIElement(dnsSection);
+        if (!field || String(field.getValue() || "").trim()) return;
+        let dnsAddress;
+        try {
+          ({ dnsAddress } = parseNativeTunnelProfile(mode, textarea.value));
+        } catch (_error) {
+          return;
+        }
+        if (dnsAddress) {
+          field.setValue(dnsAddress);
+          field.triggerValidation();
+        }
+      });
+      const input = E("input", {
+        type: "file",
+        hidden: true,
+        style: "display: none !important",
+        accept: ".conf,.json",
+        "aria-label": _("Import tunnel profile"),
+        change: async (event) => {
+          const picker = event.currentTarget;
+          const file = picker.files[0];
+          picker.value = "";
+          if (!file) return;
+          try {
+            if (file.size > 65536) throw new Error();
+            const content = await file.text();
+            textarea.value = content;
+            textarea.dispatchEvent(new Event("input", { bubbles: true }));
+            textarea.dispatchEvent(new Event("change", { bubbles: true }));
+          } catch (_error) {
+            ui.addNotification(null, E("p", {}, _("Could not read tunnel profile")), "error");
+          }
+        },
+      });
+      const importButton = E("button", {
+        type: "button",
+        class: "btn cbi-button cbi-button-neutral",
+        click: () => input.click(),
+      }, _("Import tunnel profile"));
+      return E("div", {}, [
+        E("div", { style: "margin-bottom: 8px" }, [importButton, input]),
+        widget,
+      ]);
+    };
+  }
+  o = section.taboption(
+    "settings", form.Flag, "native_tunnel_dns", _("DNS through tunnel"),
+    _("Send DNS queries for this section through the tunnel."),
+  );
+  for (const mode of Object.keys(NATIVE_TUNNELS)) o.depends("action", mode);
+  o.default = "1";
+  o.rmempty = false;
+  o.modalonly = true;
+  o = section.taboption(
+    "settings", form.ListValue, "native_tunnel_dns_type", _("DNS protocol"),
+    _("DNS protocol used by the resolver"),
+  );
+  dnsTypeChoices().forEach(({ value, label }) => o.value(value, label));
+  dependsOnTunnelDns(o);
+  o.default = "udp";
+  o.modalonly = true;
+  o.retain = true;
+  o = section.taboption(
+    "settings", form.Value, "native_tunnel_dns_address", _("DNS for this section"),
+    _("Choose a preset or enter a DNS server address. If you leave this field blank, Forkop X uses its main DNS server and protocol."),
+  );
+  for (const address of ["1.1.1.1", "8.8.8.8", "9.9.9.9"])
+    o.value(address, main.DNS_SERVER_OPTIONS[address]);
+  dependsOnTunnelDns(o);
+  o.modalonly = true;
+  o.rmempty = true;
+  o.retain = true;
+  o.validate = function (_section_id, value) {
+    const address = String(value || "").trim();
+    return !address || main.validateDNS(address).valid || _("Enter a valid DNS server address");
+  };
   o = section.taboption(
     "settings",
     form.ListValue,
@@ -4897,6 +5144,7 @@ function createSectionContent(section) {
     ),
   );
   o.depends("action", "connection");
+  preserveConnectionSources(o);
   o.rmempty = true;
   o.modalonly = true;
   o.validate = function (_section_id, value) {
@@ -4920,6 +5168,7 @@ function createSectionContent(section) {
     _("Enter the subscription URL"),
   );
   o.depends("action", "connection");
+  preserveConnectionSources(o);
   o.rmempty = true;
   o.modalonly = true;
   o.childType = "subscription_url";
@@ -4968,6 +5217,7 @@ function createSectionContent(section) {
     _("Select network interface for VPN connection"),
   );
   o.depends("action", "connection");
+  preserveConnectionSources(o);
   o.rmempty = true;
   o.modalonly = true;
   o.placeholder = _("Select a network interface");
@@ -5009,6 +5259,7 @@ function createSectionContent(section) {
     _("Custom outbound configurations in JSON format"),
   );
   o.depends("action", "connection");
+  preserveConnectionSources(o);
   o.rmempty = true;
   o.modalonly = true;
   o.addButtonLabel = _("+ Add JSON outbound");
@@ -5036,6 +5287,7 @@ function createSectionContent(section) {
     _("Server group for automatic lowest-latency selection"),
   );
   o.depends("action", "connection");
+  preserveConnectionSources(o);
   o.rmempty = true;
   o.modalonly = true;
   o.addButtonLabel = _("+ Add URLTest");
@@ -5095,6 +5347,7 @@ function createSectionContent(section) {
     _("Server group for priority failover"),
   );
   o.depends("action", "connection");
+  preserveConnectionSources(o);
   o.rmempty = true;
   o.modalonly = true;
   o.addButtonLabel = _("+ Add priority");

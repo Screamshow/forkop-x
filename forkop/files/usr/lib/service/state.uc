@@ -1582,6 +1582,18 @@ function append_sing_box_rule_signature_body(body, section, sections) {
     body = signature_add_value(body, prefix + ".action", action);
 
     if (connections.is_connections_action(action)) {
+        let tunnel = connections.native_tunnel(section);
+        if (tunnel != "") {
+            body = signature_add_value(body, prefix + ".native_tunnel", tunnel);
+            body = signature_add_value(body, prefix + ".native_tunnel_profile", option(section, "native_tunnel_profile", ""));
+            body = signature_add_value(body, prefix + ".native_tunnel_dns", connections.native_tunnel_dns_enabled(section));
+            if (connections.native_tunnel_dns_enabled(section)) {
+                let address = connections.native_tunnel_dns_address(section);
+                body = signature_add_value(body, prefix + ".native_tunnel_dns_address", address);
+                if (address != "")
+                    body = signature_add_value(body, prefix + ".native_tunnel_dns_type", connections.native_tunnel_dns_type(section));
+            }
+        }
         body = signature_add_value(body, prefix + ".connection_urls", connection_urls_signature(section));
         body = signature_add_value(body, prefix + ".subscription_urls", subscription_urls_signature(section));
         body = signature_add_value(body, prefix + ".interfaces", interfaces_signature(section));

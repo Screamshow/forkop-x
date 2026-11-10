@@ -281,6 +281,7 @@ function forkop_config_masked_line(line) {
     line = mask_after_token(line, "list urltest_proxy_links");
     line = mask_after_token(line, "list selector_proxy_links");
     line = mask_after_token_space(line, "option outbound_json");
+    line = mask_after_token_space(line, "option native_tunnel_profile");
     line = mask_after_token_space(line, "list domain");
     line = mask_after_token_space(line, "list domain_suffix");
     line = mask_after_token_space(line, "list domain_keyword");
@@ -874,6 +875,8 @@ let masked_sing_box_keys = {
     secret: true,
     password: true,
     private_key: true,
+    pre_shared_key: true,
+    header_protection_key: true,
     public_key: true,
     short_id: true,
     fingerprint: true,

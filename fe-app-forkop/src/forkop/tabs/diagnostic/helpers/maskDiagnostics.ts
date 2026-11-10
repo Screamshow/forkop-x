@@ -14,6 +14,8 @@ const SING_BOX_MASKED_KEYS = new Set([
   'secret',
   'password',
   'private_key',
+  'pre_shared_key',
+  'header_protection_key',
   'public_key',
   'short_id',
   'fingerprint',
@@ -51,6 +53,7 @@ const FORKOP_MASK_AFTER_TOKEN = [
 
 const FORKOP_MASK_AFTER_TOKEN_SPACE = [
   'option outbound_json',
+  'option native_tunnel_profile',
   'list domain',
   'list domain_suffix',
   'list domain_keyword',

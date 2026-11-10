@@ -1198,6 +1198,18 @@ function validate_rule(section, sections, context) {
         validate_dns_action(section, sections, context);
 
     if (connections.is_connections_action(action)) {
+        let tunnel = connections.native_tunnel(section);
+        if (tunnel != "" && (!contains([ "warp", "amneziawg" ], tunnel) ||
+            option(section, "native_tunnel_profile", "") == ""))
+            fail_validation("Connection rule '" + name + "' requires a valid native tunnel profile. Aborted.");
+
+        if (connections.native_tunnel_dns_enabled(section)) {
+            let dns_type = connections.native_tunnel_dns_type(section);
+            let dns_address = connections.native_tunnel_dns_address(section);
+            if (!contains([ "udp", "doh", "dot" ], dns_type) ||
+                (dns_address != "" && !dns_server_value_valid(dns_address)))
+                fail_validation("Connection rule '" + name + "' has invalid tunnel DNS settings. Aborted.");
+        }
 
         for (let urltest_id in connections.urltests(section)) {
             validate_urltest_identifier_value(urltest_id, name);
@@ -1552,10 +1564,7 @@ function has_outbound_section(ctx) {
         if (!section_enabled(section))
             continue;
 
-        if (length(connections.connection_urls(section)) > 0 ||
-            length(connections.subscription_urls(section)) > 0 ||
-            length(connections.outbound_jsons(section)) > 0 ||
-            length(connections.interfaces(section)) > 0)
+        if (connections.has_connection_sources(section))
             return true;
     }
 

@@ -301,6 +301,31 @@ function default_domain_resolver(settings) {
         : runtime_constants.DNS_SERVER_TAG;
 }
 
+const TUNNEL_DNS_TAG_PREFIX = "native-tunnel-dns:";
+
+function tunnel_dns_tag(section_name) {
+    return TUNNEL_DNS_TAG_PREFIX + section_name;
+}
+
+function tunnel_dns_server(main, tag, detour, address, protocol) {
+    if (address == "")
+        return { ...main, tag, detour };
+
+    let server = server_from_options(tag, protocol, address, detour);
+    if (server.unsupported)
+        die(server.unsupported);
+    // Keep the preset's IP as the dial address and verify the provider's
+    // certificate by name without making a bootstrap lookup for the preset.
+    let preset_names = {
+        "1.1.1.1": "one.one.one.one",
+        "8.8.8.8": "dns.google",
+        "9.9.9.9": "dns.quad9.net"
+    };
+    if (protocol != "udp" && preset_names[address])
+        server.tls = { enabled: true, server_name: preset_names[address] };
+    return server;
+}
+
 return {
     DNS_FAILOVER_STATE_FILE,
     DNS_HEALTH_ADDRESS,
@@ -318,5 +343,8 @@ return {
     server_from_options,
     server_list,
     state_matches,
-    state_template
+    state_template,
+    TUNNEL_DNS_TAG_PREFIX,
+    tunnel_dns_tag,
+    tunnel_dns_server
 };
