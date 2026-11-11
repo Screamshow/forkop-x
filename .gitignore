@@ -24,6 +24,7 @@ ops/deployed-nginx/
 !/tests/subscription_recovery.uc
 !/tests/subscription_recovery.sh
 !/tests/luci_save_apply.cjs
+!/tests/native_tunnel_profile.cjs
 !/tests/list_change_cache.sh
 !/tests/ruleset_rollback_references.sh
 !/tests/latency_reload_serialization.sh

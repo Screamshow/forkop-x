@@ -4972,14 +4972,14 @@ function createSectionContent(section) {
     o.rows = 6;
     o.validate = function (section_id, value) {
       try {
-        parseNativeTunnelProfile(mode, value);
+        parseNativeTunnelProfile(value);
         return true;
       } catch (_error) {
         return _("Invalid tunnel profile");
       }
     };
     o.write = function (section_id, value) {
-      const { profile } = parseNativeTunnelProfile(mode, value);
+      const { profile } = parseNativeTunnelProfile(value);
       uci.set(UCI_PACKAGE, section_id, "native_tunnel_profile", JSON.stringify(profile));
     };
     const renderTunnelText = o.renderWidget;
@@ -5000,7 +5000,7 @@ function createSectionContent(section) {
         if (!field || String(field.getValue() || "").trim()) return;
         let dnsAddress;
         try {
-          ({ dnsAddress } = parseNativeTunnelProfile(mode, textarea.value));
+          ({ dnsAddress } = parseNativeTunnelProfile(textarea.value));
         } catch (_error) {
           return;
         }
