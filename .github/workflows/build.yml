@@ -78,6 +78,16 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          # Hosted runners usually already contain the actual tools. Do not
+          # require an APT round trip merely to install a compiler metapackage.
+          missing=0
+          for tool in cc c++ make curl fakeroot file gawk git patch perl tar unzip flock xz zstd; do
+            command -v "$tool" >/dev/null 2>&1 || missing=1
+          done
+          if [ "$missing" = 0 ]; then
+            echo "All required build tools are already installed"
+            exit 0
+          fi
           # Chrome is preinstalled on GitHub runners but is not a Forkop build
           # dependency. Exclude only its third-party apt source so a transient
           # Chrome index mismatch cannot block the release build.
