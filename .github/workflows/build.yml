@@ -78,13 +78,32 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          # Hosted runners usually already contain the actual tools. Do not
+          # require an APT round trip merely to install a compiler metapackage.
+          missing=0
+          for tool in cc c++ make curl fakeroot file gawk git patch perl tar unzip flock xz zstd; do
+            command -v "$tool" >/dev/null 2>&1 || missing=1
+          done
+          if [ "$missing" = 0 ]; then
+            echo "All required build tools are already installed"
+            exit 0
+          fi
           # Chrome is preinstalled on GitHub runners but is not a Forkop build
           # dependency. Exclude only its third-party apt source so a transient
           # Chrome index mismatch cannot block the release build.
           for source in /etc/apt/sources.list.d/*; do
             [ -f "$source" ] && grep -q 'dl.google.com/linux/chrome' "$source" && sudo rm -f "$source"
           done
-          sudo apt-get update
+          # Avoid the runner's mirror selector retaining an unavailable Azure
+          # mirror across retries. Keep Ubuntu's suites and signing settings.
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
+            [ -f "$source" ] || continue
+            sudo sed -i \
+              -e 's|mirror+file:/etc/apt/apt-mirrors.txt|https://archive.ubuntu.com/ubuntu|g' \
+              -e 's|mirror+file:/etc/apt/apt-mirrors-security.txt|https://security.ubuntu.com/ubuntu|g' \
+              -e 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$source"
+          done
+          sudo apt-get -o Acquire::Retries=2 update
           sudo apt-get install -y build-essential curl fakeroot file gawk git patch perl tar unzip util-linux xz-utils zstd
 
       - name: Build release artifacts
