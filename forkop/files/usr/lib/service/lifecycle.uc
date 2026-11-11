@@ -1916,10 +1916,10 @@ function reload(reason, cold_restart) {
             nft_candidate_finish(false);
             return abort_reload(status, runtime_changed);
         }
-        // A local policy change must reconstruct downloaded subnet data from
-        // the already active generation.  It is deliberately synchronous and
-        // offline: list_update is reserved for a changed source signature.
-        if ((plan.needs_list_update == 1 && plan.changed_list == 0) || reason == "list-content") {
+        // Every rebuilt table must replay the active downloaded subnet generation.
+        // Cold restart forces rebuilding after the planner compared signatures.
+        // Replay stays synchronous and offline; failure preserves the live table.
+        if (nft_list_update_sources == 1 || reason == "list-content") {
             status = module_status(UPDATES_UC, [ "apply-list-cache" ]);
             if (status != 0) {
                 nft_candidate_finish(false);

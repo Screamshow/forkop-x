@@ -201,3 +201,4 @@ ops/deployed-nginx/
 !/tests/restart_transition_recovery.sh
 
 !/tests/native_tailscale_marks.uc
+!/tests/restart_cache_candidate.sh
