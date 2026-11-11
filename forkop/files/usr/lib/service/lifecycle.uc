@@ -626,6 +626,10 @@ function dnsmasq_has_forkop_managed_state() {
 }
 
 function validate_start_config() {
+    if (module_status(LIB_DIR + "/service/proxy_transport.uc", [ "prepare" ]) != 0) {
+        log_message("Cannot protect Connection transport from zapret; runtime apply refused", "fatal");
+        return 1;
+    }
     let status = module_status(VALIDATOR_UC, [ "check-requirements" ]);
     if (status != 0)
         return status;

@@ -1103,7 +1103,8 @@ function nft_table_has_other_mark_rules(family, table_name) {
     let output = command_output_from_args([ "nft", "list", "table", family, table_name ]);
     for (let line in split(output, "\n")) {
         if (index(line, "meta mark set") >= 0 &&
-            !mark_rules.is_native_tailscale_mark(family, table_name, line))
+            !mark_rules.is_native_tailscale_mark(family, table_name, line) &&
+            !mark_rules.is_proxy_transport_mark(family, table_name, line))
             return true;
     }
     return false;

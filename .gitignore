@@ -201,3 +201,5 @@ ops/deployed-nginx/
 !/tests/restart_transition_recovery.sh
 
 !/tests/native_tailscale_marks.uc
+!/tests/proxy_transport.uc
+!/tests/proxy_transport_ownership_vm.sh

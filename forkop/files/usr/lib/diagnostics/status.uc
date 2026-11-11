@@ -741,7 +741,8 @@ function nft_ruleset_other_mark_lines(table_name) {
             in_forkop_table = family == "inet" && current_table == table_name;
             continue;
         }
-        if (mark_rules.is_native_tailscale_mark(family, current_table, line))
+        if (mark_rules.is_native_tailscale_mark(family, current_table, line) ||
+            mark_rules.is_proxy_transport_mark(family, current_table, line))
             continue;
 
         if (!in_forkop_table && (index(line, "mark set") >= 0 || index(line, "meta mark") >= 0))

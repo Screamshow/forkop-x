@@ -18,6 +18,7 @@ let runtime_subscription = require("singbox.subscription");
 let runtime_url = require("core.url");
 let runtime_urltest = require("singbox.urltest");
 let outbound_reachability = require("singbox.outbound_reachability");
+let proxy_transport = require("singbox.proxy_transport");
 let source_rulesets = require("routing.rulesets");
 let rule_config = require("config.rule");
 let connections = require("config.connections");
@@ -2646,6 +2647,7 @@ function add_connections_outbound(config, section, taken) {
     let urltest_candidate_tags = [];
     let state = runtime_subscription.new_section_state(section_name);
     let cascade_start = length(array_or_empty(config.outbounds));
+    let endpoint_start = length(array_or_empty(config.endpoints));
 
     let tunnel = connections.native_tunnel(section);
     if (tunnel != "") {
@@ -2692,6 +2694,9 @@ function add_connections_outbound(config, section, taken) {
     );
     add_connection_interfaces(config, state, section, taken, selector_tags, urltest_candidate_tags);
     add_connection_json_outbounds(config, state, section, taken, selector_tags, urltest_candidate_tags);
+    // Only Connection-owned dialers. The shared Direct fallback, DNS and other
+    // sections retain the ordinary bypass mark and remain eligible for zapret.
+    proxy_transport.protect_range(config, cascade_start, endpoint_start);
 
     if (length(selector_tags) == 0) {
         let skipped_protocols = skipped_protocol_summary(section_name);
