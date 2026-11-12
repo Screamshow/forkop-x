@@ -1275,7 +1275,9 @@ function tproxy_route_present(table) {
 }
 
 function source_check_rule4_present(mark) {
-    return has_source_check_rule_text(command_output_from_args([ "ip", "-4", "rule", "list", "priority", SOURCE_CHECK_PRIORITY ]), mark);
+    // Some OpenWrt ip implementations silently return no rows for the
+    // priority filter. Match the priority in the complete listing instead.
+    return has_source_check_rule_text(command_output_from_args([ "ip", "-4", "rule", "list" ]), mark);
 }
 
 function tproxy_marking_rule4_present(table, mark) {
