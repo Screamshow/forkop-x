@@ -33,6 +33,7 @@ cat >"$WORK_DIR/bin/ip" <<'EOF_IP'
 #!/bin/sh
 printf '%s\n' "$*" >>"$IP_LOG"
 case "$*" in
+  '-4 rule list priority '*) exit 0 ;; # OpenWrt variants silently hide matching rows.
   *'route list'*) [ "${IP_PRESENT:-0}" = 1 ] && echo 'local default dev lo scope host'; exit 0 ;;
   *'rule list'*) [ "${IP_PRESENT:-0}" = 1 ] && cat "$IP_RULES"; exit 0 ;;
 esac
@@ -76,6 +77,7 @@ IP_PRESENT=1 IP_RULES="$WORK_DIR/rules" ucode -L "$FORKOP_LIB" "$NFT_UC" \
   ensure-tproxy-route-rule forkop "$FAKEIP_MARK" "$WORK_DIR/rt_tables"
 grep -q 'rule add' "$IP_LOG" && fail 'an existing rule set was added to again'
 grep -q 'route add' "$IP_LOG" && fail 'an existing route was added again'
+grep -q 'rule list priority' "$IP_LOG" && fail 'source-check detection uses an unsupported priority filter'
 
 # A rule that only answers the source check is not the marking rule of its mark.
 : >"$IP_LOG"
