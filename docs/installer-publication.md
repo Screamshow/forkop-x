@@ -5,6 +5,14 @@ uses `--channel canary`. `canary-install.sh` downloads that same installer,
 selects canary and forwards the remaining arguments. Do not maintain a
 second copy of the installation implementation.
 
+An already installed `rust-x` package is updated through the newly installed
+Forkop backend after the Forkop packages and configuration checks succeed,
+before the installer restores the previous service state. This separate component
+transaction validates the mirror package, checks space and stages exact rollback
+packages and dependencies. A core-update failure returns a nonzero installer
+status and leaves the successful Forkop update in place; the backend reports
+whether core recovery succeeded. Other installed core variants are preserved.
+
 The installer is unattended, including legacy migration and conflicting DNS
 proxy handling. Legacy configuration is backed up before migration. A fresh
 Forkop 2.0+ installation selects Sing-box X from the mirror; updates preserve

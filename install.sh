@@ -26,6 +26,7 @@ LEGACY_CLEANUP_DONE=0
 LEGACY_CLEANUP_STARTED=0
 INSTALLER_LANG="en"
 SING_BOX_INSTALL_VARIANT=""
+UPDATE_EXISTING_XRUST=0
 CORE_PACKAGE_SPACE_KB=0
 
 FORKOP_RELEASE_JSON=""
@@ -86,7 +87,8 @@ Installs or updates Forkop packages:
   - luci-i18n-forkop-ru (available when Russian is selected in LuCI)
 
 Proxy core policy:
-  - preserve the currently installed core (Xrust or a sing-box variant)
+  - update an installed Xrust from the Forkop mirror after updating Forkop
+  - preserve other installed sing-box variants
   - install Xrust from the Forkop mirror when no core is installed
   - run without interactive questions; stop if storage is insufficient
 
@@ -2571,6 +2573,10 @@ sing_box_is_present() {
 }
 
 select_sing_box_installation() {
+    UPDATE_EXISTING_XRUST=0
+    if pkg_is_installed "rust-x"; then
+        UPDATE_EXISTING_XRUST=1
+    fi
     # Any installed core is kept. This includes a sing-box-extended binary
     # without a package (manual or from a legacy installation): Forkop no
     # longer installs those builds, and its backend adopts that binary.
@@ -2581,6 +2587,21 @@ select_sing_box_installation() {
 
     SING_BOX_INSTALL_VARIANT="rust-x"
     msg "No proxy core is installed; Xrust will be installed from the Forkop mirror"
+}
+
+update_existing_xrust() {
+    [ "$UPDATE_EXISTING_XRUST" -eq 1 ] || return 0
+    # This is a separate component transaction after the Forkop update commits.
+    # The backend validates the mirror package and stages exact core rollback.
+    # Do not roll back Forkop after a successful core change or core recovery.
+    msg "Updating installed Xrust through the Forkop backend"
+    if ! /usr/bin/forkop component_action sing_box install_rust_x >"$TMP_DIR/xrust-update.json" 2>&1; then
+        cat "$TMP_DIR/xrust-update.json" >&2 2>/dev/null || true
+        warn "Forkop was installed, but Xrust update failed; review the component recovery result above"
+        post_install
+        exit 1
+    fi
+    cat "$TMP_DIR/xrust-update.json"
 }
 
 # Check the mirror catalog of the core package the backend will install and
@@ -2960,6 +2981,13 @@ main() {
     validate_installed_configuration
     if [ "$INSTALL_MODE" = "update" ] && [ "$FORKOP_CONFIG_READY" -eq 0 ]; then
         fail "Updated Forkop configuration failed validation: $FORKOP_CONFIG_VALIDATION_ERROR"
+    fi
+    if [ "$UPDATE_EXISTING_XRUST" -eq 1 ]; then
+        # The component owns exact core rollback. Commit Forkop before entering
+        # it, and keep the service stopped until both packages are installed.
+        remove_legacy_backup
+        UPDATE_TRANSACTION_ACTIVE=0
+        update_existing_xrust
     fi
     post_install
     remove_legacy_backup
