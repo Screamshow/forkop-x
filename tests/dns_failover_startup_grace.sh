@@ -31,6 +31,7 @@ function apply_selections(state,selections){
  return true;
 }
 function log_message(m,l){}
+function update_dns_outage(){}
 UC
 sed -n '/^function failover_confirmed(/,/^}/p' "$FORKOP_LIB/singbox/dns_failover.uc"
 sed -n '/^function worker(/,/^}/p' "$FORKOP_LIB/singbox/dns_failover.uc"

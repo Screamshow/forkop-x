@@ -1591,23 +1591,23 @@ function dns_failover_hot_apply(candidate_state_path) {
             else {
                 published = true;
                 status = module_success(HOT_RELOAD_UC, [ "apply", stage + ".hot-plan" ]) ? 0 : 1;
-                if (status != 0) log_message("DNS failover hot reload was not acknowledged", "error");
+                if (status != 0) log_message("DNS failover hot reload was not acknowledged", "warn");
             }
         }
     }
     if (status == 0) {
         status = wait_dns_failover_state(candidate_state_path, 8, changed ? 2 : 1);
-        if (status != 0) log_message("DNS failover runtime DNS verification failed", "error");
+        if (status != 0) log_message("DNS failover runtime DNS verification failed", "warn");
     }
     if (status == 0 && !module_success(DNS_FAILOVER_UC, [ "commit-state", candidate_state_path ])) {
-        log_message("DNS failover state publication failed", "error");
+        log_message("DNS failover state publication failed", "warn");
         status = 1;
     }
     if (status != 0 && published) {
-        log_message("DNS hot failover failed; restoring the acknowledged previous configuration", "error");
+        log_message("DNS hot failover failed; restoring the acknowledged previous configuration", "warn");
         keep_backup = !module_success(HOT_RELOAD_UC, [ "restore", stage + ".hot-plan", backup ]);
         if (keep_backup)
-            log_message("DNS hot failover rollback failed; recovery configuration retained at " + backup, "fatal");
+            log_message("DNS hot failover rollback failed; recovery configuration retained at " + backup, "warn");
     }
     remove_file(stage + ".hot-plan");
     remove_file(stage);
@@ -1664,7 +1664,7 @@ function dns_failover_apply(candidate_state_path) {
         status = 1;
 
     if (status != 0 && backup_path != "") {
-        log_message("DNS failover apply failed; restoring the previous sing-box configuration", "error");
+        log_message("DNS failover apply failed; restoring the previous sing-box configuration", "warn");
         if (module_success(STATE_UC, [ "stop-managed-sing-box-runtime", transition_timeout ]) &&
             module_success(SINGBOX_UC, [ "restore-dns-config", backup_path ]))
             module_success(STATE_UC, [ "start-managed-sing-box-runtime", transition_timeout ]);

@@ -266,6 +266,23 @@ function failover_confirmed(failures, kind, current_index, selected, threshold) 
     return failures[kind] >= threshold;
 }
 
+// Only confirmed loss of every main resolver warrants a user-facing error.
+// Bootstrap failure alone does not imply loss of working DNS transports.
+function update_dns_outage(outage, available, threshold) {
+    if (available) {
+        if (outage.reported)
+            log_message("DNS availability restored", "info");
+        outage.failures = 0;
+        outage.reported = false;
+        return;
+    }
+    outage.failures++;
+    if (outage.failures >= threshold && !outage.reported) {
+        log_message("all configured main DNS servers are unavailable", "error");
+        outage.reported = true;
+    }
+}
+
 function worker() {
     let cfg = settings();
     let state = runtime_dns.normalize_state(cfg, common.read_json_file(STATE_FILE));
@@ -281,6 +298,7 @@ function worker() {
     let next_active = now_seconds();
     let next_recovery = now_seconds() + recovery_interval;
     let all_down = { main: false, bootstrap: false };
+    let outage = { failures: 0, reported: false };
     let active_failures = { main: 0, bootstrap: 0 };
     let observed_runtime = null;
 
@@ -325,6 +343,7 @@ function worker() {
             if (!observed.ready) {
                 active_failures = { main: 0, bootstrap: 0 };
                 all_down = { main: false, bootstrap: false };
+                outage.failures = 0;
                 next_active = now + active_interval;
                 next_recovery = now + recovery_interval;
                 command_success_from_args([ "sleep", "1" ]);
@@ -338,8 +357,7 @@ function worker() {
                 log_message("all configured bootstrap DNS servers are unavailable", "warn");
             all_down.bootstrap = !bootstrap.alive;
             let main = choose_index("main", state, int(state.main_index), timeout_seconds, false);
-            if (!main.alive && !all_down.main)
-                log_message("all configured main DNS servers are unavailable", "warn");
+            update_dns_outage(outage, main.alive, threshold);
             all_down.main = !main.alive;
 
             let selections = {};
