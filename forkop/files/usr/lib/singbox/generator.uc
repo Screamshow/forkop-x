@@ -2405,18 +2405,23 @@ function manual_trojan_outbound(link, tag_name) {
 function manual_hysteria2_outbound(link, tag_name) {
     let query = url_query_params(link);
     let host = url_host(link);
-    let port = parse_port(as_string(query.mport || "") != "" ? query.mport : url_port(link));
+    let port_value = as_string(query.mport || "") != "" ? query.mport : url_port(link);
+    let ports = subscription_parser.parse_hysteria2_server_ports(port_value);
+    let port = parse_port(port_value);
     let password = url_userinfo(link);
-    if (host == "" || port == null || password == "")
+    if (host == "" || (ports == null && port == null) || password == "")
         runtime_generate_unsupported("manual Hysteria2 proxy link is invalid");
 
     let outbound = {
         type: "hysteria2",
         tag: tag_name,
         server: host,
-        server_port: port,
         password
     };
+    if (ports != null)
+        outbound.server_ports = ports;
+    else
+        outbound.server_port = port;
     if (as_string(query.obfs || "") != "")
         outbound.obfs = { type: as_string(query.obfs), password: as_string(query["obfs-password"] || "") };
     if (as_string(query.upmbps || "") != "")
