@@ -333,7 +333,76 @@ function readOutboundMetadataFromSectionCache(section_id) {
     .catch(() => ({ names: {}, countries: {} }));
 }
 
+const editorPreviewStates = new Map();
+function renderEditorPreviewStatus(section_id, state, element) {
+  const status = element || document.getElementById(`forkop-editor-status-${section_id}`);
+  if (status) status.textContent = state ? state.message || "" : "";
+}
+function draftSubscriptionSources(section_id) {
+  const option = outboundNameSourceOptions.get("subscription_url");
+  return currentSourceOptionValues(section_id, "subscription_url").map(value => {
+    const url = childItemInputValue(section_id, value, "subscription_url", "url");
+    const existing = uci.get(UCI_PACKAGE, value);
+    const pending = option && option.stagedChildSettings(section_id, value);
+    return Object.assign({}, existing || {}, pending || {}, { url });
+  });
+}
+
+async function loadDraftSubscriptionChoices(section_id, sources) {
+  const signature = JSON.stringify(sources);
+  let state = editorPreviewStates.get(section_id);
+  if (state && state.signature === signature) {
+    renderEditorPreviewStatus(section_id, state);
+    return state.task;
+  }
+  state = { signature, message: "Загружаем серверы подписки…" };
+  editorPreviewStates.set(section_id, state);
+  outboundNameChoicesCache.set(section_id, []);
+  renderEditorPreviewStatus(section_id, state);
+  state.task = (async () => {
+    const id = `editor-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    const path = `/var/run/forkop/ui-state/${id}.json`;
+    try {
+      await fs.write(path, JSON.stringify({ sources }), 0o600);
+      const response = await fs.exec("/usr/bin/forkop", ["editor_preview", id]);
+      const metadata = JSON.parse(response.stdout || "{}");
+      if (response.code || metadata.error) {
+        const error = new Error(metadata.error || "Preview failed");
+        error.previewStatus = metadata.status;
+        throw error;
+      }
+      const choices = [...new Set(Object.values(plainObject(metadata.names)))].sort();
+      if (editorPreviewStates.get(section_id) !== state || JSON.stringify(draftSubscriptionSources(section_id)) !== signature) return [];
+      outboundNameChoicesCache.set(section_id, choices);
+      state.message = `Серверы подписки: ${choices.length}`;
+      renderEditorPreviewStatus(section_id, state);
+      refreshDashboardFilterChoiceWidgets(section_id);
+      return choices;
+    } catch (error) {
+      if (editorPreviewStates.get(section_id) === state) {
+        editorPreviewStates.delete(section_id);
+        outboundNameChoicesCache.set(section_id, []);
+        state.message = error.previewStatus === 35
+          ? "Не удалось установить защищённое соединение с подпиской. Проверьте DNS и доступность провайдера."
+          : "Не удалось загрузить серверы. Повторите ввод ссылки.";
+        renderEditorPreviewStatus(section_id, state);
+      }
+      throw error;
+    } finally {
+      await fs.remove(path).catch(() => {});
+    }
+  })();
+  return state.task;
+}
+
 function loadOutboundNameChoices(section_id) {
+  const sources = draftSubscriptionSources(section_id);
+  if (sources.length) return loadDraftSubscriptionChoices(section_id, sources).catch(() => []);
+  if (editorPreviewStates.has(section_id)) {
+    editorPreviewStates.delete(section_id);
+    outboundNameChoicesCache.delete(section_id);
+    renderEditorPreviewStatus(section_id, null);
+  }
   if (outboundNameChoicesCache.has(section_id)) {
     return Promise.resolve(outboundNameChoicesCache.get(section_id));
   }
@@ -5175,6 +5244,30 @@ function createSectionContent(section) {
   o.childValueOption = "url";
   o.childDefaults = subscriptionUrlChildDefaults();
   o.renderItemSettingsModal = showSubscriptionUrlSettingsModal;
+  outboundNameSourceOptions.set("subscription_url", o);
+  const renderSubscriptionWidget = o.renderWidget;
+  o.renderWidget = function (section_id) {
+    const rendered = renderSubscriptionWidget.apply(this, arguments);
+    return Promise.resolve(rendered).then(node => {
+      const status = E("div", {
+        id: `forkop-editor-status-${section_id}`,
+        "aria-live": "polite",
+        style: "margin: 6px 0 8px; font-size: 0.9em; line-height: 1.4;",
+      });
+      node.appendChild(status);
+      renderEditorPreviewStatus(section_id, editorPreviewStates.get(section_id), status);
+      let timer;
+      const refresh = () => {
+        window.clearTimeout(timer);
+        timer = window.setTimeout(() => { void loadOutboundNameChoices(section_id); }, 800);
+      };
+      node.addEventListener("input", refresh);
+      node.addEventListener("cbi-dynlist-change", refresh);
+      node.addEventListener("change", refresh);
+      refresh();
+      return node;
+    });
+  };
   o.hasItemSettings = function (section_id, value) {
     const normalized = `${value || ""}`.trim();
     if (isExistingChildItem(section_id, normalized, "subscription_url")) {

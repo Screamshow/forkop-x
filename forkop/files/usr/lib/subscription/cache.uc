@@ -2626,6 +2626,14 @@ else if (mode == "deferred-bootstrap-worker") {
 else if (mode == "json-length") {
     json_length(ARGV[1]);
 }
+else if (mode == "editor-request-profile") {
+    write_stdout_json({
+        user_agent: auto_user_agent_profiles[0],
+        hwid: get_subscription_hwid(""),
+        headers: [ "X-Device-OS: OpenWrt Linux", "X-Device-Model: " + get_device_model(),
+            "X-Ver-OS: " + get_kernel_version(), "Accept-Language: ru-RU,en,*", "X-Device-Locale: EN" ]
+    });
+}
 else if (mode == "download-subscription-fixture") {
     exit(download_subscription(ARGV[1], ARGV[2], ARGV[3] || "", ARGV[4] || "", ARGV[5] || "", ARGV[6] || ""));
 }

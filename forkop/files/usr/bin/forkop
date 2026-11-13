@@ -134,6 +134,7 @@ function show_help() {
 
 function command_spec(command) {
     let commands = {
+        editor_preview: [ "subscription/editor.uc", "preview", 1 ],
         start: [ "service/lifecycle.uc", "start", 0 ],
         post_start_latency: [ "service/lifecycle.uc", "post-start-latency", 0 ],
         stop: [ "service/lifecycle.uc", "stop", 0 ],

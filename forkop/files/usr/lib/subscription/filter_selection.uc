@@ -45,7 +45,8 @@ function candidates(section) {
             let name = outbound.remark || outbound.tag;
             if (!name)
                 continue;
-            push(result, { name: prefix != "" ? prefix + " " + name : name, key });
+            push(result, { name: prefix != "" ? prefix + " " + name : name, key,
+                hidden: common.bool_option(outbound, "__forkop_hidden", false) });
         }
     }
     return result;
@@ -85,6 +86,24 @@ function migrate_address(keys, name, previous, next) {
     return [ targets[0].key ];
 }
 
+function display_matches(matches, selected_name) {
+    let result = [];
+    let seen = {};
+    for (let candidate in matches) {
+        if (seen[candidate.key])
+            continue;
+        seen[candidate.key] = true;
+        let visible = filter(matches, item => item.key == candidate.key && !item.hidden);
+        let preferred = filter(visible, item => item.name == selected_name);
+        // Hidden transport dependencies remain valid identity evidence, but
+        // must never introduce their technical tags into the user's selection.
+        // Preserve the selected label when only a hidden copy survives.
+        push(result, length(preferred) ? preferred[0] : length(visible) ? visible[0] :
+            { name: selected_name, key: candidate.key });
+    }
+    return result;
+}
+
 // Resolve against the OLD feed before considering any new names. In particular,
 // simultaneous A->B / B->A renames must not cascade through string replacements.
 function reconcile(values, saved, previous, next) {
@@ -102,7 +121,7 @@ function reconcile(values, saved, previous, next) {
                     push(keys, candidate.key);
         }
         keys = migrate_address(keys, name, previous, next);
-        let matches = filter(next, candidate => index(keys, candidate.key) >= 0);
+        let matches = display_matches(filter(next, candidate => index(keys, candidate.key) >= 0), name);
         // Keep a tombstone if the selected connection disappears. A new owner
         // of its name must not take over an existing selection.
         let next_names = length(matches) ? map(matches, candidate => candidate.name) : [ name ];
