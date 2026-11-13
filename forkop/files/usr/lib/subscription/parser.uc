@@ -3173,6 +3173,7 @@ function module_exports() {
     return {
         parse_subscription_source_entry,
         add_certificate_pins,
+        parse_hysteria2_server_ports,
         validate_subscription,
         normalize_content_validated,
         normalized_skipped_message,
