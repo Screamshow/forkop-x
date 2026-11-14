@@ -23,6 +23,7 @@ ops/deployed-nginx/
 !/tests/vless_encryption_capabilities.sh
 !/tests/subscription_recovery.uc
 !/tests/subscription_recovery.sh
+!/tests/editor_preview_download.py
 !/tests/luci_save_apply.cjs
 !/tests/native_tunnel_profile.cjs
 !/tests/list_change_cache.sh

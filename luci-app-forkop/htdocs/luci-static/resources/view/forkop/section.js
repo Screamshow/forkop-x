@@ -334,6 +334,16 @@ function readOutboundMetadataFromSectionCache(section_id) {
 }
 
 const editorPreviewStates = new Map();
+function subscriptionSourceSignature(sources) {
+  return JSON.stringify(sources.map(source => Object.fromEntries(
+    Object.keys(source).filter(key => !key.startsWith(".")).sort()
+      .map(key => [key, source[key]]),
+  )));
+}
+function savedSubscriptionSources(section_id) {
+  return getChildItemIds(section_id, "subscription_url")
+    .map(id => Object.assign({}, uci.get(UCI_PACKAGE, id)));
+}
 function renderEditorPreviewStatus(section_id, state, element) {
   const status = element || document.getElementById(`forkop-editor-status-${section_id}`);
   if (status) status.textContent = state ? state.message || "" : "";
@@ -349,7 +359,7 @@ function draftSubscriptionSources(section_id) {
 }
 
 async function loadDraftSubscriptionChoices(section_id, sources) {
-  const signature = JSON.stringify(sources);
+  const signature = subscriptionSourceSignature(sources);
   let state = editorPreviewStates.get(section_id);
   if (state && state.signature === signature) {
     renderEditorPreviewStatus(section_id, state);
@@ -363,16 +373,17 @@ async function loadDraftSubscriptionChoices(section_id, sources) {
     const id = `editor-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     const path = `/var/run/forkop/ui-state/${id}.json`;
     try {
-      await fs.write(path, JSON.stringify({ sources }), 0o600);
+      await fs.write(path, JSON.stringify({ sources, section: section_id }), 0o600);
       const response = await fs.exec("/usr/bin/forkop", ["editor_preview", id]);
       const metadata = JSON.parse(response.stdout || "{}");
       if (response.code || metadata.error) {
         const error = new Error(metadata.error || "Preview failed");
         error.previewStatus = metadata.status;
+        error.previewMessage = metadata.error;
         throw error;
       }
       const choices = [...new Set(Object.values(plainObject(metadata.names)))].sort();
-      if (editorPreviewStates.get(section_id) !== state || JSON.stringify(draftSubscriptionSources(section_id)) !== signature) return [];
+      if (editorPreviewStates.get(section_id) !== state || subscriptionSourceSignature(draftSubscriptionSources(section_id)) !== signature) return [];
       outboundNameChoicesCache.set(section_id, choices);
       state.message = `Серверы подписки: ${choices.length}`;
       renderEditorPreviewStatus(section_id, state);
@@ -384,6 +395,7 @@ async function loadDraftSubscriptionChoices(section_id, sources) {
         outboundNameChoicesCache.set(section_id, []);
         state.message = error.previewStatus === 35
           ? "Не удалось установить защищённое соединение с подпиской. Проверьте DNS и доступность провайдера."
+          : error.previewMessage ? `Не удалось загрузить серверы: ${error.previewMessage}`
           : "Не удалось загрузить серверы. Повторите ввод ссылки.";
         renderEditorPreviewStatus(section_id, state);
       }
@@ -395,9 +407,24 @@ async function loadDraftSubscriptionChoices(section_id, sources) {
   return state.task;
 }
 
-function loadOutboundNameChoices(section_id) {
+async function loadOutboundNameChoices(section_id) {
   const sources = draftSubscriptionSources(section_id);
-  if (sources.length) return loadDraftSubscriptionChoices(section_id, sources).catch(() => []);
+  if (sources.length) {
+    const signature = subscriptionSourceSignature(sources);
+    if (signature === subscriptionSourceSignature(savedSubscriptionSources(section_id))) {
+      const metadata = await readOutboundMetadataFromSectionCache(section_id);
+      // A delayed cache read must not repopulate a newly edited source list.
+      if (signature !== subscriptionSourceSignature(draftSubscriptionSources(section_id))) return [];
+      const choices = [...new Set(Object.values(plainObject(metadata.names)))].filter(Boolean).sort();
+      if (choices.length) {
+        editorPreviewStates.delete(section_id);
+        outboundNameChoicesCache.set(section_id, choices);
+        renderEditorPreviewStatus(section_id, null);
+        return choices;
+      }
+    }
+    return loadDraftSubscriptionChoices(section_id, sources).catch(() => []);
+  }
   if (editorPreviewStates.has(section_id)) {
     editorPreviewStates.delete(section_id);
     outboundNameChoicesCache.delete(section_id);

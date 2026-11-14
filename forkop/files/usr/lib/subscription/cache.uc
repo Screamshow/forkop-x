@@ -1500,7 +1500,8 @@ function curl_resolve_address(address) {
     return core_ip.ip_family(address) == 6 ? "[" + address + "]" : address;
 }
 
-function subscription_curl_args(url, filepath, http_proxy_address, headers_filepath, effective_user_agent, effective_hwid, resolve) {
+function subscription_curl_args(url, filepath, http_proxy_address, headers_filepath, effective_user_agent, effective_hwid, resolve, options) {
+    options = object_or_empty(options);
     let args = [
         "curl", "-f", "-sS",
         "--connect-timeout", "15",
@@ -1523,7 +1524,7 @@ function subscription_curl_args(url, filepath, http_proxy_address, headers_filep
 
     push(args, "-o");
     push(args, filepath);
-    for (let header in [
+    let headers = [
         "User-Agent: " + get_subscription_user_agent(effective_user_agent),
         "X-HWID: " + get_subscription_hwid(effective_hwid),
         "X-Device-OS: OpenWrt Linux",
@@ -1531,16 +1532,31 @@ function subscription_curl_args(url, filepath, http_proxy_address, headers_filep
         "X-Ver-OS: " + get_kernel_version(),
         "Accept-Language: ru-RU,en,*",
         "X-Device-Locale: EN"
-    ]) {
-        push(args, "-H");
-        push(args, header);
+    ];
+    if (options.config_path) {
+        let config = "url = " + sprintf("%J", url) + "\n";
+        for (let header in headers)
+            config += "header = " + sprintf("%J", header) + "\n";
+        if (!write_file(options.config_path, config))
+            die("Cannot prepare private subscription request\n");
+        push(args, "--config", options.config_path);
+        if (http_proxy_address != "")
+            push(args, "--noproxy", "");
+        push(args, "--location", "--proto", "=http,https", "--proto-redir", "=http,https",
+            "--max-time", "20", "--max-filesize", "4194304");
     }
-    push(args, url);
+    else {
+        for (let header in headers) {
+            push(args, "-H");
+            push(args, header);
+        }
+        push(args, url);
+    }
     return args;
 }
 
-function download_subscription(url, filepath, http_proxy_address, headers_filepath, effective_user_agent, effective_hwid) {
-    let retries = 3;
+function download_subscription(url, filepath, http_proxy_address, headers_filepath, effective_user_agent, effective_hwid, options) {
+    let retries = options?.config_path ? 1 : 3;
     let wait_seconds = 2;
     let stamp = clock();
     let suffix = sprintf(".part.%d.%d", stamp[0], stamp[1]);
@@ -1554,14 +1570,14 @@ function download_subscription(url, filepath, http_proxy_address, headers_filepa
 
     for (let attempt = 1; attempt <= retries; attempt++) {
         let status = command_status_from_args(subscription_curl_args(
-            url, tmpfile, http_proxy_address, headers_tmpfile, effective_user_agent, effective_hwid, null
+            url, tmpfile, http_proxy_address, headers_tmpfile, effective_user_agent, effective_hwid, null, options
         ));
         if (status == 6) {
             let resolved = bootstrap_resolve_subscription_host(url);
             if (resolved != null) {
                 log_message("Downloading subscription using bootstrap-resolved address", "info");
                 status = command_status_from_args(subscription_curl_args(
-                    url, tmpfile, http_proxy_address, headers_tmpfile, effective_user_agent, effective_hwid, resolved
+                    url, tmpfile, http_proxy_address, headers_tmpfile, effective_user_agent, effective_hwid, resolved, options
                 ));
             }
         }
@@ -1630,6 +1646,25 @@ function subscription_config_is_current(section_name_value, subscription_url, su
 
 function get_subscription_download_proxy_address(section_name_value, sections, parsed, phase) {
     let download_section = as_string(object_or_empty(parsed).download_section);
+    if (phase == "preview" && download_section != "") {
+        if (!sing_box_service_running())
+            return null;
+        // Use the active config, not prospective UCI port ordering. Editing
+        // sources must never send a request through a different section.
+        let config = read_json(as_string(uci_named_section("settings").config_path));
+        let tags = require("singbox.constants");
+        let tag = tags.inbound_tag("service-subscription-" + download_section);
+        for (let inbound in config?.inbounds || []) {
+            if (inbound.tag != tag || inbound.type != "mixed" ||
+                inbound.listen != SB_SERVICE_MIXED_INBOUND_ADDRESS || int(inbound.listen_port) <= 0)
+                continue;
+            for (let rule in config?.route?.rules || [])
+                if ((rule.inbound == tag || (type(rule.inbound) == "array" && length(rule.inbound) == 1 &&
+                    rule.inbound[0] == tag)) && rule.outbound == tags.outbound_tag(download_section))
+                    return inbound.listen + ":" + int(inbound.listen_port);
+        }
+        return null;
+    }
     if (download_section == "" || download_section == as_string(section_name_value))
         return "";
 
@@ -1648,6 +1683,34 @@ function get_subscription_download_proxy_address(section_name_value, sections, p
     let address = SB_SERVICE_MIXED_INBOUND_ADDRESS + ":" + as_string(port);
     log_message("Downloading subscription for rule '" + section_name_value + "' via service proxy " + address, "debug");
     return address;
+}
+
+// Draft-only download: reuse request profiles, bootstrap DNS, curl and parser
+// without changing UCI, persistent caches, links or the running configuration.
+function editor_download_source(request_path, prefix) {
+    let input = read_json(request_path);
+    let source = input?.source;
+    let url = source?.url;
+    if (type(url) != "string" || length(url) > 8192 ||
+        !match(url, /^https?:\/\//) || match(url, /[[:space:]]/))
+        return { error: "Invalid subscription URL" };
+    let download_section = source.download_via_proxy_enabled == "1" ? as_string(source.download_via_proxy_section) : "";
+    if (source.download_via_proxy_enabled == "1" && download_section == "")
+        return { error: "Select a subscription download proxy section" };
+    let proxy = get_subscription_download_proxy_address(as_string(input.section), uci_sections(), { download_section }, "preview");
+    if (proxy == null)
+        return { error: "Selected proxy section is unavailable in the running configuration; direct download was not attempted" };
+    let parser = subscription_parser();
+    let hwid = get_subscription_hwid("");
+    for (let ua in user_agent_candidates("", "", get_subscription_user_agent(""))) {
+        if (download_subscription(url, prefix + ".body", proxy, prefix + ".headers", ua, hwid,
+            { config_path: prefix + ".curl" }) != 0)
+            continue;
+        parser.try_decode_gzip_content_file(prefix + ".body");
+        if (parser.normalize_content_validated(prefix + ".body", prefix + ".json"))
+            return { user_agent: ua, hwid };
+    }
+    return { error: "Subscription download failed or returned an invalid response" };
 }
 
 function download_subscription_into_cache(section_name_value, subscription_url, subscription_json_path, subscription_url_cache_path, service_proxy_address_value, subscription_user_agent, subscription_hwid, source_index, cache_section, metadata_output_path, sections) {
@@ -2633,6 +2696,9 @@ else if (mode == "editor-request-profile") {
         headers: [ "X-Device-OS: OpenWrt Linux", "X-Device-Model: " + get_device_model(),
             "X-Ver-OS: " + get_kernel_version(), "Accept-Language: ru-RU,en,*", "X-Device-Locale: EN" ]
     });
+}
+else if (mode == "editor-download-source") {
+    exit(write_json(ARGV[2] + ".profile.json", editor_download_source(ARGV[1], ARGV[2])) ? 0 : 1);
 }
 else if (mode == "download-subscription-fixture") {
     exit(download_subscription(ARGV[1], ARGV[2], ARGV[3] || "", ARGV[4] || "", ARGV[5] || "", ARGV[6] || ""));

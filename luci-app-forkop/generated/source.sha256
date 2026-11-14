@@ -3,7 +3,7 @@
 e4cde38ac6f819740c7531775683f79f69d3053ba25d044c405c779f02aad107  htdocs/luci-static/resources/view/forkop/forkop.js
 8f8391cb39618ba976e1df24422f2d5e3f19e9e811708e590fcb477387369492  htdocs/luci-static/resources/view/forkop/local_devices.js
 715d6f41fd9cc4603f4a676dd3c46166e60b33e87b1514acaccc220df855fcd1  htdocs/luci-static/resources/view/forkop/monitoring.js
-e7baa5dc7404f3f54480e82f0fcd58b85498821c9e64d847711c358b30035a26  htdocs/luci-static/resources/view/forkop/section.js
+a15c7aaeef0583dcf23ae175c3871dc86cd3ddf7073ea46c10c7fcb03ec25a76  htdocs/luci-static/resources/view/forkop/section.js
 22ffd940fd1ba64b1c75916e5604e9f21d607e7d3d3735e7a30209234868c6ef  htdocs/luci-static/resources/view/forkop/settings.js
 ae5394b5eb9135d7ddbfc12b9667b427dce003250f4a6c1e59cdaec18608a87a  htdocs/luci-static/resources/view/forkop/tailscale.js
 8ae43432f6ca9113ae27e456e7e7d54f35fd9f1b823d9e2b39b0e0d809dc9507  htdocs/luci-static/resources/view/forkop/updates.js
