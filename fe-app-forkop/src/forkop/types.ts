@@ -128,8 +128,8 @@ export namespace Forkop {
   }
 
   export interface PriorityMember extends UrlTestMember {
-    levelIndex: number;
-    levelName: string;
+    levelIndex?: number;
+    levelName?: string;
     levelId?: string;
   }
 

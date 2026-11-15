@@ -643,6 +643,84 @@ describe('getDashboardSections', () => {
     },
   );
 
+  it.each(['healthy', 'missing', 'stale'] as const)(
+    'shows live Priority members with cache: %s',
+    async (cacheState) => {
+      const groupCode = 'main-priority-pg_main-out';
+      mocks.getConfigSections.mockResolvedValue([
+        proxySection({ urltests: [], urltest_settings: undefined }),
+        priorityGroup('pg_main'),
+        priorityLevel('pl_de', { name: 'Germany' }),
+      ]);
+      mocks.getClashApiProxies.mockResolvedValue({
+        success: true,
+        data: {
+          proxies: {
+            ...clashProxies,
+            'main-out': proxy('Selector', { now: groupCode, all: [groupCode] }),
+            [groupCode]: proxy('Selector', {
+              now: 'main-2-out',
+              all: ['main-1-out', 'main-2-out'],
+            }),
+          },
+        },
+      });
+      if (cacheState !== 'missing') {
+        mocks.fsRead.mockResolvedValue(
+          JSON.stringify({
+            priorityGroups: {
+              [groupCode]: {
+                levels: [
+                  {
+                    id: 'pl_de',
+                    displayName: 'Germany',
+                    outbounds:
+                      cacheState === 'healthy'
+                        ? ['main-1-out', 'main-2-out']
+                        : ['main-1-out', 'old-node-out'],
+                  },
+                ],
+              },
+            },
+          }),
+        );
+      }
+      const result = await getDashboardSections();
+      expect(result.success).toBe(true);
+      const info = result.data[0].outbounds.find(
+        (x) => x.code === groupCode,
+      )?.priorityInfo;
+      const actual = info?.outbounds.map((x) => x.code);
+      expect(actual).toEqual(['main-1-out', 'main-2-out']);
+      expect(
+        info?.outbounds.find((x) => x.code === 'main-2-out')?.selected,
+      ).toBe(true);
+      expect(info?.outbounds[0].levelName).toBe(
+        cacheState === 'missing' ? undefined : 'Germany',
+      );
+      expect(info?.outbounds[1].levelName).toBe(
+        cacheState === 'healthy' ? 'Germany' : undefined,
+      );
+    },
+  );
+  it('exposes subscription recovery warnings without treating them as nodes', async () => {
+    mocks.getConfigSections.mockResolvedValue([proxySection()]);
+    mocks.fsRead.mockResolvedValue(
+      JSON.stringify({
+        skippedSubscriptionOutbounds: [
+          { tag: 'provider-node', reason: 'core-validation' },
+          null,
+        ],
+      }),
+    );
+    const result = await getDashboardSections();
+    expect(result.data[0].skippedSubscriptionOutbounds).toEqual([
+      { tag: 'provider-node', reason: 'core-validation' },
+    ]);
+    expect(
+      result.data[0].outbounds.some((item) => item.code === 'provider-node'),
+    ).toBe(false);
+  });
   it('keeps an empty Priority group visible when sing-box skipped the selector', async () => {
     mocks.getConfigSections.mockResolvedValue([
       proxySection({

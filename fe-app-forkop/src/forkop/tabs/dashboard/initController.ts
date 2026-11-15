@@ -1299,6 +1299,10 @@ function renderPrioritySelectedValue(info: Forkop.PriorityInfo) {
 }
 
 function renderPriorityMemberName(member: Forkop.PriorityMember) {
+  if (member.levelIndex === undefined) {
+    return renderDetailsMemberName(member);
+  }
+
   const levelName = member.levelName || _('Level');
 
   return [
