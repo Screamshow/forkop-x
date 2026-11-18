@@ -44,8 +44,10 @@ const SB_CLASH_API_CONTROLLER_PORT = getenv("SB_CLASH_API_CONTROLLER_PORT") || c
 const SING_BOX_BIN_PATH = getenv("FORKOP_DIAGNOSTICS_SING_BOX_BIN_PATH") || "/usr/bin/sing-box";
 const CLOUDFLARE_OCTETS = getenv("CLOUDFLARE_OCTETS") || constants.CLOUDFLARE_OCTETS || "8.47 162.159 188.114";
 const DEFAULT_LATENCY_TEST_URL = getenv("DEFAULT_LATENCY_TEST_URL") || "https://www.gstatic.com/generate_204";
+const CLASH_PROXY_LIST_TIMEOUT_SECONDS = "5";
 const RUNTIME_STABLE_MIN_AGE = getenv("FORKOP_RUNTIME_STABLE_MIN_AGE") || "2";
 const AUTOMATIC_LATENCY_TEST_LOCK_DIR = getenv("FORKOP_AUTOMATIC_LATENCY_TEST_LOCK_DIR") || RUNTIME_STATE_DIR + "/automatic-latency-test.lock";
+const AUTOMATIC_LATENCY_RETRY_LOCK_DIR = AUTOMATIC_LATENCY_TEST_LOCK_DIR + ".retry";
 const RELOAD_LOCK_DIR = getenv("FORKOP_RELOAD_LOCK_DIR") || "/var/run/forkop.reload.lock";
 const PENDING_RELOAD_FILE = getenv("FORKOP_PENDING_RELOAD_FILE") || "/var/run/forkop/reload.pending";
 const SERVICE_INIT = getenv("FORKOP_SERVICE_INIT") || "/etc/init.d/forkop";
@@ -1355,7 +1357,7 @@ function clash_latency_output(args) {
 }
 
 function clash_proxy_entries(base_url, auth) {
-    let args = [ "curl", "-s" ];
+    let args = [ "curl", "--max-time", CLASH_PROXY_LIST_TIMEOUT_SECONDS, "-s" ];
     for (let item in auth) push(args, item);
     push(args, base_url + "/proxies");
 
@@ -1625,8 +1627,18 @@ function latency_probe_concurrency() {
     return value > 8 ? 8 : value;
 }
 
+function latency_curl_args(endpoint, timeout) {
+    // The core receives a timeout in milliseconds. Allow extra time for the
+    // HTTP exchange, but bound curl even if the controller stops responding.
+    let milliseconds = int(timeout);
+    if (milliseconds <= 0)
+        milliseconds = 5000;
+    let seconds = int(milliseconds / 1000) + 3;
+    return [ "curl", "--max-time", as_string(seconds), "-G", "-fs", endpoint ];
+}
+
 function latency_probe_command(base_url, auth, proxy_tag, proxy_type, test_url, timeout) {
-    let args = [ "curl", "-G", "-fs", clash_latency_endpoint(base_url, proxy_tag, proxy_type) ];
+    let args = latency_curl_args(clash_latency_endpoint(base_url, proxy_tag, proxy_type), timeout);
     for (let item in auth) push(args, item);
     push(args, "--data-urlencode");
     push(args, "url=" + as_string(test_url));
@@ -1694,7 +1706,7 @@ function clash_api(action, arg1, arg2, arg3) {
     let auth = clash_auth_args();
 
     if (action == "get_proxies") {
-        let args = [ "curl", "-s" ];
+        let args = [ "curl", "--max-time", CLASH_PROXY_LIST_TIMEOUT_SECONDS, "-s" ];
         for (let item in auth) push(args, item);
         push(args, base_url + "/proxies");
         return clash_json_output(args);
@@ -1713,12 +1725,13 @@ function clash_api(action, arg1, arg2, arg3) {
         let url = as_string(arg3 || "");
         if (url == "")
             url = test_url;
-        let args = [ "curl", "-G", "-fs", base_url + "/proxies/" + clash_urlencode(arg1) + "/delay" ];
+        let timeout = as_string(arg2 || "2000");
+        let args = latency_curl_args(base_url + "/proxies/" + clash_urlencode(arg1) + "/delay", timeout);
         for (let item in auth) push(args, item);
         push(args, "--data-urlencode");
         push(args, "url=" + url);
         push(args, "--data-urlencode");
-        push(args, "timeout=" + as_string(arg2 || "2000"));
+        push(args, "timeout=" + timeout);
         return clash_latency_output(args);
     }
 
@@ -1771,12 +1784,13 @@ function clash_api(action, arg1, arg2, arg3) {
     if (action == "get_group_latency") {
         if (as_string(arg1) == "")
             return clash_json_error("group_tag required");
-        let args = [ "curl", "-G", "-fs", base_url + "/group/" + clash_urlencode(arg1) + "/delay" ];
+        let timeout = as_string(arg2 || "5000");
+        let args = latency_curl_args(base_url + "/group/" + clash_urlencode(arg1) + "/delay", timeout);
         for (let item in auth) push(args, item);
         push(args, "--data-urlencode");
         push(args, "url=" + test_url);
         push(args, "--data-urlencode");
-        push(args, "timeout=" + as_string(arg2 || "5000"));
+        push(args, "timeout=" + timeout);
         return clash_latency_output(args);
     }
 
@@ -1877,22 +1891,24 @@ function automatic_latency_sweep(start_kind, proxy_tags, pending_signature,
             }
         }
     }
-    module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
     module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
     // A reload is normally detected between batches through its PID/lock. A
     // non-restarting config change can still replace the proxy set, so never
     // acknowledge the old marker after its semantic generation changed.
     if (proxy_outbounds_signature_value(config_path) != pending_signature) {
+        module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
         log_message("Automatic latency test finished against a stale proxy generation; the pending marker was retained", "info");
         return 0;
     }
     if (completed > progress.failed) {
         automatic_latency_remove_marker(pending_signature, pending_generation);
+        module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
         log_message("Automatic latency test completed: " + (completed - progress.failed) + " of " +
             completed + " probes succeeded; the pending marker was removed", "info");
         return 0;
     }
     automatic_latency_record_failure(pending_signature, pending_generation);
+    module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
     log_message("Automatic latency test completed with errors; the pending marker was retained with a retry pause", "warn");
     return 1;
 }
@@ -1938,24 +1954,40 @@ function automatic_latency_test(start_kind) {
     let stat = as_string(fs.readfile("/proc/self/stat"));
     let separator = index(stat, " ");
     let owner_pid = separator > 0 ? substr(stat, 0, separator) : "";
-    if (owner_pid == "" || !module_success(SERVICE_STATE_UC, [
-        "acquire-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR, owner_pid
-    ])) {
+    if (owner_pid == "")
+        return 0;
+
+    let retry_delay = int(marker.retry_after || 0) - int(clock()[0]);
+    let acquire_latency_lock = [ "acquire-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR, owner_pid ];
+    if (retry_delay > 0) {
+        // Coalesce sleeping workers separately so manual tests can still run.
+        if (!module_success(SERVICE_STATE_UC, [
+            "acquire-runtime-dir-lock", AUTOMATIC_LATENCY_RETRY_LOCK_DIR, owner_pid
+        ]))
+            return 0;
+        log_message("Automatic latency test is deferred for " + retry_delay + " seconds by its retry pause; it will continue automatically", "info");
+        command_success_from_args([ "sleep", as_string(retry_delay) ]);
+        // A manual test can still be running when the retry becomes due.
+        acquire_latency_lock = [
+            "acquire-runtime-dir-lock-wait-until-package-upgrade", AUTOMATIC_LATENCY_TEST_LOCK_DIR, owner_pid, "300"
+        ];
+    }
+
+    let acquired = module_success(SERVICE_STATE_UC, acquire_latency_lock);
+    if (retry_delay > 0)
+        module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_RETRY_LOCK_DIR ]);
+
+    if (!acquired) {
         log_message("Automatic latency test is already scheduled or running; coalescing the duplicate request", "info");
         return 0;
     }
 
-    let retry_delay = int(marker.retry_after || 0) - int(clock()[0]);
-    if (retry_delay > 0) {
-        log_message("Automatic latency test is deferred for " + retry_delay + " seconds by its retry pause; it will continue automatically", "info");
-        command_success_from_args([ "sleep", as_string(retry_delay) ]);
-        marker = automatic_latency_pending_marker();
-        current_signature = proxy_outbounds_signature_value(config_path);
-        if (marker == null || as_string(marker.signature) != pending_signature ||
-            as_string(marker.generation) != pending_generation || current_signature != pending_signature) {
-            module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
-            return 0;
-        }
+    marker = automatic_latency_pending_marker();
+    if (marker == null || as_string(marker.signature) != pending_signature ||
+        as_string(marker.generation) != pending_generation || int(marker.retry_after || 0) > int(clock()[0]) ||
+        (retry_delay > 0 && proxy_outbounds_signature_value(config_path) != pending_signature)) {
+        module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
+        return 0;
     }
 
     if (!module_success(SERVICE_STATE_UC, [
@@ -1984,9 +2016,9 @@ function automatic_latency_test(start_kind) {
             command_success_from_args([ "sleep", "1" ]);
     }
     if (proxy_entries == null) {
+        automatic_latency_record_failure(pending_signature, pending_generation);
         module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
         module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
-        automatic_latency_record_failure(pending_signature, pending_generation);
         log_message("Automatic latency test deferred because the Clash API is not ready; the pending marker was retained with a retry pause", "warn");
         return 1;
     }
@@ -1997,9 +2029,9 @@ function automatic_latency_test(start_kind) {
     );
 
     if (length(proxy_tags) == 0) {
+        automatic_latency_record_failure(pending_signature, pending_generation);
         module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
         module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
-        automatic_latency_record_failure(pending_signature, pending_generation);
         log_message("Automatic latency test could not find the pending proxy set in the Clash API; the pending marker was retained with a retry pause", "warn");
         return 1;
     }

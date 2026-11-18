@@ -5,6 +5,7 @@ RUNTIME="$ROOT/forkop/files/usr/lib/diagnostics/runtime.uc"
 
 extract() {
   sed -n '/^function latency_probe_concurrency() {/,/^}/p;
+          /^function latency_curl_args(/,/^}/p;
           /^function latency_probe_command(/,/^}/p;
           /^function probe_proxy_latencies(/,/^}/p' "$RUNTIME"
 }
@@ -101,6 +102,8 @@ rm -f "${TMPDIR:-/tmp}/latency_probe_case.uc"
 # Every proxy is probed exactly once, in order, and progress counts each answer.
 { mocks; extract; cat <<'UCODE'
 bodies = { b: "not json" };
+assert(index(latency_probe_command(PLAN.base_url, PLAN.auth, "a", "vless", PLAN.test_url, "5000"),
+    "--max-time 8") >= 0, "curl deadline must include the core timeout and HTTP grace");
 let progress = probe_proxy_latencies(PLAN, [ "a", "b", "c", "d" ], new_progress(5));
 assert(length(probed) == 4, "probe count is wrong");
 assert(join(",", probed) == "a,b,c,d", "probe order changed: " + join(",", probed));

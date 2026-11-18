@@ -9,6 +9,9 @@ cat <<'UCODE'
 let lock_present = true;
 let lock_held = true;
 let states = [];
+let worker_args = [];
+const BIN_PATH = "/usr/bin/forkop";
+const STATE_UC = "service/state.uc";
 const LATENCY_TEST_LOCK_DIR = "/var/run/forkop/automatic-latency-test.lock";
 const LATENCY_ACTION_DIR = "/var/run/forkop/latency-actions";
 let fs = { stat: (path) => lock_present ? { type: "directory" } : null };
@@ -27,8 +30,17 @@ function non_negative_number(value) {
     let number = int(value);
     return number > 0 ? number : 0;
 }
+function current_pid() { return "42"; }
+function module_success(path, args) { return true; }
+function command_from_args(args) { worker_args = args; return ""; }
+function command_status(command) { return 0; }
+function write_finished_action_state(path, success, message, status) {
+    assert(success && status == 0, message);
+}
 UCODE
-sed -n '/^function running_latency_test_reason() {/,/^}/p' "$UI"
+sed -n '/^function running_latency_test_reason() {/,/^}/p;
+        /^function latency_clash_method(/,/^}/p;
+        /^function latency_worker(/,/^}/p' "$UI"
 cat <<'UCODE'
 lock_present = false;
 assert(running_latency_test_reason() == "", "test refused without a lock");
@@ -51,6 +63,13 @@ assert(running_latency_test_reason() == "Another latency test is already running
 states = [];
 lock_held = false;
 assert(running_latency_test_reason() == "", "abandoned lock still refuses the test");
+
+latency_worker("/tmp/job.json", "proxy", "proxy-a", "5000");
+assert(length(worker_args) == 5 && worker_args[2] == "get_proxy_latency",
+    "single-proxy worker sends a job path as the test URL");
+latency_worker("/tmp/job.json", "proxy_list", '["proxy-a"]', "5000");
+assert(worker_args[2] == "get_proxy_latencies" && worker_args[5] == "/tmp/job.json",
+    "batch worker does not forward its progress path");
 print("latency test lock tests passed\n");
 UCODE
 } | ucode -

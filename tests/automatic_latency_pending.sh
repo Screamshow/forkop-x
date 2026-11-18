@@ -73,10 +73,14 @@ cat >"$WORK_DIR/bin/curl" <<'EOF_CURL'
 #!/bin/sh
 case "$*" in
   */proxies)
+    case " $* " in *" --max-time 5 "*) ;; *) exit 1;; esac
     [ "${TEST_CLASH_UNREADY:-0}" = 1 ] && { printf 'not-json\n'; exit 0; }
     printf '%s\n' '{"proxies":{"proxy-a":{"type":"VLESS"},"proxy-b":{"type":"Trojan"},"proxy-c":{"type":"VLESS"},"proxy-d":{"type":"Trojan"},"proxy-e":{"type":"VLESS"},"proxy-f":{"type":"Trojan"},"proxy-g":{"type":"VLESS"},"proxy-h":{"type":"Trojan"},"proxy-i":{"type":"VLESS"},"DIRECT":{"type":"Direct"}}}'
     ;;
   */delay*)
+    if [ -n "${TEST_CURL_DEADLINE:-}" ]; then
+      case " $* " in *" --max-time $TEST_CURL_DEADLINE "*) ;; *) exit 1;; esac
+    fi
     printf 'latency\n' >>"$TEST_CURL_LOG"
     case "$*" in
       *"/proxies/${TEST_HTTP_ERROR_TAG:-never}/delay"*)
@@ -124,7 +128,7 @@ export FORKOP_AUTOMATIC_LATENCY_PENDING_FILE="$WORK_DIR/automatic-latency.pendin
 export FORKOP_AUTOMATIC_LATENCY_TEST_LOCK_DIR="$WORK_DIR/latency.lock"
 export FORKOP_RELOAD_LOCK_DIR="$WORK_DIR/reload.lock"
 export FORKOP_AUTOMATIC_LATENCY_BATCH_PAUSE=0
-export FORKOP_AUTOMATIC_LATENCY_RETRY_BASE_SECONDS=2
+export FORKOP_AUTOMATIC_LATENCY_RETRY_BASE_SECONDS=8
 export FORKOP_AUTOMATIC_LATENCY_CLASH_READY_ATTEMPTS=1
 : >"$TEST_LOG"
 : >"$TEST_CURL_LOG"
@@ -187,6 +191,10 @@ if result="$(TEST_HTTP_ERROR_TAG=proxy-a ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC
   fail "individual latency request accepted an HTTP error"
 fi
 ucode -e 'assert(json(ARGV[0]).error == "Clash API latency probe failed");' "$result"
+TEST_CURL_DEADLINE=5 ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" \
+  clash-api get_proxy_latency proxy-a 2000 >/dev/null
+TEST_CURL_DEADLINE=13 ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" \
+  clash-api get_group_latency group-a 10000 >/dev/null
 if result="$(TEST_HTTP_ERROR_TAG=proxy-a ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" \
   clash-api get_proxy_latencies '["proxy-a"]')"; then
   fail "sweep with no successful probes passed"
@@ -263,9 +271,19 @@ grep -Eq '"failures":[[:space:]]*1.*"retry_after":[[:space:]]*[1-9][0-9]+' "$FOR
 requests_before="$(wc -l <"$TEST_CURL_LOG")"
 ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" automatic-latency-test resume &
 retry_pid=$!
-sleep 1
+retry_lock="$FORKOP_AUTOMATIC_LATENCY_TEST_LOCK_DIR.retry"
+for attempt in 1 2 3 4 5; do
+  [ -d "$retry_lock" ] && break
+  sleep 0.1
+done
+[ -d "$retry_lock" ] || fail "retry worker did not enter its pause"
+[ ! -e "$FORKOP_AUTOMATIC_LATENCY_TEST_LOCK_DIR" ] ||
+  fail "retry pause holds the lock shared with manual tests"
+ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" automatic-latency-test resume
+[ -d "$retry_lock" ] || fail "duplicate retry worker did not coalesce"
 [ "$(wc -l <"$TEST_CURL_LOG")" -eq "$requests_before" ] || fail "retry pause allowed a rapid retry loop"
 wait "$retry_pid"
+[ ! -e "$retry_lock" ] || fail "completed retry left behind its lock"
 [ ! -e "$FORKOP_AUTOMATIC_LATENCY_PENDING_FILE" ] || fail "deferred retry did not continue automatically"
 
 grep -Fq 'Starting new automatic latency test' "$TEST_LOG" || fail "new-test log is missing"
