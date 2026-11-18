@@ -133,6 +133,7 @@ grep -Fq 'reason=on_config_change' "$pending_file" ||
 let fs = require("fs");
 const PENDING_RELOAD_FILE = getenv("TEST_PENDING_RELOAD_FILE");
 const CLAIMED_RELOAD_FILE = PENDING_RELOAD_FILE + ".applying";
+const RELOAD_STOPPED_FILE = PENDING_RELOAD_FILE + ".stopped";
 const RELOAD_LOCK_DIR = "";
 const CONFIG_CHANGE_REASON = "on_config_change";
 const CONFIG_FILE = "";
@@ -140,9 +141,11 @@ const INTERNAL_CONFIG_TRIGGER_GUARD = "";
 const SERVICE_INIT = "";
 const SERVICE_TRIGGER_SYNC_FILE = PENDING_RELOAD_FILE + ".sync";
 const SERVICE_NAME = "forkop";
+const LIB_DIR = "", UI_UC = "";
 const PENDING_RELOAD_MAX_RETRIES = 3;
 let scheduled = [];
 let handed_off = 0;
+let reloads = 0;
 function as_string(value) { return "" + value; }
 function bool_text(value) { return value == "1"; }
 function initd_should_skip_internal_config_reload() { return false; }
@@ -159,11 +162,19 @@ function initd_service_trigger_sync_requested(file) { return file_exists(file); 
 function mark_pending_reload(path, reason) { return fs.writefile(path, "reason=" + reason + "\n"); }
 function schedule_pending_reload_retry(attempt) { push(scheduled, attempt); return true; }
 function run_pending_reload_if_requested(path) { handed_off += file_exists(path) ? 1 : 0; }
+function runtime_is_running() { return false; }
+function module_status() { return 1; }
+function command_from_args(args) { return join(" ", args); }
+function command_status(command) {
+    assert(index(command, "lifecycle.uc reload pending") >= 0);
+    reloads++;
+    return 0;
+}
 function command_success_from_args(args) {
     return args[0] == "logger" || system(args) == 0;
 }
 UCODE
-    sed -n '/^function reload_begin_value(/,/^}/p; /^function reload_finish_value(/,/^}/p' "$INITD_UC"
+    sed -n '/^function reload_begin_value(/,/^}/p; /^function reload_finish_value(/,/^}/p; /^function reload_service(/,/^}/p' "$INITD_UC"
     cat <<'UCODE'
 function claim(reason) {
     let action = reload_begin_value(reason || "pending", "123", "1", "1", "");
@@ -208,6 +219,14 @@ job = claim();
 assert(fs.readfile(CLAIMED_RELOAD_FILE) == original);
 assert(reload_finish_value("pending", job, 0, 0).status == 0);
 assert(!file_exists(CLAIMED_RELOAD_FILE));
+
+fs.writefile(PENDING_RELOAD_FILE, original);
+fs.writefile(RELOAD_STOPPED_FILE, "1\n");
+assert(reload_service("pending-retry-1", "123") == 0 && reloads == 0);
+assert(fs.readfile(PENDING_RELOAD_FILE) == original);
+fs.unlink(RELOAD_STOPPED_FILE);
+assert(reload_service("pending-retry-1", "123") == 0 && reloads == 1);
+assert(!file_exists(PENDING_RELOAD_FILE) && !file_exists(CLAIMED_RELOAD_FILE));
 UCODE
 } | TEST_PENDING_RELOAD_FILE="$WORK_DIR/retry.pending" ucode -
 

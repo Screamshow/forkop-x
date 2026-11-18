@@ -30,6 +30,7 @@ const SYSTEM_INFO_CACHE_FILE = getenv("FORKOP_SYSTEM_INFO_CACHE_FILE") || RUNTIM
 const RELOAD_STATE_FILE = getenv("FORKOP_RELOAD_STATE_FILE") || RUNTIME_STATE_DIR + "/reload-state";
 const RELOAD_STATE_SNAPSHOT_FILE = getenv("FORKOP_RELOAD_STATE_SNAPSHOT_FILE") || RUNTIME_STATE_DIR + "/reload-state.snapshot." + clock()[0] + "." + clock()[1];
 const PENDING_RELOAD_FILE = getenv("FORKOP_PENDING_RELOAD_FILE") || RUNTIME_STATE_DIR + "/reload.pending";
+const RELOAD_STOPPED_FILE = PENDING_RELOAD_FILE + ".stopped";
 const LIST_UPDATE_RELOAD_FILE = getenv("FORKOP_LIST_UPDATE_RELOAD_FILE") || RUNTIME_STATE_DIR + "/list-update.reload";
 const RULESET_REFRESH_AFTER_LIST_FILE = getenv("FORKOP_RULESET_REFRESH_AFTER_LIST_FILE") || RUNTIME_STATE_DIR + "/ruleset-refresh-after-list";
 const POST_START_LATENCY_FILE = getenv("FORKOP_POST_START_LATENCY_FILE") || RUNTIME_STATE_DIR + "/post-start-latency.pending";
@@ -1245,7 +1246,10 @@ function finish_list_change_files(restore) {
     return true;
 }
 
-function abort_reload(status, runtime_changed) {
+function abort_reload(status, runtime_changed, stage_path, backup_path) {
+    discard_singbox_config_stage(stage_path);
+    if (as_string(backup_path) != "")
+        remove_file(backup_path);
     finish_list_change_files(true);
     status = int(status || 0);
     if (status == 0)
@@ -1262,6 +1266,8 @@ function abort_reload(status, runtime_changed) {
 function abort_guarded_transition(status, stage_path, backup_path, guard_active) {
     nft_candidate_finish(false);
     discard_singbox_config_stage(stage_path);
+    if (!guard_active)
+        remove_file(backup_path);
     if (!finish_list_change_files(true)) {
         cleanup_failed_runtime();
         return status || 1;
@@ -1357,6 +1363,7 @@ function start() {
         as_string(RUNTIME_STABLE_MIN_AGE)
     ])) {
         log_message("Forkop is already stably running; treating duplicate start as successful", "info");
+        remove_file(RELOAD_STOPPED_FILE);
         write_file(WATCHDOG_READY_FILE, "1\n");
         release_start_subscription_update_lock();
         return 0;
@@ -1394,6 +1401,7 @@ function start() {
     // before validation lets a detached package/boot start re-enable an
     // endless retry loop for the same invalid configuration.
     clear_start_failure();
+    remove_file(RELOAD_STOPPED_FILE);
     write_file(WATCHDOG_READY_FILE, "1\n");
 
     // A queued reload owns the next runtime transition. initd starts it only
@@ -1454,10 +1462,14 @@ function stop() {
     let internal_stop = getenv("FORKOP_INTERNAL_SERVICE_STOP") == "1" ||
         fs.stat(PACKAGE_UPGRADE_QUIESCE_FILE) != null ||
         fs.stat(MANAGED_UPGRADE_SING_BOX_MARKER) != null;
+    // Only an operator stop blocks the pending handoff. Failure cleanup uses
+    // stop_main() directly so the queued request can recover a stopped core.
+    if (!internal_stop && (!ensure_dir(RUNTIME_STATE_DIR) || !write_file(RELOAD_STOPPED_FILE, "1\n")))
+        log_message("Could not record explicit stop for deferred reloads", "warn");
     return stop_impl(!internal_stop);
 }
 
-function restart_runtime_for_reload() {
+function restart_runtime_for_reload(reason) {
     let status;
     let selector_state = capture_selector_state();
 
@@ -1487,6 +1499,9 @@ function restart_runtime_for_reload() {
         return status;
     }
 
+    remove_file(RELOAD_STOPPED_FILE);
+    if (reason == "list-content")
+        remove_file(LIST_UPDATE_RELOAD_FILE);
     write_file(WATCHDOG_READY_FILE, "1\n");
     restore_selector_state(selector_state);
     remove_file(RELOAD_STATE_SNAPSHOT_FILE);
@@ -1548,11 +1563,6 @@ function reload_actions_summary(plan) {
 
 function release_reload_lock() {
     module_success(STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
-}
-
-function sing_box_runtime_pid() {
-    let result = module_capture(STATE_UC, [ "sing-box-service-runtime-pid" ]);
-    return result.status == 0 ? trim(result.output) : "";
 }
 
 function wait_dns_failover_state(candidate_state_path, attempts, required_successes) {
@@ -1724,7 +1734,7 @@ function reload(reason, cold_restart) {
 
     if (!module_success(STATE_UC, [ "forkop-running", RT_TABLE_NAME, NFT_TABLE_NAME, NFT_FAKEIP_MARK ])) {
         log_message("Runtime state is incomplete; restarting Forkop runtime", "info");
-        return finish_reload_status(restart_runtime_for_reload(), reload_config_fingerprint, reason == "pending");
+        return finish_reload_status(restart_runtime_for_reload(reason), reload_config_fingerprint, reason == "pending");
     }
 
     remove_file(RELOAD_STATE_SNAPSHOT_FILE);
@@ -1777,7 +1787,7 @@ function reload(reason, cold_restart) {
     if (plan_result.status != 0) {
         if (plan_result.status == 2) {
             log_message("Reload state is unavailable; restarting Forkop runtime", "info");
-            return finish_reload_status(restart_runtime_for_reload(), reload_config_fingerprint, reason == "pending");
+            return finish_reload_status(restart_runtime_for_reload(reason), reload_config_fingerprint, reason == "pending");
         }
         return abort_reload(plan_result.status, false);
     }
@@ -1868,57 +1878,42 @@ function reload(reason, cold_restart) {
     let hot_reload = false;
     let needs_singbox_transition = plan.needs_sing_box_reload == 1;
     let sing_box_config_path = "";
-    let sing_box_config_hash_before = "";
-    let sing_box_pid_before = "";
     if (needs_singbox_transition) {
-        module_success(DNS_FAILOVER_UC, [ "stop-runtime" ]);
-        module_success(PRIORITY_UC, [ "stop-runtime" ]);
         status = module_status(SINGBOX_UC, [ "configure-service" ]);
         if (status != 0)
             return abort_reload(status, false);
         sing_box_config_path = config_get(CONFIG_NAME + ".settings.config_path", "");
-        sing_box_config_hash_before = file_md5(sing_box_config_path);
-        sing_box_pid_before = sing_box_runtime_pid();
         staged_singbox_config = trim(command_output_from_args([ "mktemp" ]));
         staged_singbox_backup = trim(command_output_from_args([ "mktemp" ]));
-        if (staged_singbox_config == "" || staged_singbox_backup == "") {
-            discard_singbox_config_stage(staged_singbox_config);
-            remove_file(staged_singbox_backup);
-            return abort_reload(1, false);
-        }
+        if (staged_singbox_config == "" || staged_singbox_backup == "")
+            return abort_reload(1, false, staged_singbox_config, staged_singbox_backup);
         // mktemp creates the backup path, while commit-config-stage requires
         // copying the live config itself before it is changed.
         remove_file(staged_singbox_backup);
         status = singbox_prepare_config_stage(staged_singbox_config);
-        if (status != 0) {
-            discard_singbox_config_stage(staged_singbox_config);
-            return abort_reload(status, false);
-        }
+        if (status != 0)
+            return abort_reload(status, false, staged_singbox_config, staged_singbox_backup);
         let hot_plan = module_capture(HOT_RELOAD_UC, [ "plan", staged_singbox_config ]);
         if (hot_plan.status != 0) {
-            discard_singbox_config_stage(staged_singbox_config);
             log_message("Hot reload candidate rejected before changing the running core", "error");
-            return abort_reload(hot_plan.status, false);
+            return abort_reload(hot_plan.status, false, staged_singbox_config, staged_singbox_backup);
         }
         hot_reload = !cold_restart && trim(hot_plan.output) == "hot";
         // Keep the rollback config before any live mutation, including a stop
         // needed for memory-bounded validation of the candidate.
         if (!hot_reload && (!command_success_from_args([ "cp", "-p", sing_box_config_path, staged_singbox_backup ]) ||
-            !fs.chmod(staged_singbox_backup, 0600))) {
-            discard_singbox_config_stage(staged_singbox_config);
-            remove_file(staged_singbox_backup);
-            return abort_reload(1, false);
-        }
+            !fs.chmod(staged_singbox_backup, 0600)))
+            return abort_reload(1, false, staged_singbox_config, staged_singbox_backup);
     }
 
     if (plan.needs_nft_rebuild == 1) {
         log_message("Rebuilding nftables rules", "info");
         if (!nft_candidate_begin())
-            return abort_reload(1, false);
+            return abort_reload(1, false, staged_singbox_config, staged_singbox_backup);
         status = nft_rebuild_runtime();
         if (status != 0) {
             nft_candidate_finish(false);
-            return abort_reload(status, runtime_changed);
+            return abort_reload(status, runtime_changed, staged_singbox_config, staged_singbox_backup);
         }
         // Every rebuilt table must replay the active downloaded subnet generation.
         // Cold restart forces rebuilding after the planner compared signatures.
@@ -1928,7 +1923,7 @@ function reload(reason, cold_restart) {
             if (status != 0) {
                 nft_candidate_finish(false);
                 log_message("Active list generation could not be restored after nft rebuild. Aborted to preserve fail-safe policy.", "fatal");
-                return abort_reload(status, runtime_changed);
+                return abort_reload(status, runtime_changed, staged_singbox_config, staged_singbox_backup);
             }
         }
         // Inline/source-aware sets are part of the same candidate, not a
@@ -1937,18 +1932,14 @@ function reload(reason, cold_restart) {
         status = nft_populate_runtime_sets();
         if (status != 0) {
             nft_candidate_finish(false);
-            discard_singbox_config_stage(staged_singbox_config);
-            if (status == 0)
-                log_message("Candidate nftables policy failed validation or apply; active policy was left unchanged", "fatal");
-            return abort_reload(status == 0 ? 1 : status, runtime_changed);
+            return abort_reload(status, runtime_changed, staged_singbox_config, staged_singbox_backup);
         }
         // When sing-box also changes, retain this checked candidate until the
         // new process is ready behind the temporary fail-closed guard.
         if (needs_singbox_transition && !nft_candidate_validate()) {
             nft_candidate_finish(false);
-            discard_singbox_config_stage(staged_singbox_config);
             log_message("Candidate nftables policy failed validation; active policy was left unchanged", "fatal");
-            return abort_reload(1, runtime_changed);
+            return abort_reload(1, runtime_changed, staged_singbox_config, staged_singbox_backup);
         }
         if (!needs_singbox_transition && !nft_candidate_finish(true, false)) {
             if (status == 0)
@@ -1971,6 +1962,9 @@ function reload(reason, cold_restart) {
                 return abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, false);
             transition_guard_active = true;
         }
+        // Candidate failures above leave the old core and its workers in place.
+        module_success(DNS_FAILOVER_UC, [ "stop-runtime" ]);
+        module_success(PRIORITY_UC, [ "stop-runtime" ]);
         if (hot_reload) {
             log_message("Applying Xrust configuration with acknowledged hot reload", "info");
             if (!module_success(SINGBOX_UC, [ "commit-config-stage", staged_singbox_config, staged_singbox_backup ]))
@@ -2133,6 +2127,8 @@ function restart() {
     if (module_success(STATE_UC, [ "forkop-running", RT_TABLE_NAME, NFT_TABLE_NAME, NFT_FAKEIP_MARK ])) {
         let selector_state = capture_selector_state();
         let status = reload("restart", true);
+        if (status == 0)
+            remove_file(RELOAD_STOPPED_FILE);
         restore_selector_state(selector_state);
         return status;
     }
@@ -2163,6 +2159,7 @@ function restart() {
         NFT_FAKEIP_MARK,
         as_string(RUNTIME_STABLE_MIN_AGE)
     ])) {
+        remove_file(RELOAD_STOPPED_FILE);
         write_file(WATCHDOG_READY_FILE, "1\n");
         restore_selector_state(selector_state);
         return 0;

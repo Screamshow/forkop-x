@@ -28,6 +28,7 @@ const RELOAD_LOCK_DIR = getenv("FORKOP_RELOAD_LOCK_DIR") || "/var/run/forkop.rel
 const RUNTIME_STATE_DIR = getenv("FORKOP_RUNTIME_STATE_DIR") || "/var/run/forkop";
 const PENDING_RELOAD_FILE = getenv("FORKOP_PENDING_RELOAD_FILE") || RUNTIME_STATE_DIR + "/reload.pending";
 const CLAIMED_RELOAD_FILE = PENDING_RELOAD_FILE + ".applying";
+const RELOAD_STOPPED_FILE = PENDING_RELOAD_FILE + ".stopped";
 const PENDING_RELOAD_MAX_RETRIES = 3;
 const START_RETRY_FILE = getenv("FORKOP_START_RETRY_FILE") || RUNTIME_STATE_DIR + "/start.retry";
 const START_RETRY_PID_FILE = getenv("FORKOP_START_RETRY_PID_FILE") || RUNTIME_STATE_DIR + "/start-retry.pid";
@@ -731,6 +732,11 @@ function reload_begin_value(reason, owner_pid, runtime_running_value, service_en
         return { action: "skip", job_id: "" };
     }
 
+    if (reason == "pending" && file_exists(RELOAD_STOPPED_FILE)) {
+        release_runtime_dir_lock(RELOAD_LOCK_DIR);
+        return { action: "skip", job_id: "" };
+    }
+
     // Claim only under the runtime lock. An abandoned claim is replayable,
     // and newer requests can still use the original path during the reload.
     if ((reason == "pending" || reason == "list-content") &&
@@ -781,12 +787,11 @@ function reload_finish(reason, job_id, status) {
 
 function reload_service(reason, owner_pid) {
     let retry = match(as_string(reason), /^pending-retry-([1-3])$/);
-    if (retry != null) {
-        // A delayed attempt must not restart a deliberately stopped service.
-        if (!runtime_is_running())
-            return 0;
+    if (retry != null)
         reason = "pending";
-    }
+    if (reason == "pending" && file_exists(UI_UC) &&
+        module_status(UI_UC, [ "package-upgrade-transition-active" ]) == 0)
+        return 0;
     // Queueing must never report success for ambiguous process ownership.
     // Preserve the active policy and the lifecycle's public rejection contract.
     if (module_status(LIB_DIR + "/service/state.uc", [ "sing-box-process-conflict" ]) == 0) {
