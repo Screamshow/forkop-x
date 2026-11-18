@@ -67,8 +67,8 @@ grep -Fq 'function automatic_latency_schedule_resume()' "$DIAGNOSTICS_UC" ||
 if grep -Fq 'module_background(' "$DIAGNOSTICS_UC"; then
   fail "diagnostics runtime cannot call lifecycle-only module_background"
 fi
-grep -Fq 'consume_pending_reload(PENDING_RELOAD_FILE);' "$ROOT_DIR/forkop/files/usr/lib/service/initd.uc" ||
-  fail "the init.d pending reload owner must consume its marker before starting"
+grep -Fq 'fs.rename(PENDING_RELOAD_FILE, CLAIMED_RELOAD_FILE)' "$ROOT_DIR/forkop/files/usr/lib/service/initd.uc" ||
+  fail "the init.d pending reload owner must claim its marker before starting"
 grep -Fq 'Automatic latency test is waiting for the pending Forkop reload before taking measurements' "$DIAGNOSTICS_UC" ||
   fail "automatic latency must not measure before a startup pending reload"
 grep -Fq 'the final runtime will resume it' "$DIAGNOSTICS_UC" ||

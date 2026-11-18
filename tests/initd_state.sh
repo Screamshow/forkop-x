@@ -129,6 +129,69 @@ fi
 grep -Fq 'reason=pending' "$pending_file" ||
   fail "pending reload should preserve pending reason while delayed by active action"
 
+{
+    cat <<'UCODE'
+let fs = require("fs");
+const PENDING_RELOAD_FILE = getenv("TEST_PENDING_RELOAD_FILE");
+const CLAIMED_RELOAD_FILE = PENDING_RELOAD_FILE + ".applying";
+const RELOAD_LOCK_DIR = "";
+const CONFIG_CHANGE_REASON = "on_config_change";
+const CONFIG_FILE = "";
+const INTERNAL_CONFIG_TRIGGER_GUARD = "";
+const SERVICE_INIT = "";
+const SERVICE_TRIGGER_SYNC_FILE = PENDING_RELOAD_FILE + ".sync";
+const SERVICE_NAME = "forkop";
+const PENDING_RELOAD_MAX_RETRIES = 3;
+let scheduled = [];
+let handed_off = 0;
+function as_string(value) { return "" + value; }
+function initd_should_skip_internal_config_reload() { return false; }
+function active_service_action_value() { return ""; }
+function acquire_runtime_dir_lock() { return true; }
+function release_runtime_dir_lock() {}
+function file_exists(path) { return fs.stat(path) != null; }
+function unlink_file(path) { if (file_exists(path)) fs.unlink(path); }
+function begin_external_service_action() { return "test-reload"; }
+function finish_external_service_action() {}
+function initd_should_sync_service_triggers(reason, expected, file) {
+    return reason == expected && file_exists(file);
+}
+function schedule_pending_reload_retry(attempt) { push(scheduled, attempt); return true; }
+function run_pending_reload_if_requested(path) { handed_off += file_exists(path) ? 1 : 0; }
+function command_success_from_args(args) {
+    return args[0] == "logger" || system(args) == 0;
+}
+UCODE
+    sed -n '/^function reload_begin_value(/,/^}/p; /^function reload_finish_value(/,/^}/p' "$INITD_UC"
+    cat <<'UCODE'
+function claim() {
+    let action = reload_begin_value("pending", "123", "1", "1", "");
+    assert(action.action == "run" && !file_exists(PENDING_RELOAD_FILE));
+    return action.job_id;
+}
+let original = "reason=on_config_change\n";
+fs.writefile(PENDING_RELOAD_FILE, original);
+let job = claim();
+assert(fs.readfile(CLAIMED_RELOAD_FILE) == original);
+assert(reload_finish_value("pending", job, 7, 0).status == 7);
+assert(fs.readfile(PENDING_RELOAD_FILE) == original && !file_exists(CLAIMED_RELOAD_FILE));
+assert(length(scheduled) == 1 && scheduled[0] == 1 && handed_off == 0);
+
+job = claim();
+fs.writefile(PENDING_RELOAD_FILE, "reason=newer_change\n");
+reload_finish_value("pending", job, 7, PENDING_RELOAD_MAX_RETRIES);
+assert(fs.readfile(PENDING_RELOAD_FILE) == "reason=newer_change\n");
+assert(!file_exists(CLAIMED_RELOAD_FILE) && length(scheduled) == 1 && handed_off == 0);
+
+job = claim();
+fs.writefile(SERVICE_TRIGGER_SYNC_FILE, "1\n");
+let finished = reload_finish_value("pending", job, 0, 1);
+assert(finished.sync && finished.status == 0);
+assert(!file_exists(PENDING_RELOAD_FILE) && !file_exists(CLAIMED_RELOAD_FILE));
+assert(reload_begin_value("pending", "123", "1", "1", "").action == "skip");
+UCODE
+} | TEST_PENDING_RELOAD_FILE="$WORK_DIR/retry.pending" ucode -
+
 start_retry_file="$WORK_DIR/start.retry"
 if initd_ucode start-retry-pending "$start_retry_file" >/dev/null 2>&1; then
   fail "missing start retry marker should not be pending"

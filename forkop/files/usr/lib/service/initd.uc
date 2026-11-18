@@ -27,6 +27,8 @@ const CONFIG_FILE = getenv("FORKOP_CONFIG_FILE") || "/etc/config/" + CONFIG_NAME
 const RELOAD_LOCK_DIR = getenv("FORKOP_RELOAD_LOCK_DIR") || "/var/run/forkop.reload.lock";
 const RUNTIME_STATE_DIR = getenv("FORKOP_RUNTIME_STATE_DIR") || "/var/run/forkop";
 const PENDING_RELOAD_FILE = getenv("FORKOP_PENDING_RELOAD_FILE") || RUNTIME_STATE_DIR + "/reload.pending";
+const CLAIMED_RELOAD_FILE = PENDING_RELOAD_FILE + ".applying";
+const PENDING_RELOAD_MAX_RETRIES = 3;
 const START_RETRY_FILE = getenv("FORKOP_START_RETRY_FILE") || RUNTIME_STATE_DIR + "/start.retry";
 const START_RETRY_PID_FILE = getenv("FORKOP_START_RETRY_PID_FILE") || RUNTIME_STATE_DIR + "/start-retry.pid";
 const START_FAILURE_FILE = getenv("FORKOP_START_FAILURE_FILE") || RUNTIME_STATE_DIR + "/start.failure";
@@ -292,15 +294,6 @@ function schedule_start_retry(path, delay_seconds) {
     return write_text_file(path, pid + "\n");
 }
 
-function consume_pending_reload(path) {
-    path = as_string(path || PENDING_RELOAD_FILE);
-    if (!file_exists(path))
-        return false;
-
-    unlink_file(path);
-    return true;
-}
-
 function run_pending_reload_if_requested(path, init_script) {
     path = as_string(path || PENDING_RELOAD_FILE);
     init_script = as_string(init_script || SERVICE_INIT);
@@ -319,6 +312,14 @@ function run_pending_reload_if_requested(path, init_script) {
     }
 
     return true;
+}
+
+function schedule_pending_reload_retry(attempt) {
+    let delay = 5 * attempt;
+    let command = command_from_args([ "sleep", as_string(delay) ]) + " && exec " +
+        command_from_args([ SERVICE_INIT, "reload", "pending-retry-" + attempt ]);
+    return system(command_from_args([ "sh", "-c", command ]) +
+        " </dev/null >/dev/null 2>&1 1000>&- &") == 0;
 }
 
 function uci_settings() {
@@ -715,20 +716,22 @@ function reload_begin_value(reason, owner_pid, runtime_running_value, service_en
 
     active_service_action = active_service_action == null ? active_service_action_value() : as_string(active_service_action);
     if (reason == "pending" && active_service_action != "" && !ui_action_tracked()) {
-        mark_pending_reload(PENDING_RELOAD_FILE, reason);
+        if (!file_exists(PENDING_RELOAD_FILE) && !file_exists(CLAIMED_RELOAD_FILE))
+            mark_pending_reload(PENDING_RELOAD_FILE, reason);
         return { action: "skip", job_id: "" };
     }
 
     if (reason == "pending") {
         if (!acquire_runtime_dir_lock(RELOAD_LOCK_DIR, owner_pid || owner_pid_value())) {
-            mark_pending_reload(PENDING_RELOAD_FILE, reason || "reload_busy");
             return { action: "skip", job_id: "" };
         }
 
-        // The init.d action which acquired reload.lock owns this request.
-        // Consume its marker before beginning the lifecycle so reload_finish()
-        // only observes requests that arrived while this reload was active.
-        consume_pending_reload(PENDING_RELOAD_FILE);
+        // Claim atomically. A newer request can use the original path while
+        // the lifecycle runs. A duplicate dispatch has no work to claim.
+        if (!fs.rename(PENDING_RELOAD_FILE, CLAIMED_RELOAD_FILE) && !file_exists(CLAIMED_RELOAD_FILE)) {
+            release_runtime_dir_lock(RELOAD_LOCK_DIR);
+            return { action: "skip", job_id: "" };
+        }
         unlink_file(SERVICE_TRIGGER_SYNC_FILE);
         let job_id = begin_external_service_action("reload", "initd", owner_pid);
         return { action: "run", job_id };
@@ -756,12 +759,29 @@ function reload_begin_value(reason, owner_pid, runtime_running_value, service_en
     return { action: "run", job_id };
 }
 
-function reload_finish_value(reason, job_id, status) {
+function reload_finish_value(reason, job_id, status, retry_attempt) {
     status = int(status || 0);
     finish_external_service_action("reload", job_id, status);
-    let sync = status == 0 && initd_should_sync_service_triggers(reason, CONFIG_CHANGE_REASON, SERVICE_TRIGGER_SYNC_FILE);
+    let sync_reason = reason == "pending" ? CONFIG_CHANGE_REASON : reason;
+    let sync = status == 0 && initd_should_sync_service_triggers(sync_reason, CONFIG_CHANGE_REASON, SERVICE_TRIGGER_SYNC_FILE);
+    let failed_pending = reason == "pending" && status != 0;
+    if (reason == "pending") {
+        // ln cannot overwrite a newer request. Keep the claimed file if a
+        // filesystem error prevented us from restoring the pending path.
+        if (!failed_pending || file_exists(PENDING_RELOAD_FILE) ||
+            command_success_from_args([ "ln", CLAIMED_RELOAD_FILE, PENDING_RELOAD_FILE ]))
+            unlink_file(CLAIMED_RELOAD_FILE);
+    }
     release_runtime_dir_lock(RELOAD_LOCK_DIR);
-    if (active_service_action_value() == "")
+    if (failed_pending) {
+        let next_attempt = int(retry_attempt || 0) + 1;
+        let retry_scheduled = next_attempt <= PENDING_RELOAD_MAX_RETRIES &&
+            schedule_pending_reload_retry(next_attempt);
+        command_success_from_args([ "logger", "-t", SERVICE_NAME, retry_scheduled
+            ? "[warn] Pending Forkop reload failed; retry scheduled"
+            : "[warn] Pending Forkop reload failed; request retained for a later transition" ]);
+    }
+    else if (active_service_action_value() == "")
         run_pending_reload_if_requested(PENDING_RELOAD_FILE, SERVICE_INIT);
     return { status, sync };
 }
@@ -773,6 +793,13 @@ function reload_finish(reason, job_id, status) {
 }
 
 function reload_service(reason, owner_pid) {
+    let retry = match(as_string(reason), /^pending-retry-([1-3])$/);
+    if (retry != null) {
+        // A delayed attempt must not restart a deliberately stopped service.
+        if (!runtime_is_running())
+            return 0;
+        reason = "pending";
+    }
     // Queueing must never report success for ambiguous process ownership.
     // Preserve the active policy and the lifecycle's public rejection contract.
     if (module_status(LIB_DIR + "/service/state.uc", [ "sing-box-process-conflict" ]) == 0) {
@@ -794,7 +821,7 @@ function reload_service(reason, owner_pid) {
     // directly here, after acquiring the lock, to avoid re-entering initd.
     let status = command_status(command_from_args([ "env", "FORKOP_LIB=" + LIB_DIR, "FORKOP_UI_ACTION_TRACKED=1",
         "ucode", "-L", LIB_DIR, LIB_DIR + "/service/lifecycle.uc", "reload", reason ]) + " >/dev/null 2>&1");
-    let finish = reload_finish_value(reason, plan.job_id, status);
+    let finish = reload_finish_value(reason, plan.job_id, status, retry == null ? 0 : int(retry[1]));
     if (finish.sync)
         print("sync\n");
     return finish.status;
