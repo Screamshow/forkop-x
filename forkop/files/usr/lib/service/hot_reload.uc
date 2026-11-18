@@ -139,9 +139,9 @@ function rejected(plan, current, fingerprint) {
         str(current.rejected_sha256) == fingerprint &&
         int(current.generation) == int(plan.generation);
 }
-function plan(stage_path) {
-    let cfg = common.object_or_empty(uci.get_all(CONFIG_NAME, "settings"));
-    let current_path = str(cfg.config_path);
+function plan(stage_path, current_path) {
+    if (!current_path)
+        current_path = str(common.object_or_empty(uci.get_all(CONFIG_NAME, "settings")).config_path);
     let process = provenance();
     let before = status(current_path);
     if (!same_process(process, provenance()) || before == null || int(before.pid) != int(process.pid)) {
@@ -184,7 +184,7 @@ function apply(plan_path, restore_path) {
     value.reload_attempt = before.reload_attempt;
     let fingerprint = value.config_sha256;
     if (str(restore_path) != "") {
-        if (capture([ "cp", "-p", restore_path, value.current_path ]).status != 0) return 1;
+        if (!common.copy_private_file_atomic(restore_path, value.current_path)) return 1;
         fingerprint = value.previous_sha256;
     }
     if (capture([ "kill", "-HUP", str(value.process.pid) ]).status != 0) return 1;
@@ -206,7 +206,7 @@ function apply(plan_path, restore_path) {
 }
 function finish(code) { forget_controllers(); exit(code); }
 let mode = ARGV[0] || "";
-if (mode == "plan") finish(plan(ARGV[1] || ""));
+if (mode == "plan") finish(plan(ARGV[1] || "", ARGV[2] || ""));
 else if (mode == "close-retired") finish(close_retired(ARGV[1] || "", ARGV[2] || "", ""));
 else if (mode == "close-tag") finish(close_retired("", ARGV[1] || "", ARGV[2] || ""));
 else if (mode == "connections-fixture") {

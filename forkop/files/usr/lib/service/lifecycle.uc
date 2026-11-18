@@ -1278,7 +1278,7 @@ function abort_guarded_transition(status, stage_path, backup_path, guard_active)
 
     if (fs.stat(backup_path) != null && restore_guarded_singbox_runtime(backup_path, true)) {
         module_success(PRIORITY_UC, [ "start-runtime" ]);
-        module_success(DNS_FAILOVER_UC, [ "start-runtime" ]);
+        module_success(DNS_FAILOVER_UC, [ "start-runtime", "applied" ]);
         log_message("Configuration apply failed; previous runtime restored", "warn");
         return abort_reload(status, false);
     }
@@ -1311,7 +1311,7 @@ function abort_hot_transition(status, stage_path, backup_path) {
         discard_singbox_config_stage(stage_path);
         remove_file(backup_path);
         module_success(PRIORITY_UC, [ "start-runtime" ]);
-        module_success(DNS_FAILOVER_UC, [ "start-runtime" ]);
+        module_success(DNS_FAILOVER_UC, [ "start-runtime", "applied" ]);
         log_message("Hot reload failed; previous core configuration and nft policy restored", "warn");
         return abort_reload(status, false);
     }
@@ -1579,7 +1579,7 @@ function wait_dns_failover_state(candidate_state_path, attempts, required_succes
 }
 
 // Returns 3 only when the core explicitly requires the legacy cold path.
-function dns_failover_hot_apply(candidate_state_path) {
+function dns_failover_hot_apply(candidate_state_path, config_path) {
     let prepared = module_capture(SINGBOX_UC, [ "prepare-dns-config", candidate_state_path ]);
     if (prepared.status != 0) return prepared.status == 3 ? 1 : prepared.status;
     let fields = split(trim(prepared.output), "\t");
@@ -1591,13 +1591,12 @@ function dns_failover_hot_apply(candidate_state_path) {
     let published = false;
     let keep_backup = false;
     if (changed) {
-        let plan = module_capture(HOT_RELOAD_UC, [ "plan", stage ]);
+        let plan = module_capture(HOT_RELOAD_UC, [ "plan", stage, config_path ]);
         if (plan.status != 0) status = 1;
         else if (trim(plan.output) != "hot") status = 3;
         else if (!module_success(DNS_FAILOVER_UC, [ "probe-candidate", candidate_state_path ])) status = 1;
         else {
-            let current = config_get(CONFIG_NAME + ".settings.config_path", "");
-            if (current == "" || !command_success_from_args([ "cp", "-p", stage, current ])) status = 1;
+            if (!common.copy_private_file_atomic(stage, config_path)) status = 1;
             else {
                 published = true;
                 status = module_success(HOT_RELOAD_UC, [ "apply", stage + ".hot-plan" ]) ? 0 : 1;
@@ -1634,7 +1633,9 @@ function dns_failover_apply(candidate_state_path) {
     if (!module_success(STATE_UC, [ "acquire-runtime-dir-lock-wait", RELOAD_LOCK_DIR, owner_pid(), "2" ]))
         return 2;
 
-    let hot_status = dns_failover_hot_apply(candidate_state_path);
+    let applied = object_or_empty(read_json_file(DNS_FAILOVER_STATE_FILE));
+    let config_path = as_string(applied.config_path || config_get(CONFIG_NAME + ".settings.config_path", ""));
+    let hot_status = dns_failover_hot_apply(candidate_state_path, config_path);
     if (hot_status != 3) {
         release_reload_lock();
         return hot_status;
@@ -1644,6 +1645,11 @@ function dns_failover_apply(candidate_state_path) {
     // watching it. Its watcher is outside Forkop's ownership and can otherwise
     // race our controlled replacement with a second procd start.
     let transition_timeout = as_string(getenv("FORKOP_SING_BOX_RELOAD_PID_TIMEOUT") || "15");
+    if (config_path != config_get("sing-box.main.conffile", config_path)) {
+        log_message("DNS failover cannot restart the core while its configured path differs from the applied path", "warn");
+        release_reload_lock();
+        return 1;
+    }
     if (module_status(STATE_UC, [ "stop-managed-sing-box-runtime", transition_timeout ]) != 0) {
         release_reload_lock();
         return 1;
@@ -1659,28 +1665,24 @@ function dns_failover_apply(candidate_state_path) {
     let fields = split(trim(patch_result.output), "\t");
     let changed = as_string(fields[0]) == "1";
     let backup_path = length(fields) > 1 ? as_string(fields[1]) : "";
-    let status = 0;
-
-    if (changed) {
-        status = module_status(STATE_UC, [ "start-managed-sing-box-runtime", transition_timeout ]);
-        if (status == 0)
-            status = wait_dns_failover_state(candidate_state_path, 8, 2);
-    }
-    else {
-        status = module_status(STATE_UC, [ "start-managed-sing-box-runtime", transition_timeout ]);
-    }
+    let status = module_status(STATE_UC, [ "start-managed-sing-box-runtime", transition_timeout ]);
+    if (status == 0 && changed)
+        status = wait_dns_failover_state(candidate_state_path, 8, 2);
 
     if (status == 0 && !module_success(DNS_FAILOVER_UC, [ "commit-state", candidate_state_path ]))
         status = 1;
 
+    let keep_backup = false;
     if (status != 0 && backup_path != "") {
         log_message("DNS failover apply failed; restoring the previous sing-box configuration", "warn");
-        if (module_success(STATE_UC, [ "stop-managed-sing-box-runtime", transition_timeout ]) &&
-            module_success(SINGBOX_UC, [ "restore-dns-config", backup_path ]))
-            module_success(STATE_UC, [ "start-managed-sing-box-runtime", transition_timeout ]);
+        keep_backup = !module_success(STATE_UC, [ "stop-managed-sing-box-runtime", transition_timeout ]) ||
+            !module_success(SINGBOX_UC, [ "restore-dns-config", backup_path, config_path ]) ||
+            !module_success(STATE_UC, [ "start-managed-sing-box-runtime", transition_timeout ]);
+        if (keep_backup)
+            log_message("DNS failover rollback failed; recovery configuration retained at " + backup_path, "warn");
     }
 
-    if (backup_path != "")
+    if (backup_path != "" && !keep_backup)
         remove_file(backup_path);
     release_reload_lock();
     return status;

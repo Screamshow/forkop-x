@@ -928,23 +928,22 @@ function replace_dns_server(config, replacement) {
 }
 
 function patch_dns_config(state_path, prepare_only) {
-    let settings = uci_settings();
-    let candidate_state = common.read_json_file(state_path);
-    let expected = runtime_dns.state_template(settings);
-    if (!runtime_dns.state_matches(expected, candidate_state)) {
-        log_message("DNS failover state does not match the current UCI configuration", "warn");
+    let applied = common.read_json_file(runtime_dns.DNS_FAILOVER_STATE_FILE);
+    let candidate = runtime_dns.failover_selection(applied, common.read_json_file(state_path));
+    if (candidate == null) {
+        log_message("DNS failover state does not match the applied DNS configuration", "warn");
         exit(2);
     }
 
-    let config_path = option(settings, "config_path", "");
+    let config_path = as_string(applied.config_path || option(uci_settings(), "config_path", ""));
     let config = common.read_json_file(config_path);
     if (config_path == "" || type(config) != "object") {
         log_message("Cannot read the current sing-box configuration for DNS failover", "error");
         exit(1);
     }
 
-    let main = runtime_dns.server_config(settings, candidate_state);
-    let bootstrap = runtime_dns.bootstrap_config(settings, candidate_state);
+    let main = runtime_dns.server_config_from_state(candidate);
+    let bootstrap = runtime_dns.bootstrap_config_from_state(candidate);
     if (main.unsupported || !replace_dns_server(config, main) || !replace_dns_server(config, bootstrap)) {
         log_message("Cannot locate or build canonical DNS servers for failover", "error");
         exit(1);
@@ -956,9 +955,13 @@ function patch_dns_config(state_path, prepare_only) {
         if (index(as_string(server.tag), runtime_dns.TUNNEL_DNS_TAG_PREFIX) != 0)
             continue;
         let section_name = substr(server.tag, length(runtime_dns.TUNNEL_DNS_TAG_PREFIX));
-        let section = uci_core.get_all(CONFIG_NAME, section_name);
-        servers[i] = runtime_dns.tunnel_dns_server(main, server.tag, server.detour,
-            connections.native_tunnel_dns_address(section), connections.native_tunnel_dns_type(section));
+        // Only inherited DNS follows the main resolver. Explicit tunnel
+        // resolvers are already materialized in the working core config.
+        let inherited = type(applied.inherited_tunnel_dns) == "array"
+            ? index(applied.inherited_tunnel_dns, server.tag) >= 0
+            : connections.native_tunnel_dns_address(uci_core.get_all(CONFIG_NAME, section_name)) == "";
+        if (inherited)
+            servers[i] = { ...main, tag: server.tag, detour: server.detour };
     }
 
     let backup_path = temp_path();
@@ -986,25 +989,28 @@ function patch_dns_config(state_path, prepare_only) {
         print(changed ? "1" : "0", "\t", backup_path, "\t", temp_config, "\n");
         return;
     }
-    if (!save_config_file(temp_config, config_path)) {
-        remove_file(backup_path);
-        exit(1);
-    }
-
     if (!changed) {
-        remove_file(backup_path);
+        remove_files([ backup_path, temp_config ]);
         print("0\n");
         return;
     }
 
+    let published = common.copy_private_file_atomic(temp_config, config_path);
+    remove_file(temp_config);
+    if (!published) {
+        remove_file(backup_path);
+        exit(1);
+    }
     print("1\t", backup_path, "\n");
 }
 
-function restore_dns_config(backup_path) {
-    let config_path = option(uci_settings(), "config_path", "");
-    if (config_path == "" || !file_exists(backup_path))
+function restore_dns_config(backup_path, config_path) {
+    config_path = config_path || option(uci_settings(), "config_path", "");
+    if (config_path == "" || !file_exists(backup_path) || !fs.chmod(backup_path, 0600))
         return false;
-    return !!fs.chmod(backup_path, 0600) && command_success_from_args([ "mv", "-f", backup_path, config_path ]);
+
+    // Keep the recovery copy until lifecycle has confirmed the old core started.
+    return common.copy_private_file_atomic(backup_path, config_path);
 }
 
 function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferred_sections, stage_path, validate_now) {
@@ -1177,7 +1183,7 @@ else if (mode == "patch-dns-config")
 else if (mode == "prepare-dns-config")
     patch_dns_config(ARGV[1] || "", true);
 else if (mode == "restore-dns-config")
-    exit(restore_dns_config(ARGV[1] || "") ? 0 : 1);
+    exit(restore_dns_config(ARGV[1] || "", ARGV[2] || "") ? 0 : 1);
 else if (mode == "managed-service-installed")
     exit(managed_service_installed() ? 0 : 1);
 else if (mode == "remove-managed-service-script")

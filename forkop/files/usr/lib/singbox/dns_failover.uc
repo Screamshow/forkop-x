@@ -5,6 +5,7 @@ let uci_core = require("core.uci");
 let common = require("core.common");
 let core_ip = require("core.ip");
 let runtime_dns = require("singbox.dns");
+let connections = require("config.connections");
 let worker_identity = require("core.worker_identity");
 let runtime_health = require("core.runtime_health");
 
@@ -151,15 +152,13 @@ function verification_plan(previous, candidate) {
 
 function verify_state(path, preflight, report) {
     let cfg = settings();
-    let state = common.read_json_file(path);
-    let expected = runtime_dns.state_template(cfg);
-    if (!runtime_dns.state_matches(expected, state)) {
-        if (report) log_message("candidate no longer matches current DNS settings", "warn");
+    let previous = common.read_json_file(STATE_FILE);
+    let state = runtime_dns.failover_selection(previous, common.read_json_file(path));
+    if (state == null) {
+        if (report) log_message("candidate no longer matches applied DNS settings", "warn");
         return false;
     }
 
-    state = runtime_dns.normalize_state(cfg, state);
-    let previous = runtime_dns.normalize_state(cfg, common.read_json_file(STATE_FILE));
     let plan = verification_plan(previous, state);
     let timeout_seconds = probe_timeout(common.option(cfg, "dns_check_timeout", "2s"));
     // Before publishing, the main candidate still uses the current bootstrap.
@@ -181,11 +180,8 @@ function verify_state(path, preflight, report) {
 }
 
 function commit_state(path) {
-    let cfg = settings();
-    let state = common.read_json_file(path);
-    if (!runtime_dns.state_matches(runtime_dns.state_template(cfg), state))
-        return false;
-    return fs.rename(path, STATE_FILE);
+    let state = runtime_dns.failover_selection(common.read_json_file(STATE_FILE), common.read_json_file(path));
+    return state != null && write_state(STATE_FILE, state);
 }
 
 function now_seconds() {
@@ -197,7 +193,7 @@ function choose_index(kind, state, current_index, timeout_seconds, recovery) {
     if (length(values) <= 1)
         return { index: 0, reason: "single", alive: true };
 
-    if (recovery && current_index > 0) {
+    if (recovery) {
         for (let i = 0; i < current_index; i++)
             if (probe_port(kind, i, timeout_seconds))
                 return { index: i, reason: "recovery", alive: true };
@@ -283,9 +279,23 @@ function update_dns_outage(outage, available, threshold) {
     }
 }
 
-function worker() {
+function applied_worker_state(cfg, preserve_applied) {
+    let previous = common.read_json_file(STATE_FILE);
+    if (preserve_applied && previous?.version == 1)
+        return previous;
+
+    let state = runtime_dns.normalize_state(cfg, previous);
+    state.config_path = common.option(cfg, "config_path", "");
+    state.inherited_tunnel_dns = [];
+    for (let section in uci_core.section_objects(CONFIG_NAME, "section"))
+        if (connections.native_tunnel_dns_address(section) == "")
+            push(state.inherited_tunnel_dns, runtime_dns.tunnel_dns_tag(section[".name"]));
+    return state;
+}
+
+function worker(preserve_applied) {
     let cfg = settings();
-    let state = runtime_dns.normalize_state(cfg, common.read_json_file(STATE_FILE));
+    let state = applied_worker_state(cfg, preserve_applied);
     if (!state.provider && length(state.main_servers) <= 1 && length(state.bootstrap_servers) <= 1)
         return 0;
     if (!write_state(STATE_FILE, state))
@@ -297,32 +307,22 @@ function worker() {
     let threshold = failure_threshold(common.option(cfg, "dns_failover_failure_threshold", "3"));
     let next_active = now_seconds();
     let next_recovery = now_seconds() + recovery_interval;
-    let all_down = { main: false, bootstrap: false };
+    let bootstrap_all_down = false;
     let outage = { failures: 0, reported: false };
     let active_failures = { main: 0, bootstrap: 0 };
     let observed_runtime = null;
 
     while (true) {
         let now = now_seconds();
-        let current_cfg = settings();
-        if (now >= next_active || !state.provider) {
-            let expected = runtime_dns.state_template(current_cfg);
-            if (!runtime_dns.state_matches(expected, state)) {
-                if (state.provider && expected.provider) {
-                    // Keep the last valid runtime while every WAN is offline.
-                    // Retry discovery without manufacturing a public DNS fallback.
-                    if (length(expected.main_servers) == 0) {
-                        next_active = now + active_interval;
-                        command_success_from_args([ "sleep", "1" ]);
-                        continue;
-                    }
-                    log_message("WAN DNS or mwan3 availability changed; regenerating DNS routes", "info");
-                    // Exit before reload stops/replaces this worker; never hold
-                    // a service action open from the process it must terminate.
-                    command_status("(sleep 1; " + command_from_args([ SERVICE_BIN, "reload" ]) +
-                        ") >/dev/null 2>&1 1000>&- &");
-                }
-                return 0;
+        // Keep monitoring the applied config until a successful transition
+        // replaces this worker. UCI may already contain an unapplied edit.
+        if (state.provider && now >= next_active) {
+            let expected = runtime_dns.state_template(cfg);
+            if (expected.provider && length(expected.main_servers) > 0 &&
+                !runtime_dns.state_matches(expected, state)) {
+                log_message("WAN DNS or mwan3 availability changed; regenerating DNS routes", "info");
+                command_status("(sleep 1; " + command_from_args([ SERVICE_BIN, "reload" ]) +
+                    ") >/dev/null 2>&1 1000>&- &");
             }
         }
 
@@ -342,7 +342,7 @@ function worker() {
             observed_runtime = observed.state;
             if (!observed.ready) {
                 active_failures = { main: 0, bootstrap: 0 };
-                all_down = { main: false, bootstrap: false };
+                bootstrap_all_down = false;
                 outage.failures = 0;
                 next_active = now + active_interval;
                 next_recovery = now + recovery_interval;
@@ -353,12 +353,11 @@ function worker() {
 
         if (now >= next_active) {
             let bootstrap = choose_index("bootstrap", state, int(state.bootstrap_index), timeout_seconds, false);
-            if (!bootstrap.alive && !all_down.bootstrap)
+            if (!bootstrap.alive && !bootstrap_all_down)
                 log_message("all configured bootstrap DNS servers are unavailable", "warn");
-            all_down.bootstrap = !bootstrap.alive;
+            bootstrap_all_down = !bootstrap.alive;
             let main = choose_index("main", state, int(state.main_index), timeout_seconds, false);
             update_dns_outage(outage, main.alive, threshold);
-            all_down.main = !main.alive;
 
             let selections = {};
             let bootstrap_ready = failover_confirmed(
@@ -397,18 +396,22 @@ function stop_runtime() {
     return worker_identity.stop(PID_FILE, DNS_FAILOVER_UC, LIB_DIR) ? 0 : 1;
 }
 
-function start_runtime() {
+function start_runtime(preserve_applied) {
     let cfg = settings();
     if (stop_runtime() != 0)
         return 1;
-    if (!runtime_dns.failover_enabled(cfg)) {
+    let applied = preserve_applied ? common.read_json_file(STATE_FILE) : null;
+    let enabled = applied?.version == 1
+        ? applied.provider || length(applied.main_servers) > 1 || length(applied.bootstrap_servers) > 1
+        : runtime_dns.failover_enabled(cfg);
+    if (!enabled) {
         remove_file(STATE_FILE);
         return 0;
     }
     if (!ensure_dir(RUNTIME_STATE_DIR))
         return 1;
 
-    let command = command_from_args([ "ucode", "-L", LIB_DIR, DNS_FAILOVER_UC, "worker" ]) +
+    let command = command_from_args([ "ucode", "-L", LIB_DIR, DNS_FAILOVER_UC, "worker", preserve_applied ? "applied" : "" ]) +
         " >/dev/null 2>&1 1000>&- & echo $! >" + shell_quote(PID_FILE);
     if (command_status(command) != 0)
         return 1;
@@ -450,11 +453,11 @@ function select_fixture(state_path, alive_path, kind, recovery) {
 let mode = ARGV[0] || "";
 
 if (mode == "start-runtime")
-    exit(start_runtime());
+    exit(start_runtime(ARGV[1] == "applied"));
 else if (mode == "stop-runtime")
     exit(stop_runtime());
 else if (mode == "worker")
-    exit(worker());
+    exit(worker(ARGV[1] == "applied"));
 else if (mode == "verify-state")
     exit(verify_state(ARGV[1], false, ARGV[2] == "report") ? 0 : 1);
 else if (mode == "probe-candidate")

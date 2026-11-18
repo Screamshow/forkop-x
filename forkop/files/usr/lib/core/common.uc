@@ -88,6 +88,26 @@ function write_private_json_file(path, value) {
     return write_private_file(path, sprintf("%J\n", value));
 }
 
+function copy_private_file_atomic(source, target) {
+    if (!source || !target)
+        return false;
+    // The temporary file must live beside the destination so the final
+    // rename cannot fall back to copying across filesystems.
+    let template = "'" + replace(target + ".forkop.XXXXXX", /'/g, "'\\''") + "'";
+    let pipe = fs.popen("mktemp " + template + " 2>/dev/null", "r");
+    if (!pipe)
+        return false;
+    let temporary = trim(pipe.read("all") || "");
+    if (pipe.close() != 0 || temporary == "")
+        return false;
+
+    let copied = system([ "cp", source, temporary ]) == 0 &&
+        fs.chmod(temporary, 0600) && fs.rename(temporary, target);
+    if (!copied)
+        fs.unlink(temporary);
+    return copied;
+}
+
 // Callers create parents separately: never narrow a shared parent such as /tmp.
 function secure_private_dir(path) {
     if (path == null || path == "" || path == "/")
@@ -194,6 +214,7 @@ return {
     open_private_file,
     write_private_file,
     write_private_json_file,
+    copy_private_file_atomic,
     secure_private_dir,
     strip_internal_fields,
     array_or_empty,

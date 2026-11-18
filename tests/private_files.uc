@@ -120,7 +120,10 @@ private_json(work + "/dns-backup.json", { dns_backup: true });
 fs.chmod(work + "/dns-backup.json", 0644);
 runtime(["restore-dns-config", work + "/dns-backup.json"]);
 mode(work + "/live.json", 0600);
+mode(work + "/dns-backup.json", 0600);
 expect(json(fs.readfile(work + "/live.json")).dns_backup === true, "DNS backup restore readable by root");
+expect(fs.readfile(work + "/dns-backup.json") == fs.readfile(work + "/live.json"),
+    "DNS backup remains available until lifecycle confirms restart");
 expect(common.write_private_file(work + "/same.json", fs.readfile(work + "/live.json")) != null, "copy unchanged config");
 fs.chmod(work + "/live.json", 0644);
 runtime(["save-config-file-fixture", work + "/same.json", work + "/live.json"]);

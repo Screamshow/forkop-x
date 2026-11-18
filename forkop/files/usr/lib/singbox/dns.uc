@@ -92,6 +92,19 @@ function normalize_state(settings, state) {
     return result;
 }
 
+function failover_selection(applied, candidate) {
+    if (type(applied) != "object" || applied.version != 1 || !state_matches(applied, candidate))
+        return null;
+    let main = int(candidate.main_index);
+    let bootstrap = int(candidate.bootstrap_index);
+    if (candidate.main_index == null || candidate.bootstrap_index == null ||
+        main != candidate.main_index || bootstrap != candidate.bootstrap_index ||
+        main < 0 || main >= length(applied.main_servers) ||
+        bootstrap < 0 || bootstrap >= length(applied.bootstrap_servers))
+        return null;
+    return { ...applied, main_index: main, bootstrap_index: bootstrap };
+}
+
 function runtime_state(settings, override_state) {
     let state = override_state;
     if (state == null)
@@ -167,20 +180,26 @@ function bind_provider(server, state, index_value) {
     return server;
 }
 
-function server_config(settings, override_state) {
-    let active = active_values(settings, override_state);
+function server_config_from_state(state) {
     return bind_provider(server_from_options(
         runtime_constants.DNS_SERVER_TAG,
-        active.state.dns_type,
-        active.main,
-        active.state.dns_detour
-    ), active.state, active.state.main_index);
+        state.dns_type,
+        state.main_servers[state.main_index],
+        state.dns_detour
+    ), state, state.main_index);
+}
+
+function bootstrap_config_from_state(state) {
+    return bind_provider(bootstrap_server(runtime_constants.BOOTSTRAP_DNS_SERVER_TAG,
+        state.bootstrap_servers[state.bootstrap_index]), state, state.bootstrap_index);
+}
+
+function server_config(settings, override_state) {
+    return server_config_from_state(runtime_state(settings, override_state));
 }
 
 function bootstrap_config(settings, override_state) {
-    let active = active_values(settings, override_state);
-    return bind_provider(bootstrap_server(runtime_constants.BOOTSTRAP_DNS_SERVER_TAG, active.bootstrap),
-        active.state, active.state.bootstrap_index);
+    return bootstrap_config_from_state(runtime_state(settings, override_state));
 }
 
 function failover_enabled(settings) {
@@ -332,14 +351,17 @@ return {
     active_values,
     arrays_equal,
     bootstrap_config,
+    bootstrap_config_from_state,
     config,
     default_domain_resolver,
     detour_tag,
     failover_enabled,
+    failover_selection,
     health_port,
     normalize_state,
     runtime_state,
     server_config,
+    server_config_from_state,
     server_from_options,
     server_list,
     state_matches,
