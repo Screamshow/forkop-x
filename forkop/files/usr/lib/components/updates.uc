@@ -51,9 +51,6 @@ const PERSISTENT_SUBSCRIPTION_CACHE_FORMAT = getenv("FORKOP_PERSISTENT_SUBSCRIPT
 const PENDING_RELOAD_FILE = getenv("FORKOP_PENDING_RELOAD_FILE") || RUNTIME_STATE_DIR + "/reload.pending";
 const LIST_UPDATE_RELOAD_FILE = getenv("FORKOP_LIST_UPDATE_RELOAD_FILE") || RUNTIME_STATE_DIR + "/list-update.reload";
 const RULESET_REFRESH_AFTER_LIST_FILE = getenv("FORKOP_RULESET_REFRESH_AFTER_LIST_FILE") || RUNTIME_STATE_DIR + "/ruleset-refresh-after-list";
-const RELOAD_STATE_FILE = getenv("FORKOP_RELOAD_STATE_FILE") || RUNTIME_STATE_DIR + "/reload-state";
-const RELOAD_STATE_FORMAT = getenv("FORKOP_RELOAD_STATE_FORMAT") || "1";
-const RULE_CONDITION_CACHE_DIR = getenv("FORKOP_RULE_CONDITION_CACHE_DIR") || RUNTIME_STATE_DIR + "/rule-condition-cache";
 const RELOAD_LOCK_DIR = getenv("FORKOP_RELOAD_LOCK_DIR") || "/var/run/forkop.reload.lock";
 const SERVICE_INIT = getenv("FORKOP_SERVICE_INIT") || "/etc/init.d/forkop";
 const PRIORITY_UC = getenv("FORKOP_PRIORITY_UC") || LIB_DIR + "/singbox/priority.uc";
@@ -4036,15 +4033,6 @@ function singbox_runtime_success(args) {
     return result.status == 0;
 }
 
-function write_current_reload_state_clean() {
-    return service_state_success([
-        "write-current-reload-state-clean",
-        RELOAD_STATE_FILE,
-        RELOAD_STATE_FORMAT,
-        RULE_CONDITION_CACHE_DIR
-    ]);
-}
-
 function mark_pending_reload(reason) {
     service_state_success([ "mark-pending-reload", PENDING_RELOAD_FILE, reason ]);
 }
@@ -4338,9 +4326,8 @@ function subscription_update_common_locked(force, target_section, target_source_
             return false;
         }
     }
-    if (!write_current_reload_state_clean())
-        return false;
-
+    // This transition only applied sing-box. Leave the last full lifecycle
+    // snapshot intact so a queued reload can still see unrelated UCI changes.
     let proxy_signature_after = current_proxy_outbounds_signature(sing_box_config_path);
     let final_proxy_set_changed = proxy_signature_after != "" && proxy_signature_after != proxy_signature_before;
     if (final_proxy_set_changed) {

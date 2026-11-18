@@ -92,6 +92,7 @@ function run(ready,start,init,recovery,want) {
  fail_ready=ready;fail_start=start;fail_init=init;fail_recovery=recovery;fail_snapshot=false;calls=[];config="old";readiness_calls=0;
  if(subscription_update_common_locked(true,"section",0)!=want)die("subscription fault result\n");
  let text=join("\n",calls);
+ if(index(text,"clean")>=0)die("subscription update marked unrelated UCI settings as applied\n");
  if(index(text,"save-selector-state")<0 || index(text,"save-selector-state")>index(text,"stop-managed-sing-box-runtime"))die("selector snapshot missing/late\n");
  if(!recovery && (index(text,"restore-selector-state")<0 || index(text,"restore-selector-state")>index(text,"priority start-runtime")))die("selector restore missing/late\n");
  if(want){
@@ -99,7 +100,6 @@ function run(ready,start,init,recovery,want) {
    if(index(text,"wait-managed-sing-box-config-listeners")>index(text,"priority start-runtime"))die("helpers started before ready\n");
  }else{
    if(config!="old" || index(text,"restore-config-stage backup-dir/previous.json.restore")<0)die("old runtime not restored\n");
-   if(index(text,"clean")>=0)die("failed update marked clean\n");
    if(recovery){
      if(index(text,"rm -rf backup-dir")>=0 || index(text,"priority start-runtime")>=0)die("failed recovery backup/helpers\n");
    }else if(index(text,"priority start-runtime")<0 || index(text,"dns start-runtime")<0)die("recovered workers missing\n");
