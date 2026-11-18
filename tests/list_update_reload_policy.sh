@@ -87,9 +87,11 @@ grep -Fq '[ "cp", "-R", "-p", TMP_RULESET_FOLDER + "/.", list_ruleset_snapshot_d
   fail "changed list content must request exactly one final reload"
 grep -Fq 'let reload_result = command_capture(command_from_args([ SERVICE_INIT, "reload", "list-content" ])' "$UPDATES_UC" &&
 grep -Fq 'write_file(LIST_UPDATE_RELOAD_FILE, "apply-pending\n")' "$UPDATES_UC" &&
-grep -Fq 'trim(reload_result.output) == "queued"' "$UPDATES_UC" &&
-grep -Fq 'write_file(LIST_UPDATE_RELOAD_FILE, "apply-failed\n")' "$UPDATES_UC" ||
+grep -Fq 'trim(reload_result.output) == "queued"' "$UPDATES_UC" ||
   fail "committed content must receive one final reload and retain a local retry on apply failure"
+if grep -Fq '"consume-pending-reload"' "$UPDATES_UC"; then
+  fail "only initd may claim a queued reload before applying list content"
+fi
 grep -Fq 'if (!applied)' "$UPDATES_UC" &&
   grep -Fq 'write_file(LIST_UPDATE_RELOAD_FILE, "1\n")' "$UPDATES_UC" ||
   fail "failed source transactions must preserve rather than execute a deferred reload"

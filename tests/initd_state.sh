@@ -119,14 +119,13 @@ fi
 grep -Fq 'reason=on_config_change' "$pending_file" ||
   fail "pending reload should preserve config-change reason"
 
-rm -f "$pending_file"
 if FORKOP_PENDING_RELOAD_FILE="$pending_file" \
   initd_ucode reload-begin-fixture pending 123 1 1 start >/dev/null 2>&1; then
   fail "pending reload should not run while another service action is active"
 fi
 [ -f "$pending_file" ] ||
   fail "pending reload should stay pending while another service action is active"
-grep -Fq 'reason=pending' "$pending_file" ||
+grep -Fq 'reason=on_config_change' "$pending_file" ||
   fail "pending reload should preserve pending reason while delayed by active action"
 
 {
@@ -145,7 +144,10 @@ const PENDING_RELOAD_MAX_RETRIES = 3;
 let scheduled = [];
 let handed_off = 0;
 function as_string(value) { return "" + value; }
+function bool_text(value) { return value == "1"; }
 function initd_should_skip_internal_config_reload() { return false; }
+function initd_should_queue_config_change_reload() { return false; }
+function initd_should_ignore_config_change_reload() { return false; }
 function active_service_action_value() { return ""; }
 function acquire_runtime_dir_lock() { return true; }
 function release_runtime_dir_lock() {}
@@ -153,9 +155,8 @@ function file_exists(path) { return fs.stat(path) != null; }
 function unlink_file(path) { if (file_exists(path)) fs.unlink(path); }
 function begin_external_service_action() { return "test-reload"; }
 function finish_external_service_action() {}
-function initd_should_sync_service_triggers(reason, expected, file) {
-    return reason == expected && file_exists(file);
-}
+function initd_service_trigger_sync_requested(file) { return file_exists(file); }
+function mark_pending_reload(path, reason) { return fs.writefile(path, "reason=" + reason + "\n"); }
 function schedule_pending_reload_retry(attempt) { push(scheduled, attempt); return true; }
 function run_pending_reload_if_requested(path) { handed_off += file_exists(path) ? 1 : 0; }
 function command_success_from_args(args) {
@@ -164,8 +165,8 @@ function command_success_from_args(args) {
 UCODE
     sed -n '/^function reload_begin_value(/,/^}/p; /^function reload_finish_value(/,/^}/p' "$INITD_UC"
     cat <<'UCODE'
-function claim() {
-    let action = reload_begin_value("pending", "123", "1", "1", "");
+function claim(reason) {
+    let action = reload_begin_value(reason || "pending", "123", "1", "1", "");
     assert(action.action == "run" && !file_exists(PENDING_RELOAD_FILE));
     return action.job_id;
 }
@@ -189,6 +190,24 @@ let finished = reload_finish_value("pending", job, 0, 1);
 assert(finished.sync && finished.status == 0);
 assert(!file_exists(PENDING_RELOAD_FILE) && !file_exists(CLAIMED_RELOAD_FILE));
 assert(reload_begin_value("pending", "123", "1", "1", "").action == "skip");
+
+job = claim("list-content");
+assert(fs.readfile(CLAIMED_RELOAD_FILE) == "reason=list-content\n");
+assert(reload_finish_value("list-content", job, 7, 0).status == 7);
+assert(fs.readfile(PENDING_RELOAD_FILE) == "reason=list-content\n" && scheduled[1] == 1);
+
+fs.writefile(PENDING_RELOAD_FILE, original);
+job = claim("list-content");
+assert(fs.readfile(CLAIMED_RELOAD_FILE) == original);
+fs.writefile(SERVICE_TRIGGER_SYNC_FILE, "1\n");
+assert(reload_finish_value("list-content", job, 0, 0).sync);
+assert(!file_exists(PENDING_RELOAD_FILE) && !file_exists(CLAIMED_RELOAD_FILE));
+
+fs.writefile(CLAIMED_RELOAD_FILE, original);
+job = claim();
+assert(fs.readfile(CLAIMED_RELOAD_FILE) == original);
+assert(reload_finish_value("pending", job, 0, 0).status == 0);
+assert(!file_exists(CLAIMED_RELOAD_FILE));
 UCODE
 } | TEST_PENDING_RELOAD_FILE="$WORK_DIR/retry.pending" ucode -
 

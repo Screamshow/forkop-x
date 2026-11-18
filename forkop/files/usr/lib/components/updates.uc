@@ -3750,63 +3750,43 @@ function finish_list_update(status, applied, generation_changed) {
         if (ruleset_status > 1)
             log_message("Remote rule-set refresh failed; keeping its last-known-good cache", "warn");
     }
-    list_update_pid_end();
-    if (as_string(getenv("FORKOP_MANUAL_RESTART_LOCK_HELD") || "0") != "1")
-        release_runtime_lock(RELOAD_LOCK_DIR);
-
     // The LuCI manual-restart path prepares and validates a complete list
     // generation while the old runtime is still serving traffic. The staged
     // generation is atomically published by commit_runtime_list_generation(),
     // but it is not made policy-active here: lifecycle.restart() is the sole
     // runtime transition after all data families are prepared.
-    if (as_string(getenv("FORKOP_LIST_UPDATE_PREPARE_ONLY") || "0") == "1")
+    let prepare_only = getenv("FORKOP_LIST_UPDATE_PREPARE_ONLY") == "1";
+    // Publish the apply intent before releasing the lock so any intervening
+    // reload also sees the committed generation. Init.d owns the reload
+    // request and its retries even if this worker has already exited.
+    let needs_runtime_apply = !prepare_only && applied &&
+        (generation_changed || rulesets_changed || ruleset_changed || reload_deferred);
+    let apply_recorded = !needs_runtime_apply || write_file(LIST_UPDATE_RELOAD_FILE, "apply-pending\n");
+    list_update_pid_end();
+    if (as_string(getenv("FORKOP_MANUAL_RESTART_LOCK_HELD") || "0") != "1")
+        release_runtime_lock(RELOAD_LOCK_DIR);
+    if (prepare_only)
         exit(status == 0 ? 0 : 1);
-
-    // A successful generation reload reads the newest UCI state itself, so it
-    // subsumes a queued reload instead of launching pending + list-content as
-    // two competing reloads. Do not consume that request until the final
-    // runtime apply actually succeeds: the generation may be complete while
-    // its corresponding nft/sing-box transition still fails.
-    let pending_reload = applied ? fs.readfile(PENDING_RELOAD_FILE) : null;
-    if (!applied)
+    if (!apply_recorded) {
+        log_message("Unable to persist the committed list generation's local runtime-apply request", "error");
+        exit(1);
+    }
+    if (!needs_runtime_apply) {
         service_state_success([ "run-pending-reload-if-requested", PENDING_RELOAD_FILE, SERVICE_INIT ]);
+        exit(status == 0 ? 0 : 1);
+    }
+
     // nft list mutations were only candidate data. Publish the committed
     // generation through lifecycle, which rebuilds the full nft table in one
     // transaction; never append those elements to the active table here.
-    let needs_runtime_apply = applied && (generation_changed || rulesets_changed || ruleset_changed || reload_deferred || pending_reload != null);
-    if (needs_runtime_apply) {
-        // The init wrapper may accept this request while another lifecycle
-        // owns reload.lock and return success after only queuing it. Persist
-        // the local-apply intent before that call; lifecycle removes it only
-        // after a real list-content transition commits.
-        if (!write_file(LIST_UPDATE_RELOAD_FILE, "apply-pending\n")) {
-            log_message("Unable to persist the committed list generation's local runtime-apply request", "error");
-            exit(1);
-        }
-        // Avoid a competing pending reload while this synchronous apply owns
-        // the transition. Restore the exact request if the apply fails.
-        if (pending_reload != null)
-            service_state_success([ "consume-pending-reload", PENDING_RELOAD_FILE ]);
-
-        let reload_result = command_capture(command_from_args([ SERVICE_INIT, "reload", "list-content" ]) + " 2>/dev/null 0<&-");
-        let reload_status = reload_result.status;
-        if (reload_status != 0) {
-            // The generation is valid and remains active. Retain an explicit
-            // local-only apply request; lifecycle turns the next ordinary
-            // reload into list-content, so it never has to download again.
-            write_file(LIST_UPDATE_RELOAD_FILE, "apply-failed\n");
-            if (pending_reload != null)
-                write_file(PENDING_RELOAD_FILE, pending_reload);
-            log_message("List generation was committed, but applying it to the runtime policy failed; retaining it for a local retry", "error");
-            exit(reload_status);
-        }
-        if (trim(reload_result.output) == "queued") {
-            log_message("List generation was committed and its runtime apply was queued; retaining the local list-content request", "info");
-            exit(status == 0 ? 0 : 1);
-        }
-
-        exit(status == 0 ? 0 : 1);
+    let reload_result = command_capture(command_from_args([ SERVICE_INIT, "reload", "list-content" ]) + " 2>/dev/null 0<&-");
+    if (reload_result.status != 0) {
+        log_message("List generation was committed, but applying it to the runtime policy failed; retaining it for a local retry", "error");
+        exit(reload_result.status);
     }
+    if (trim(reload_result.output) == "queued")
+        log_message("List generation was committed and its runtime apply was queued; retaining the local list-content request", "info");
+
     exit(status == 0 ? 0 : 1);
 }
 

@@ -220,15 +220,6 @@ function mark_pending_reload(path, reason) {
         exit(1);
 }
 
-function consume_pending_reload(path) {
-    path = as_string(path || DEFAULT_PENDING_RELOAD_FILE);
-    if (fs.stat(path) == null)
-        return false;
-
-    unlink_file(path);
-    return true;
-}
-
 function package_upgrade_quiescing() {
     return command_success_from_args([ "ucode", "-L", LIB_DIR, LIB_DIR + "/service/ui.uc", "package-upgrade-transition-active" ]);
 }
@@ -237,12 +228,12 @@ function run_pending_reload_if_requested(path, init_script) {
     path = as_string(path || DEFAULT_PENDING_RELOAD_FILE);
     init_script = as_string(init_script || DEFAULT_SERVICE_INIT);
 
+    if (fs.stat(path) == null && fs.stat(path + ".applying") == null)
+        return true;
+
     // The package pre-upgrade action owns the service transition. A worker
     // must not hand a queued reload back to init.d while it is stopping it.
     if (package_upgrade_quiescing())
-        return true;
-
-    if (fs.stat(path) == null)
         return true;
 
     command_success_from_args([ "logger", "-t", "forkop", "[info] Applying pending Forkop reload" ]);
@@ -1889,8 +1880,6 @@ else if (mode == "sync-time-if-needed")
     sync_time_if_needed();
 else if (mode == "mark-pending-reload")
     mark_pending_reload(ARGV[1], ARGV[2]);
-else if (mode == "consume-pending-reload")
-    exit(consume_pending_reload(ARGV[1]) ? 0 : 1);
 else if (mode == "run-pending-reload-if-requested")
     exit(run_pending_reload_if_requested(ARGV[1], ARGV[2]) ? 0 : 1);
 else if (mode == "acquire-runtime-dir-lock")

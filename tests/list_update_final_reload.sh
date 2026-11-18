@@ -21,15 +21,18 @@ generation_hash="$(md5sum "$WORK_DIR/runtime-generation/source-1" | awk '{print 
 cat >"$WORK_DIR/bin/forkop-init" <<'EOF_INIT'
 #!/bin/sh
 printf '%s\n' "$*" >>"$FORKOP_TEST_RELOAD_LOG"
+if [ -e "$FORKOP_TEST_PENDING_FILE" ]; then
+  cat "$FORKOP_TEST_PENDING_FILE" >"${FORKOP_TEST_PENDING_FILE}.seen-by-init"
+fi
 if [ -e "${FORKOP_TEST_PENDING_FILE}.queue" ]; then
   printf 'reason=list-content\n' >"$FORKOP_TEST_PENDING_FILE"
   printf 'queued\n'
   exit 0
 fi
-if [ "${FORKOP_TEST_RELOAD_APPLIED:-1}" = 1 ]; then
+if [ "${FORKOP_TEST_RELOAD_STATUS:-0}" = 0 ]; then
   # Model lifecycle's post-commit removal. A synchronous init.d reload has
   # actually completed by this point; a queued one must leave the marker.
-  rm -f "$FORKOP_TEST_LIST_APPLY_MARKER"
+  rm -f "$FORKOP_TEST_LIST_APPLY_MARKER" "$FORKOP_TEST_PENDING_FILE"
 fi
 exit "${FORKOP_TEST_RELOAD_STATUS:-0}"
 EOF_INIT
@@ -68,8 +71,10 @@ printf 'reason=config-change\n' >"$WORK_DIR/reload.pending"
 run_finish 0 1 || fail "successful changed generation final reload returned failure"
 [ "$(cat "$WORK_DIR/reload.log")" = "reload list-content" ] ||
   fail "successful worker did not issue exactly one list-content reload"
+[ "$(cat "$WORK_DIR/reload.pending.seen-by-init")" = "reason=config-change" ] ||
+  fail "list worker consumed the queued request before initd could claim it"
 [ ! -e "$WORK_DIR/reload.pending" ] || fail "successful apply did not consume pending reload"
-[ ! -e "$WORK_DIR/list-update.reload" ] || fail "successful apply retained an apply-failed marker"
+[ ! -e "$WORK_DIR/list-update.reload" ] || fail "successful apply retained its apply marker"
 
 # init.d returns zero when reload.lock is held, but reports `queued` for a
 # list-content request. The committed generation is not applied until that
@@ -135,7 +140,7 @@ done
 run_finish 0 0 || fail "byte-identical generation worker returned failure"
 [ ! -s "$WORK_DIR/reload.log" ] || fail "byte-identical generation triggered list-content reload"
 [ ! -e "$WORK_DIR/reload.pending" ] || fail "byte-identical generation retained pending reload"
-[ ! -e "$WORK_DIR/list-update.reload" ] || fail "byte-identical generation retained apply-failed marker"
+[ ! -e "$WORK_DIR/list-update.reload" ] || fail "byte-identical generation retained an apply marker"
 
 printf 'reason=config-change\n' >"$WORK_DIR/reload.pending"
 printf '1\n' >"$WORK_DIR/list-update.reload"
@@ -147,7 +152,7 @@ fi
   fail "failed worker did not attempt exactly one final list-content reload"
 [ "$(cat "$WORK_DIR/reload.pending")" = "reason=config-change" ] ||
   fail "failed apply lost the prior pending reload request"
-[ "$(cat "$WORK_DIR/list-update.reload")" = "apply-failed" ] ||
+[ "$(cat "$WORK_DIR/list-update.reload")" = "apply-pending" ] ||
   fail "failed apply did not retain durable local retry marker"
 [ "$generation_hash" = "$(md5sum "$WORK_DIR/runtime-generation/source-1" | awk '{print $1}')" ] ||
   fail "failed runtime apply changed the committed generation"

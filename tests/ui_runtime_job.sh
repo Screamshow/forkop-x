@@ -75,8 +75,8 @@ grep -Fq 'service_action_wait_for_expected_state(action, SERVICE_ACTION_TIMEOUT_
   fail "UI service action worker must keep action state until the expected service state is stable"
 grep -Fq 'reason == "manual-ui-restart" ? [ BIN_PATH, "manual_restart" ] : [ SERVICE_INIT, action ]' "$UI_UC" ||
   fail "UI restart must use the guarded manual_restart path while other actions use init.d"
-grep -Fq 'start_service_action("reload", "initd", "pending")' "$UI_UC" ||
-  fail "pending reload must enter the normal reload service action immediately"
+grep -Fq '"run-pending-reload-if-requested", PENDING_RELOAD_FILE, SERVICE_INIT' "$UI_UC" ||
+  fail "pending reload must enter initd without creating a UI job before it owns the runtime lock"
 if grep -n -E 'pgrep.*sing-box|service-list-instance-running' "$UI_UC" >/dev/null 2>&1; then
   fail "service/ui.uc must not use transient sing-box process probes for visible status"
 fi

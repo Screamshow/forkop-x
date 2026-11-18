@@ -298,7 +298,7 @@ function run_pending_reload_if_requested(path, init_script) {
     path = as_string(path || PENDING_RELOAD_FILE);
     init_script = as_string(init_script || SERVICE_INIT);
 
-    if (!file_exists(path))
+    if (!file_exists(path) && !file_exists(path + ".applying"))
         return true;
 
     command_success_from_args([ "logger", "-t", SERVICE_NAME, "[info] Applying pending Forkop reload" ]);
@@ -403,12 +403,6 @@ function initd_should_queue_config_change_reload(reason, expected_reason, runtim
     return as_string(reason) == as_string(expected_reason || CONFIG_CHANGE_REASON) &&
         !bool_text(runtime_running) &&
         as_string(active_service_action) != "";
-}
-
-function initd_should_sync_service_triggers(reason, expected_reason, sync_file) {
-    if (as_string(reason) != as_string(expected_reason || CONFIG_CHANGE_REASON))
-        return false;
-    return initd_service_trigger_sync_requested(sync_file);
 }
 
 function restore_dnsmasq_failsafe() {
@@ -715,43 +709,36 @@ function reload_begin_value(reason, owner_pid, runtime_running_value, service_en
     }
 
     active_service_action = active_service_action == null ? active_service_action_value() : as_string(active_service_action);
-    if (reason == "pending" && active_service_action != "" && !ui_action_tracked()) {
-        if (!file_exists(PENDING_RELOAD_FILE) && !file_exists(CLAIMED_RELOAD_FILE))
+    if (reason == "pending" && active_service_action != "" && !ui_action_tracked())
+        return { action: "skip", job_id: "" };
+
+    if (reason != "pending") {
+        let running = runtime_running_value == null ? runtime_is_running() : bool_text(runtime_running_value);
+        let enabled = service_enabled_value == null ? service_is_enabled() : bool_text(service_enabled_value);
+
+        if (initd_should_queue_config_change_reload(reason, CONFIG_CHANGE_REASON, running, active_service_action)) {
             mark_pending_reload(PENDING_RELOAD_FILE, reason);
-        return { action: "skip", job_id: "" };
-    }
-
-    if (reason == "pending") {
-        if (!acquire_runtime_dir_lock(RELOAD_LOCK_DIR, owner_pid || owner_pid_value())) {
             return { action: "skip", job_id: "" };
         }
 
-        // Claim atomically. A newer request can use the original path while
-        // the lifecycle runs. A duplicate dispatch has no work to claim.
-        if (!fs.rename(PENDING_RELOAD_FILE, CLAIMED_RELOAD_FILE) && !file_exists(CLAIMED_RELOAD_FILE)) {
-            release_runtime_dir_lock(RELOAD_LOCK_DIR);
+        if (initd_should_ignore_config_change_reload(reason, CONFIG_CHANGE_REASON, running, enabled))
             return { action: "skip", job_id: "" };
-        }
-        unlink_file(SERVICE_TRIGGER_SYNC_FILE);
-        let job_id = begin_external_service_action("reload", "initd", owner_pid);
-        return { action: "run", job_id };
-    }
-
-    let running = runtime_running_value == null ? runtime_is_running() : bool_text(runtime_running_value);
-    let enabled = service_enabled_value == null ? service_is_enabled() : bool_text(service_enabled_value);
-
-    if (initd_should_queue_config_change_reload(reason, CONFIG_CHANGE_REASON, running, active_service_action)) {
-        mark_pending_reload(PENDING_RELOAD_FILE, reason || "reload_queued");
-        return { action: "skip", job_id: "" };
-    }
-
-    if (initd_should_ignore_config_change_reload(reason, CONFIG_CHANGE_REASON, running, enabled)) {
-        return { action: "skip", job_id: "" };
     }
 
     if (!acquire_runtime_dir_lock(RELOAD_LOCK_DIR, owner_pid || owner_pid_value())) {
-        mark_pending_reload(PENDING_RELOAD_FILE, reason || "reload_busy");
+        if (reason != "pending")
+            mark_pending_reload(PENDING_RELOAD_FILE, reason || "reload_busy");
         return { action: "skip", job_id: "" };
+    }
+
+    // Claim only under the runtime lock. An abandoned claim is replayable,
+    // and newer requests can still use the original path during the reload.
+    if ((reason == "pending" || reason == "list-content") &&
+        !fs.rename(PENDING_RELOAD_FILE, CLAIMED_RELOAD_FILE) && !file_exists(CLAIMED_RELOAD_FILE)) {
+        if (reason == "pending" || !mark_pending_reload(CLAIMED_RELOAD_FILE, reason)) {
+            release_runtime_dir_lock(RELOAD_LOCK_DIR);
+            return { action: reason == "pending" ? "skip" : "error", job_id: "" };
+        }
     }
 
     unlink_file(SERVICE_TRIGGER_SYNC_FILE);
@@ -761,11 +748,10 @@ function reload_begin_value(reason, owner_pid, runtime_running_value, service_en
 
 function reload_finish_value(reason, job_id, status, retry_attempt) {
     status = int(status || 0);
-    finish_external_service_action("reload", job_id, status);
-    let sync_reason = reason == "pending" ? CONFIG_CHANGE_REASON : reason;
-    let sync = status == 0 && initd_should_sync_service_triggers(sync_reason, CONFIG_CHANGE_REASON, SERVICE_TRIGGER_SYNC_FILE);
-    let failed_pending = reason == "pending" && status != 0;
-    if (reason == "pending") {
+    let sync = status == 0 && initd_service_trigger_sync_requested(SERVICE_TRIGGER_SYNC_FILE);
+    let claimed = reason == "pending" || reason == "list-content";
+    let failed_pending = claimed && status != 0;
+    if (claimed) {
         // ln cannot overwrite a newer request. Keep the claimed file if a
         // filesystem error prevented us from restoring the pending path.
         if (!failed_pending || file_exists(PENDING_RELOAD_FILE) ||
@@ -773,6 +759,7 @@ function reload_finish_value(reason, job_id, status, retry_attempt) {
             unlink_file(CLAIMED_RELOAD_FILE);
     }
     release_runtime_dir_lock(RELOAD_LOCK_DIR);
+    finish_external_service_action("reload", job_id, status);
     if (failed_pending) {
         let next_attempt = int(retry_attempt || 0) + 1;
         let retry_scheduled = next_attempt <= PENDING_RELOAD_MAX_RETRIES &&
@@ -807,6 +794,8 @@ function reload_service(reason, owner_pid) {
         return 1;
     }
     let plan = reload_begin_value(reason, owner_pid, null, null);
+    if (plan.action == "error")
+        return 1;
     if (plan.action != "run") {
         // A list worker must distinguish an accepted queued request from a
         // completed lifecycle. The init.d shell intentionally ignores this

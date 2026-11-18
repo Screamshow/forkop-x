@@ -1331,38 +1331,15 @@ function service_action_allows_pending_reload(action) {
     return action == "start" || action == "restart" || action == "reload";
 }
 
-function consume_pending_reload() {
-    return command_success_from_args([
-        "ucode",
-        "-L", LIB_DIR,
-        STATE_UC,
-        "consume-pending-reload",
-        PENDING_RELOAD_FILE
-    ]);
-}
-
-function mark_pending_reload(reason) {
-    return command_success_from_args([
-        "ucode",
-        "-L", LIB_DIR,
-        STATE_UC,
-        "mark-pending-reload",
-        PENDING_RELOAD_FILE,
-        reason
-    ]);
-}
-
 function run_pending_reload_after_service_action(action, success) {
     if (!success || !service_action_allows_pending_reload(action) || fs.stat(STATE_UC) == null)
         return;
 
-    if (!consume_pending_reload())
-        return;
-
-    command_success_from_args([ "logger", "-t", SERVICE_NAME, "[info] Applying pending Forkop reload" ]);
-    let started = start_service_action("reload", "initd", "pending");
-    if (!started.success)
-        mark_pending_reload("pending");
+    command_success_from_args([
+        "env", "FORKOP_LIB=" + LIB_DIR,
+        "ucode", "-L", LIB_DIR, STATE_UC,
+        "run-pending-reload-if-requested", PENDING_RELOAD_FILE, SERVICE_INIT
+    ]);
 }
 
 function write_finished_service_action_state(path, action, success, message, exit_code) {
