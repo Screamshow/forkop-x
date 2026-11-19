@@ -569,18 +569,21 @@ function parse_port_value(value) {
     return is_integer_string(value) ? int(value, 10) : value;
 }
 
-function parse_host_port(value) {
+function parse_host_port(value, default_port) {
     value = as_string(value);
     if (length(value) > 0 && substr(value, length(value) - 1) == "/")
         value = substr(value, 0, length(value) - 1);
     if (starts_with(value, "[")) {
         let m = match(value, /^\[([^\]]+)\]:(.+)$/);
-        return m ? [m[1], parse_port_value(m[2])] : ["", null];
+        if (m)
+            return [m[1], parse_port_value(m[2])];
+        m = default_port ? match(value, /^\[([^\]]+)\]$/) : null;
+        return m ? [m[1], parse_port_value(default_port)] : ["", null];
     }
 
     let colon = rindex(value, ":");
     if (colon < 0)
-        return ["", null];
+        return value != "" && default_port ? [value, parse_port_value(default_port)] : ["", null];
 
     let host = substr(value, 0, colon);
     let port = substr(value, colon + 1);
@@ -618,7 +621,7 @@ function parse_url(url) {
         hostport = substr(authority, at_pos + 1);
     }
 
-    let host_port = parse_host_port(hostport);
+    let host_port = parse_host_port(hostport, core_url.default_port(url));
     return {
         scheme: scheme,
         userinfo: userinfo,

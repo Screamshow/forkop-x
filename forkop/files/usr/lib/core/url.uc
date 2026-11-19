@@ -113,17 +113,26 @@ function host(value) {
     return rindex(value_authority, ":") == colon ? substr(value_authority, 0, colon) : value_authority;
 }
 
+function default_port(value) {
+    let protocol = scheme(value);
+    return protocol == "hy2" || protocol == "hysteria2" ? "443" : "";
+}
+
 function port(value) {
     let value_authority = authority(value);
     if (substr(value_authority, 0, 1) == "[") {
         let end = index(value_authority, "]");
         if (end > 0 && substr(value_authority, end + 1, 1) == ":")
             return substr(value_authority, end + 2);
+        if (end > 0 && end + 1 == length(value_authority))
+            return default_port(value);
         return "";
     }
 
     let colon = index(value_authority, ":");
-    if (colon < 0 || rindex(value_authority, ":") != colon)
+    if (colon < 0)
+        return value_authority != "" ? default_port(value) : "";
+    if (rindex(value_authority, ":") != colon)
         return "";
 
     return substr(value_authority, colon + 1);
@@ -180,6 +189,7 @@ return {
     strip_fragment,
     host,
     port,
+    default_port,
     userinfo,
     path,
     query_params
