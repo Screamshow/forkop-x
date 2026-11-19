@@ -1,5 +1,5 @@
 #!/bin/sh
-# Optional: RUST_X_BINARY and LEGACY_BINARY run a real "check" on the output.
+# Optional core checks: RUST_X_BINARY, LEGACY_BINARY and XRUST_XRAY_BINARY.
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 LIB=${FORKOP_LIB:-$ROOT/forkop/files/usr/lib}

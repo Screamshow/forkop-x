@@ -678,8 +678,8 @@ function unsupported_xray_client_option(outbound) {
         return unsupported_xray_tls(transport.download_settings.tls);
     }
     if (transport.type == "grpc" && transport.multi_mode === true &&
-        index(as_string(transport.service_name || ""), "/") == 0 && !has_xray_client_feature("transport.grpc.multi"))
-        return "requires gRPC multi mode with a custom method path";
+        !has_xray_client_feature("transport.grpc.multi"))
+        return "requires gRPC multi mode";
     return "";
 }
 
@@ -688,11 +688,6 @@ function adapt_xray_options_for_core(outbound) {
         // Older Xrust versions can still enforce the original strict leaf pin.
         outbound.tls = { ...outbound.tls, certificate_sha256: outbound.tls.xray_pinned_peer_cert_sha256 };
         delete outbound.tls.xray_pinned_peer_cert_sha256;
-    }
-    if (outbound.transport?.type == "grpc" && outbound.transport.multi_mode === true &&
-        !has_xray_client_feature("transport.grpc.multi")) {
-        outbound.transport = { ...outbound.transport };
-        delete outbound.transport.multi_mode;
     }
 }
 

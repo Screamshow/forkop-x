@@ -44,7 +44,11 @@ export function validateHysteria2Url(url: string): ValidationResult {
         message: _('Invalid HY2 URL: missing host & port'),
       };
 
-    const parsedHostPort = parseHostPort(hostPortPart);
+    const authority = hostPortPart.split('/', 1)[0];
+    const hasPort = authority.startsWith('[')
+      ? !authority.endsWith(']')
+      : authority.includes(':');
+    const parsedHostPort = parseHostPort(hasPort ? authority : `${authority}:443`);
     if (!parsedHostPort) {
       return {
         valid: false,
@@ -61,8 +65,7 @@ export function validateHysteria2Url(url: string): ValidationResult {
       return { valid: false, message: _('Invalid HY2 URL: missing port') };
     }
 
-    const cleanedPort = port.replace('/', '');
-    const portEntries = cleanedPort.split(',');
+    const portEntries = port.split(',');
 
     const isValidPortEntry = (entry: string) => {
       if (!entry) {

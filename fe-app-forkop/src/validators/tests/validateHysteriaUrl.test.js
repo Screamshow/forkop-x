@@ -4,6 +4,9 @@ import { validateHysteria2Url } from '../validateHysteriaUrl.js';
 const validUrls = [
   // Basic password-only
   ['password basic', 'hysteria2://pass@example.com:443/#hy2-basic'],
+  ['default port', 'hysteria2://pass@example.com/'],
+  ['short scheme and IPv6 default port', 'hy2://pa+ss@[2001:db8::1]/'],
+  ['mport without an authority port', 'hy2://pass@example.com/?mport=5000-6000'],
 
   // insecure=1
   [
@@ -45,7 +48,8 @@ const invalidUrls = [
   ['No prefix', 'pw@example.com:443'],
   ['Missing password', 'hysteria2://@example.com:443/'],
   ['Missing host', 'hysteria2://pw@:443/'],
-  ['Missing port', 'hysteria2://pw@example.com/'],
+  ['Explicit empty port', 'hysteria2://pw@example.com:/'],
+  ['Explicit empty IPv6 port', 'hysteria2://pw@[2001:db8::1]:/'],
   ['Invalid host', 'hysteria2://pw@bad_host:443/'],
   ['Non-numeric port', 'hysteria2://pw@example.com:port/'],
   ['Port out of range', 'hysteria2://pw@example.com:99999/'],

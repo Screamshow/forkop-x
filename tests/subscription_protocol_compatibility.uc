@@ -198,8 +198,11 @@ let extra = replace(sprintf("%J", { xPaddingBytes: "100-200", downloadSettings: 
 let ws_default = vless_base + "type=ws&security=none&host=ws.example#ws-default";
 let clear_split = vless_base + "type=xhttp&path=%2Fupload&extra=" + extra + "#xhttp-split";
 let grpc_multi = "trojan://pw@127.0.0.1:8443?type=grpc&peer=localhost&serviceName=%2Fsvc%2Fmany&mode=multi#grpc-multi";
+let pinned_tls = vless_base + "security=tls&sni=localhost&pcs=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef#xray-pin";
 let split = normalize(clear_split)[0];
 expect(split.tls == null && split.transport.x_padding_bytes == "100-200", "XHTTP uplink must keep cleartext and its own padding");
+let inferred_tls = normalize(vless_base + "type=xhttp&sni=front.example&path=%2Fupload#tls-hint")[0];
+expect(inferred_tls.tls?.server_name == "front.example", "an explicit XHTTP uplink TLS hint must survive");
 let secondary = split.transport.download_settings;
 expect(secondary?.server == "127.0.0.2" && secondary.server_port == 9443 && secondary.transport.path == "/download" &&
     secondary.transport.host == "get.example" && secondary.transport.x_padding_bytes == "300-400" &&
@@ -208,10 +211,15 @@ let link_serializer = require("subscription.share_link");
 let exported_split = normalize(link_serializer.serialize_outbound_link(split))[0];
 expect(exported_split.transport.download_settings?.server == "127.0.0.2" &&
     exported_split.transport.download_settings.tls.verify_server_name[0] == "cert.example", "XHTTP split export roundtrip");
+let cached_split = { ...split, share_link: clear_split, transport: { ...split.transport, x_padding_bytes: "9-12" } };
+delete cached_split.transport.download_settings;
+parser.repair_cached_outbounds([cached_split]);
+expect(cached_split.transport.download_settings?.server == "127.0.0.2" &&
+    cached_split.transport.x_padding_bytes == "9-12", "cached XHTTP repair overwrote an existing uplink option");
 let grpc = normalize(grpc_multi)[0];
 expect(grpc.transport.multi_mode === true && grpc.tls.server_name == "localhost", "gRPC multi URI and Trojan peer");
 expect(normalize(link_serializer.serialize_outbound_link(grpc))[0].transport.multi_mode === true, "export gRPC multi mode");
-manual.section[0].selector_proxy_links = [ws_default, clear_split, grpc_multi];
+manual.section[0].selector_proxy_links = [ws_default, clear_split, grpc_multi, pinned_tls];
 expect(generate(manual, trojan_core, work+"/generated.json", "1", xray_features) == 0, "Xray extensions manual fixture failed: " + log_text());
 let configured = json(fs.readfile(work+"/generated.json")).outbounds;
 let ws = filter(configured, node => node.transport?.type == "ws")[0];
@@ -220,8 +228,19 @@ let grpc_out = filter(configured, node => node.transport?.type == "grpc")[0];
 expect(ws?.transport.path == "/", "manually imported WS should default its path to /");
 expect(xhttp?.transport.download_settings?.tls?.verify_server_name[0] == "cert.example", "manual XHTTP split download lost verification name");
 expect(grpc_out?.transport.multi_mode === true && grpc_out.tls.server_name == "localhost", "manual Trojan peer or gRPC multi lost");
+expect(length(filter(configured, node => length(node.tls?.xray_pinned_peer_cert_sha256 || []) == 1)) == 1,
+    "Xray pin missing from the generated TLS configuration");
+let xray_binary = getenv("XRUST_XRAY_BINARY");
+if (xray_binary)
+    expect(run([xray_binary, "check", "-c", work+"/generated.json"]) == 0, "Xrust rejected extended Xray options");
 expect(generate(manual, trojan_core, work+"/kept.json", "1") != 0 &&
     index(last_log_line(), "separate XHTTP download connection") >= 0, "old core silently accepted XHTTP split");
+
+for (let link in [grpc_multi, replace(grpc_multi, "%2Fsvc%2Fmany", "svc")]) {
+    manual.section[0].selector_proxy_links = [link];
+    expect(generate(manual, trojan_core, work+"/kept.json", "1") != 0 &&
+        index(last_log_line(), "requires gRPC multi mode") >= 0, "old core silently changed gRPC multi to Tun");
+}
 
 manual.section[0].selector_proxy_links=["ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpwdw@127.0.0.1:8388#SS%20Manual"];
 expect(generate(manual,trojan_core,work+"/kept.json","1")!=0,"manual Shadowsocks link accepted on Trojan-capable Xrust");

@@ -740,8 +740,7 @@ function add_tls(url, security, default_tls) {
     if (security == "tls" || security == "xtls" || security == "reality")
         tls_enabled = true;
     else if (security == null || security == "")
-        tls_enabled = default_tls || (transport != "xhttp" &&
-            (sni != "" || length(advertised_alpn) > 0 || fingerprint != "" || public_key != ""));
+        tls_enabled = default_tls || sni != "" || length(advertised_alpn) > 0 || fingerprint != "" || public_key != "";
 
     if (!tls_enabled)
         return [null, true];
@@ -3004,7 +3003,7 @@ function repair_cached_outbounds(outbounds) {
                 outbound.transport.path == parsed.transport.path && outbound.transport.host == parsed.transport.host &&
                 outbound.transport.mode == parsed.transport.mode && outbound.transport.download_settings == null &&
                 parsed.transport.download_settings != null)
-                outbound.transport = parsed.transport;
+                outbound.transport.download_settings = parsed.transport.download_settings;
         }
     }
     return outbounds;
