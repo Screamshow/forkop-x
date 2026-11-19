@@ -59,4 +59,32 @@ fi
 test ! -e "$WORK/live"
 test -f "$WORK/stage.section-cache/a.json"
 test -z "$(find "$WORK" -maxdepth 1 -name '.section-cache.*' -print)"
+# A reload can reject the candidate after publication. Retain the previous
+# directory until the lifecycle commits the whole config and nft transition.
+transaction="$WORK/live.reload.test"
+for prior in existing absent; do
+    if [ "$prior" = existing ]; then
+        mkdir "$WORK/live"
+        printf '%s' '{"original":true}' >"$WORK/live/original.json"
+    fi
+    ucode -L "$FORKOP_LIB" "$RUNTIME" publish-section-cache "$WORK/stage" "$transaction"
+    test -f "$WORK/live/a.json"
+    test -d "$transaction"
+    ucode -L "$FORKOP_LIB" "$RUNTIME" finish-section-cache "$transaction" restore
+    test ! -e "$transaction"
+    if [ "$prior" = existing ]; then
+        grep -Fxq '{"original":true}' "$WORK/live/original.json"
+        test ! -e "$WORK/live/a.json"
+        rm -r "$WORK/live"
+    else
+        test ! -e "$WORK/live"
+    fi
+    mkdir "$WORK/stage.section-cache"
+    printf '%s' '{"candidate":true}' >"$WORK/stage.section-cache/a.json"
+done
+ucode -L "$FORKOP_LIB" "$RUNTIME" publish-section-cache "$WORK/stage" "$transaction"
+ucode -L "$FORKOP_LIB" "$RUNTIME" finish-section-cache "$transaction" commit
+test -f "$WORK/live/a.json"
+test ! -e "$transaction"
+
 echo 'Section-cache rollback checks passed'

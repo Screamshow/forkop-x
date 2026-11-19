@@ -8,6 +8,8 @@ const SB_DNS_INBOUND_ADDRESS = getenv("SB_DNS_INBOUND_ADDRESS") || "127.0.0.42";
 const DNSMASQ_INIT = getenv("DNSMASQ_INIT") || "/etc/init.d/dnsmasq";
 const SNAPSHOT_VERSION = "1";
 const SNAPSHOT_PREFIX = "dhcp.@dnsmasq[0].forkop_dns_";
+const SNAPSHOT_KEYS = [ "version", "transaction_id", "server", "server_present", "server_kind",
+    "noresolv", "noresolv_present", "cachesize", "cachesize_present" ];
 
 function as_string(value) {
     return value == null ? "" : "" + value;
@@ -47,10 +49,6 @@ function uci_add_list(path, value) {
 
 function uci_del_list(path, value) {
     return uci.del_list(path, value);
-}
-
-function uci_commit(package_name) {
-    uci.commit(package_name);
 }
 
 function words(value) {
@@ -111,7 +109,7 @@ function snapshot_path(key) {
 }
 
 function dnsmasq_snapshot_marker_present() {
-    for (let key in [ "version", "transaction_id", "server", "server_present", "server_kind", "noresolv", "noresolv_present", "cachesize", "cachesize_present" ]) {
+    for (let key in SNAPSHOT_KEYS) {
         if (uci_exists(snapshot_path(key)))
             return true;
     }
@@ -203,7 +201,7 @@ function snapshot_field(key) {
 }
 
 function clear_dnsmasq_snapshot() {
-    for (let key in [ "version", "transaction_id", "server", "server_present", "server_kind", "noresolv", "noresolv_present", "cachesize", "cachesize_present" ])
+    for (let key in SNAPSHOT_KEYS)
         uci_delete(snapshot_path(key));
 }
 
@@ -327,7 +325,66 @@ function dnsmasq_restore_default_instance() {
     return changed;
 }
 
-function dnsmasq_configure(force) {
+function dnsmasq_reload_state() {
+    let main = uci.get_all("dhcp", "@dnsmasq[0]") || {};
+    let fields = {};
+    for (let key in [ "server", "noresolv", "cachesize", "notinterface", "forkop_notinterface",
+        ...map(SNAPSHOT_KEYS, key => "forkop_dns_" + key) ])
+        fields[key] = main[key];
+    return { name: main[".name"] || "@dnsmasq[0]", fields, legacy: uci.get_all("dhcp", "forkop") };
+}
+
+function same_uci_value(left, right) {
+    return sprintf("%J", left) == sprintf("%J", right);
+}
+
+function recover_dnsmasq_reload(before, attempted) {
+    if (!uci.reload("dhcp"))
+        return false;
+    let current = dnsmasq_reload_state();
+    let restored = current.name == before.name;
+    let updated = false;
+    if (restored) {
+        for (let key, value in before.fields) {
+            if (same_uci_value(value, attempted.fields[key]) || same_uci_value(value, current.fields[key]))
+                continue;
+            if (!same_uci_value(attempted.fields[key], current.fields[key])) {
+                log("Preserving a concurrent change to dnsmasq " + key, "warn");
+                continue;
+            }
+            let path = "dhcp." + before.name + "." + key;
+            if (!(value == null ? uci.delete(path) : uci.set(path, value)))
+                restored = false;
+            updated = true;
+        }
+    }
+    if (before.legacy && !attempted.legacy && !current.legacy) {
+        restored = uci.set_section("dhcp.forkop", before.legacy[".type"]) && restored;
+        for (let key, value in before.legacy)
+            if (substr(key, 0, 1) != ".")
+                restored = uci.set("dhcp.forkop." + key, value) && restored;
+        updated = true;
+    }
+    let saved = !updated || uci.commit("dhcp");
+    let ready = restart_dnsmasq();
+    return restored && saved && ready;
+}
+
+function finish_dnsmasq_change(restart, before) {
+    let attempted = before ? dnsmasq_reload_state() : null;
+    let saved = uci.commit("dhcp");
+    if (saved && (!restart || restart_dnsmasq()))
+        return true;
+    if (before) {
+        if (recover_dnsmasq_reload(before, attempted))
+            log("Restored previous dnsmasq settings after failed reload", "warn");
+        else
+            log("Could not fully restore dnsmasq after failed reload", "error");
+    }
+    return false;
+}
+
+function dnsmasq_configure(force, preserve_on_failure) {
     if (!uci_available())
         return true;
 
@@ -349,16 +406,15 @@ function dnsmasq_configure(force) {
         return false;
     }
 
+    let before = preserve_on_failure ? dnsmasq_reload_state() : null;
     log("Configuring dnsmasq to forward DNS to sing-box", "info");
     dnsmasq_cleanup_legacy_instance();
     if (!dnsmasq_configure_default_instance())
         return false;
-    uci_commit("dhcp");
-
-    return restart_dnsmasq();
+    return finish_dnsmasq_change(true, before);
 }
 
-function dnsmasq_restore(force, quiet) {
+function dnsmasq_restore(force, quiet, preserve_on_failure) {
     if (!uci_available())
         return true;
 
@@ -379,13 +435,13 @@ function dnsmasq_restore(force, quiet) {
     if (as_string(force) != "force" && uci_get(CONFIG_NAME + ".settings.shutdown_correctly") == "1")
         log("Forkop DNS settings are still present after a clean shutdown; restoring DNS settings in dnsmasq", "info");
 
+    let before = preserve_on_failure ? dnsmasq_reload_state() : null;
     if (has_legacy)
         dnsmasq_cleanup_legacy_instance();
     let changed = has_snapshot ? dnsmasq_restore_default_instance() : has_legacy;
     // Snapshot consumption itself must be durable, even if every field had an
     // external conflict and therefore no dnsmasq restart is necessary.
-    uci_commit("dhcp");
-    return !changed || restart_dnsmasq();
+    return finish_dnsmasq_change(changed, before);
 }
 
 function failsafe_restore() {
@@ -413,9 +469,9 @@ function failsafe_restore() {
 let mode = ARGV[0] || "";
 
 if (mode == "configure")
-    exit(dnsmasq_configure(ARGV[1]) ? 0 : 1);
+    exit(dnsmasq_configure(ARGV[1], ARGV[2] == "reload") ? 0 : 1);
 else if (mode == "restore")
-    exit(dnsmasq_restore(ARGV[1]) ? 0 : 1);
+    exit(dnsmasq_restore(ARGV[1], false, ARGV[2] == "reload") ? 0 : 1);
 else if (mode == "failsafe-restore")
     exit(failsafe_restore() ? 0 : 1);
 else if (mode == "has-forkop-dns")

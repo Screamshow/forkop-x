@@ -11,6 +11,8 @@ let calls = [];
 let fs = { stat: function(path) { return {}; } };
 let PRIORITY_UC = "priority", DNS_FAILOVER_UC = "dns";
 let RELOAD_STATE_SNAPSHOT_FILE = "snapshot";
+function discard_reload_config_backup(path) {}
+function finish_reload_section_cache(restore) { return true; }
 function nft_candidate_finish(commit) { push(calls, "discard-nft"); }
 function discard_singbox_config_stage(path) {}
 function finish_list_change_files(restore) { return getenv("CASE") != "lists-failed"; }
@@ -47,6 +49,8 @@ const RT_TABLE_NAME = "routes", NFT_UC = "nft", NFT_TABLE_NAME = "table", NFT_FA
 const LIST_UPDATE_RELOAD_FILE = "pending.lists", RELOAD_STATE_SNAPSHOT_FILE = "snapshot";
 const RELOAD_STATE_FILE = "reload-state", RELOAD_STATE_FORMAT = 1, SECTION_CACHE_DIR = "sections";
 let fs = require("fs");
+let common = require("core.common");
+let reload_core_transaction;
 let work = getenv("FORKOP_TEST_WORK");
 let current = work + "/current.json";
 let rule_condition_cache_enabled, nft_candidate_batch_file, scenario, calls, temporary;
@@ -59,13 +63,13 @@ function external_config_fingerprint() { return "config"; }
 function validate_start_config() { return 0; }
 function module_status(module, args) {
     push(calls, args[0]);
-    return scenario == "configure" && args[0] == "configure-service" ? 7 : 0;
+    return 0;
 }
 function module_success(module, args) {
     push(calls, args[0]);
     return args[0] == "forkop-running";
 }
-function module_capture() { return { status: 0, output: "cold" }; }
+function module_capture() { return { status: 0, output: scenario == "configure" ? "hot" : "cold" }; }
 function command_output_from_args() {
     let path = work + "/candidate." + length(temporary);
     push(temporary, path);
@@ -91,14 +95,14 @@ function nft_populate_runtime_sets() { return 0; }
 function nft_candidate_validate() { return scenario != "nft"; }
 function nft_candidate_finish() { nft_candidate_batch_file = ""; return true; }
 UC
-sed -n '/^function abort_reload(/,/^}/p; /^function abort_guarded_transition(/,/^}/p; /^function reload(/,/^}/p' "$SOURCE"
+sed -n '/^function finish_reload_section_cache(/,/^}/p; /^function discard_reload_config_backup(/,/^}/p; /^function abort_reload(/,/^}/p; /^function abort_guarded_transition(/,/^}/p; /^function reload(/,/^}/p' "$SOURCE"
 cat <<'UC'
 fs.writefile(current, "old config");
 for (scenario in ["configure", "stage", "nft-build", "nft", "guard"]) {
     calls = [];
     temporary = [];
     nft_candidate_batch_file = "";
-    let expected_status = scenario == "nft" || scenario == "guard" ? 1 : 7;
+    let expected_status = scenario == "nft" || scenario == "guard" || scenario == "configure" ? 1 : 7;
     assert(reload("on_config_change", false) == expected_status, scenario + ": status");
     assert(index(calls, "stop-runtime") < 0 && index(calls, "start-runtime") < 0,
         scenario + ": candidate failure changed runtime workers");
@@ -111,4 +115,31 @@ for (scenario in ["configure", "stage", "nft-build", "nft", "guard"]) {
 print("Reload candidate failures preserve running DNS and Priority workers and remove temporary configs\n");
 UC
 } > "$WORK/prepare.uc"
-FORKOP_TEST_WORK="$WORK" ucode "$WORK/prepare.uc"
+FORKOP_TEST_WORK="$WORK" ucode -L "$ROOT/forkop/files/usr/lib" "$WORK/prepare.uc"
+
+# Record the components that applied successfully before a late dnsmasq failure.
+# The retry must compare against the new core/nft signatures and only redo DNS.
+LIB="$ROOT/forkop/files/usr/lib"
+STATE="$LIB/service/state.uc"
+cat >"$WORK/new.state" <<'STATE'
+format=1
+service_trigger_signature=triggers-new
+dnsmasq_signature=dns-new
+sing_box_signature=core-new
+nft_signature=nft-new
+list_signature=lists-new
+cron_signature=cron-new
+dont_touch_dhcp=0
+STATE
+sed 's/^service_trigger_signature=.*/service_trigger_signature=triggers-old/' "$WORK/new.state" >"$WORK/applied.state"
+ucode -L "$LIB" "$STATE" write-captured-reload-state \
+    "$WORK/applied.state" "$WORK/new.state" 1 "" 0 0 dnsmasq-pending
+sed -e 's/^dnsmasq_signature=.*/dnsmasq_signature=pending/' \
+    -e 's/^service_trigger_signature=.*/service_trigger_signature=triggers-old/' "$WORK/new.state" >"$WORK/expected.state"
+cmp "$WORK/expected.state" "$WORK/applied.state"
+plan="$(ucode -L "$LIB" "$LIB/service/reload.uc" plan-state-files "$WORK/applied.state" "$WORK/new.state" 1 0 0 0 0)"
+printf '%s\n' "$plan" | grep -Eq '^needs_dnsmasq_configure[[:space:]]+1$'
+printf '%s\n' "$plan" | grep -Eq '^needs_sing_box_reload[[:space:]]+0$'
+printf '%s\n' "$plan" | grep -Eq '^needs_nft_rebuild[[:space:]]+0$'
+printf '%s\n' "$plan" | grep -Eq '^changed_service_triggers[[:space:]]+1$'
+echo 'Pending dnsmasq retry retains applied core/nft state and requests outstanding trigger sync'

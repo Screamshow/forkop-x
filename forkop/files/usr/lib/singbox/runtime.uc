@@ -534,7 +534,12 @@ function ensure_service_nofile_limit() {
     return true;
 }
 
-function configure_service() {
+function set_service_config_path(path) {
+    return path != "" && (uci_get_option("sing-box", "main", "conffile") == path ||
+        (uci_set_option("sing-box", "main", "conffile", path) && uci_commit("sing-box")));
+}
+
+function configure_service(config_path_override) {
     let settings = uci_settings();
 
     if (sing_box_compressed_marker_set() && !install_managed_service_script()) {
@@ -571,7 +576,7 @@ function configure_service() {
         log_message("sing-box service user has been changed to root", "info");
     }
 
-    let config_path = option(settings, "config_path", "");
+    let config_path = config_path_override || option(settings, "config_path", "");
     let conffile = uci_get_option("sing-box", "main", "conffile");
     if (conffile != config_path) {
         if (!uci_set_option("sing-box", "main", "conffile", config_path))
@@ -830,14 +835,37 @@ function discard_config_stage(stage_path) {
     return true;
 }
 
-function restore_config_stage(backup_path) {
+function restore_config_stage(backup_path, applied_path) {
+    if (applied_path)
+        return common.copy_private_file_atomic(backup_path, applied_path);
     let config_path = option(uci_settings(), "config_path", "");
     backup_path = as_string(backup_path);
     return config_path != "" && file_exists(backup_path) && fs.chmod(backup_path, 0600) &&
         command_success_from_args([ "mv", "-f", backup_path, config_path ]);
 }
 
-function publish_section_cache(temp_config_path) {
+function finish_section_cache_transaction(transaction, restore) {
+    if (parent_dir(transaction) != parent_dir(SECTION_CACHE_DIR) ||
+        index(transaction, SECTION_CACHE_DIR + ".reload.") != 0)
+        return false;
+    if (fs.stat(transaction) == null)
+        return true;
+    if (restore) {
+        let candidate = transaction + "/candidate";
+        let previous = transaction + "/previous";
+        if (!fs.rename(SECTION_CACHE_DIR, candidate))
+            return false;
+        if (fs.stat(previous) != null && !fs.rename(previous, SECTION_CACHE_DIR)) {
+            fs.rename(candidate, SECTION_CACHE_DIR);
+            return false;
+        }
+    }
+    if (!command_success_from_args([ "rm", "-rf", transaction ]))
+        log_message("Section cache is ready; could not remove recovery files at " + transaction, "warn");
+    return true;
+}
+
+function publish_section_cache(temp_config_path, retained_transaction) {
     let source_dir = as_string(temp_config_path) + ".section-cache";
     let entries = fs.lsdir(source_dir);
     if (type(entries) != "array")
@@ -847,9 +875,16 @@ function publish_section_cache(temp_config_path) {
 
     // Build the complete replacement beside the live cache, on the same
     // filesystem. Never consume generated files before publication succeeds.
-    let transaction = trim(command_output_from_args([
-        "mktemp", "-d", parent_dir(SECTION_CACHE_DIR) + "/.section-cache.XXXXXX"
-    ]));
+    let transaction = retained_transaction;
+    if (transaction) {
+        if (parent_dir(transaction) != parent_dir(SECTION_CACHE_DIR) ||
+            index(transaction, SECTION_CACHE_DIR + ".reload.") != 0 || !fs.mkdir(transaction, 0700))
+            return false;
+    }
+    else
+        transaction = trim(command_output_from_args([
+            "mktemp", "-d", parent_dir(SECTION_CACHE_DIR) + "/.section-cache.XXXXXX"
+        ]));
     if (transaction == "")
         return false;
     let candidate = transaction + "/candidate";
@@ -886,7 +921,8 @@ function publish_section_cache(temp_config_path) {
     }
     // Cleanup failure is not a failed publication: the complete new set is
     // already live. Leave private leftovers rather than report a false rollback.
-    if (!command_success_from_args([ "rm", "-rf", source_dir, transaction ]))
+    let cleanup = retained_transaction ? [ source_dir ] : [ source_dir, transaction ];
+    if (!command_success_from_args([ "rm", "-rf", ...cleanup ]))
         log_message("Section cache published; failed to remove private temporary files", "warn");
     return true;
 }
@@ -1149,7 +1185,13 @@ function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferre
 let mode = ARGV[0] || "";
 
 if (mode == "configure-service")
-    configure_service();
+    configure_service(ARGV[1]);
+else if (mode == "set-service-config-path")
+    exit(set_service_config_path(ARGV[1] || "") ? 0 : 1);
+else if (mode == "publish-reload-config") {
+    let path = ARGV[2] || "";
+    exit(path != "" && ensure_parent_dir(path) && common.copy_private_file_atomic(ARGV[1], path) ? 0 : 1);
+}
 else if (mode == "init-config")
     init_config(arg_bool(ARGV[1] || "1"), arg_bool(ARGV[2] || "0"), arg_bool(ARGV[3] || "0"), ARGV[4] || "", "", true);
 else if (mode == "prepare-config-stage")
@@ -1159,11 +1201,13 @@ else if (mode == "prepare-config-stage")
 else if (mode == "commit-config-stage")
     exit(commit_config_stage(ARGV[1] || "", ARGV[2] || "") ? 0 : 1);
 else if (mode == "restore-config-stage")
-    exit(restore_config_stage(ARGV[1] || "") ? 0 : 1);
+    exit(restore_config_stage(ARGV[1] || "", ARGV[2]) ? 0 : 1);
 else if (mode == "discard-config-stage")
     exit(discard_config_stage(ARGV[1] || "") ? 0 : 1);
 else if (mode == "publish-section-cache")
-    exit(publish_section_cache(ARGV[1] || "") ? 0 : 1);
+    exit(publish_section_cache(ARGV[1] || "", ARGV[2]) ? 0 : 1);
+else if (mode == "finish-section-cache")
+    exit(ARGV[1] && finish_section_cache_transaction(ARGV[1], ARGV[2] == "restore") ? 0 : 1);
 else if (mode == "validate-config-stage")
     exit(validate_config_stage(ARGV[1] || "") ? 0 : 1);
 else if (mode == "save-config-file-fixture")

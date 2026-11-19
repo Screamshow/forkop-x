@@ -18,6 +18,11 @@ absent() { ! grep -Fq "$1=" "$STATE" || fail "$1 must be absent"; }
 cat >"$WORK_DIR/dnsmasq-init" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${DNSMASQ_LOG:?}"
+fault=$(printenv DNSMASQ_FAULT_ONCE || true)
+if [ -n "$fault" ] && [ -f "$fault" ]; then
+    rm -f "$fault"
+    exit 7
+fi
 SH
 chmod 0755 "$WORK_DIR/dnsmasq-init"
 mkdir -p "$WORK_DIR/bin"
@@ -141,5 +146,31 @@ absent 'dhcp.@dnsmasq[0].forkop_dns_version'
 : >"$DNSMASQ_LOG"
 ucode -L "$FORKOP_LIB" "$APPLY" failsafe-restore
 [ ! -s "$DNSMASQ_LOG" ] || fail 'rollback is not idempotent'
+
+# A failed reload restores the immediate pre-apply DNS state and restarts
+# dnsmasq again. Keep the long-lived Forkop ownership snapshot on failed restore.
+export DNSMASQ_FAULT_ONCE="$WORK_DIR/restart-fault"
+cat >"$STATE" <<'EOF_STATE'
+dhcp.@dnsmasq[0].server=1.1.1.1
+dhcp.@dnsmasq[0].noresolv=0
+dhcp.@dnsmasq[0].notinterface=lan mesh
+dhcp.forkop=dnsmasq
+dhcp.forkop.interface=mesh
+dhcp.forkop.port=5354
+EOF_STATE
+for action in configure restore; do
+    if [ "$action" = restore ]; then
+        ucode -L "$FORKOP_LIB" "$APPLY" configure force
+    fi
+    LC_ALL=C sort "$STATE" >"$WORK_DIR/reload.before"
+    : >"$DNSMASQ_LOG"
+    : >"$DNSMASQ_FAULT_ONCE"
+    if ucode -L "$FORKOP_LIB" "$APPLY" "$action" force reload; then
+        fail "failed dnsmasq $action was reported as applied"
+    fi
+    LC_ALL=C sort "$STATE" >"$WORK_DIR/reload.after"
+    cmp -s "$WORK_DIR/reload.before" "$WORK_DIR/reload.after" || fail "failed $action did not restore DNS state"
+    [ "$(grep -c '^restart$' "$DNSMASQ_LOG")" = 2 ] || fail "failed $action did not restart dnsmasq under the old settings"
+done
 
 printf 'DNS rollback transaction checks passed\n'

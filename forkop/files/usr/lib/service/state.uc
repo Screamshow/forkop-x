@@ -1833,7 +1833,7 @@ function write_current_reload_state_clean(path, format, cache_dir) {
     cleanup_reload_state_snapshots(path);
 }
 
-function write_captured_reload_state(path, snapshot_path, format, cache_dir, cleanup_cache, clear_snapshot) {
+function write_captured_reload_state(path, snapshot_path, format, cache_dir, cleanup_cache, clear_snapshot, dnsmasq_pending) {
     snapshot_path = as_string(snapshot_path);
     if (snapshot_path == "") {
         if (as_string(cleanup_cache) == "1")
@@ -1846,7 +1846,20 @@ function write_captured_reload_state(path, snapshot_path, format, cache_dir, cle
     if (fs.stat(snapshot_path) == null)
         capture_reload_state(snapshot_path, format || "1");
 
-    if (!copy_file(snapshot_path, path))
+    if (dnsmasq_pending == "dnsmasq-pending") {
+        // Core and nft are already applied. The init script synchronizes
+        // procd triggers only after success, so retain their previous signature.
+        let state = fs.readfile(snapshot_path);
+        if (state == null)
+            exit(1);
+        let trigger = match(fs.readfile(path) || "", /\nservice_trigger_signature=([^\n]*)/);
+        state = replace(state, /\ndnsmasq_signature=[^\n]*/, "\ndnsmasq_signature=pending");
+        state = replace(state, /\nservice_trigger_signature=[^\n]*/,
+            "\nservice_trigger_signature=" + (trigger != null ? trigger[1] : ""));
+        if (!write_text_file(path, state))
+            exit(1);
+    }
+    else if (!copy_file(snapshot_path, path))
         exit(1);
 
     if (as_string(cleanup_cache) == "1")
@@ -1911,7 +1924,7 @@ else if (mode == "capture-reload-state")
 else if (mode == "write-current-reload-state-clean")
     write_current_reload_state_clean(ARGV[1], ARGV[2] || "1", ARGV[3]);
 else if (mode == "write-captured-reload-state")
-    write_captured_reload_state(ARGV[1], ARGV[2], ARGV[3] || "1", ARGV[4], ARGV[5], ARGV[6]);
+    write_captured_reload_state(ARGV[1], ARGV[2], ARGV[3] || "1", ARGV[4], ARGV[5], ARGV[6], ARGV[7]);
 else if (mode == "reload-state-text-fixture") {
     let data = fixture_data(ARGV[1]);
     print(reload_state_text(fixture_reload_state_values(data, ARGV[2] || "1")));

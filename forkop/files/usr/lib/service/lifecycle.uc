@@ -774,13 +774,46 @@ function discard_singbox_config_stage(stage_path) {
         module_success(SINGBOX_UC, [ "discard-config-stage", stage_path ]);
 }
 
+let reload_core_transaction = null;
+
+function finish_reload_section_cache(restore) {
+    let cache = reload_core_transaction?.section_cache;
+    if (!cache)
+        return true;
+    if (!module_success(SINGBOX_UC, [ "finish-section-cache", cache, restore ? "restore" : "commit" ])) {
+        log_message("Section cache recovery files retained at " + cache, "error");
+        return false;
+    }
+    reload_core_transaction.section_cache = "";
+    return true;
+}
+
+function restore_reload_config(backup_path) {
+    let txn = reload_core_transaction;
+    if (txn == null)
+        return module_success(SINGBOX_UC, [ "restore-config-stage", backup_path ]);
+    if (txn.previous_path == txn.path)
+        return !txn.published || module_success(SINGBOX_UC, [ "restore-config-stage", backup_path, txn.previous_path ]);
+
+    // Moving to a different path never replaces the applied file. Put procd
+    // back on that file and restore the previous contents of the destination.
+    if (!module_success(SINGBOX_UC, [ "set-service-config-path", txn.previous_path ]))
+        return false;
+    if (!txn.published)
+        return true;
+    let destination_backup = backup_path + ".destination";
+    if (fs.stat(destination_backup) != null)
+        return module_success(SINGBOX_UC, [ "restore-config-stage", destination_backup, txn.path ]);
+    return fs.unlink(txn.path) || fs.stat(txn.path) == null;
+}
+
 function restore_guarded_singbox_runtime(backup_path, guard_active) {
     // The stock sing-box init script may watch config.json too. Ensure that no
     // managed runtime can observe the restored file before we publish it.
     if (as_string(backup_path) == "" || module_status(STATE_UC, [
         "stop-managed-sing-box-runtime",
         as_string(getenv("FORKOP_SING_BOX_RELOAD_PID_TIMEOUT") || "15")
-    ]) != 0 || !module_success(SINGBOX_UC, [ "restore-config-stage", backup_path ]))
+    ]) != 0 || !restore_reload_config(backup_path))
         return false;
 
     if (module_status(STATE_UC, [
@@ -1246,10 +1279,16 @@ function finish_list_change_files(restore) {
     return true;
 }
 
+function discard_reload_config_backup(backup_path) {
+    if (as_string(backup_path) != "") {
+        remove_file(backup_path);
+        remove_file(backup_path + ".destination");
+    }
+}
+
 function abort_reload(status, runtime_changed, stage_path, backup_path) {
     discard_singbox_config_stage(stage_path);
-    if (as_string(backup_path) != "")
-        remove_file(backup_path);
+    discard_reload_config_backup(backup_path);
     finish_list_change_files(true);
     status = int(status || 0);
     if (status == 0)
@@ -1267,8 +1306,9 @@ function abort_guarded_transition(status, stage_path, backup_path, guard_active)
     nft_candidate_finish(false);
     discard_singbox_config_stage(stage_path);
     if (!guard_active)
-        remove_file(backup_path);
-    if (!finish_list_change_files(true)) {
+        discard_reload_config_backup(backup_path);
+    let cache_restored = finish_reload_section_cache(true);
+    if (!finish_list_change_files(true) || !cache_restored) {
         cleanup_failed_runtime();
         return status || 1;
     }
@@ -1277,6 +1317,7 @@ function abort_guarded_transition(status, stage_path, backup_path, guard_active)
         return abort_reload(status, false);
 
     if (fs.stat(backup_path) != null && restore_guarded_singbox_runtime(backup_path, true)) {
+        discard_reload_config_backup(backup_path);
         module_success(PRIORITY_UC, [ "start-runtime" ]);
         module_success(DNS_FAILOVER_UC, [ "start-runtime", "applied" ]);
         log_message("Configuration apply failed; previous runtime restored", "warn");
@@ -1285,7 +1326,7 @@ function abort_guarded_transition(status, stage_path, backup_path, guard_active)
 
     // This is transition protection, not a persistent kill switch. Only after
     // rollback has failed restore ordinary DNS and direct internet access.
-    log_message("Cross-component transition rollback failed; restoring direct access", "fatal");
+    log_message("Cross-component transition rollback failed; restoring direct access. Recovery config retained at " + backup_path, "fatal");
     cleanup_failed_runtime();
     remove_file(RELOAD_STATE_SNAPSHOT_FILE);
     return status == 0 ? 1 : status;
@@ -1300,16 +1341,18 @@ function abort_hot_to_guarded(status, stage_path, backup_path) {
 
 function abort_hot_transition(status, stage_path, backup_path) {
     nft_candidate_finish(false);
-    if (!finish_list_change_files(true))
+    if (!finish_list_change_files(true) || !finish_reload_section_cache(true))
         return abort_hot_to_guarded(status, stage_path, backup_path);
     // A queued HUP may finish late. Always request and acknowledge the old
     // config after restoring it; a momentary old hash is not sufficient.
-    if (fs.stat(backup_path) != null && module_success(HOT_RELOAD_UC, [
-        "restore", stage_path + ".hot-plan", backup_path
-    ]) && module_success(STATE_UC, [ "single-ready-sing-box-runtime" ]) &&
+    let restored = reload_core_transaction?.published == false ||
+        (fs.stat(backup_path) != null && module_success(HOT_RELOAD_UC, [
+            "restore", stage_path + ".hot-plan", backup_path
+        ]));
+    if (restored && module_success(STATE_UC, [ "single-ready-sing-box-runtime" ]) &&
         module_success(NFT_UC, [ "remove-transition-guard", NFT_TABLE_NAME, NFT_FAKEIP_MARK ])) {
         discard_singbox_config_stage(stage_path);
-        remove_file(backup_path);
+        discard_reload_config_backup(backup_path);
         module_success(PRIORITY_UC, [ "start-runtime" ]);
         module_success(DNS_FAILOVER_UC, [ "start-runtime", "applied" ]);
         log_message("Hot reload failed; previous core configuration and nft policy restored", "warn");
@@ -1695,6 +1738,7 @@ function reload_reason_for_generation(reason, pending, generation_current) {
 }
 
 function reload(reason, cold_restart) {
+    reload_core_transaction = null;
     reason = as_string(reason || "");
     // Retry a completed generation locally only while its source signature
     // matches UCI. Cancelling or replacing a failed edit needs a new generation
@@ -1881,30 +1925,34 @@ function reload(reason, cold_restart) {
     let needs_singbox_transition = plan.needs_sing_box_reload == 1;
     let sing_box_config_path = "";
     if (needs_singbox_transition) {
-        status = module_status(SINGBOX_UC, [ "configure-service" ]);
-        if (status != 0)
-            return abort_reload(status, false);
         sing_box_config_path = config_get(CONFIG_NAME + ".settings.config_path", "");
+        let previous_path = config_get("sing-box.main.conffile", "/etc/sing-box/config.json");
+        if (sing_box_config_path == "" || previous_path == "")
+            return abort_reload(1, false);
+        reload_core_transaction = { path: sing_box_config_path, previous_path, published: false };
+        let moving_config = previous_path != sing_box_config_path;
         staged_singbox_config = trim(command_output_from_args([ "mktemp" ]));
         staged_singbox_backup = trim(command_output_from_args([ "mktemp" ]));
         if (staged_singbox_config == "" || staged_singbox_backup == "")
             return abort_reload(1, false, staged_singbox_config, staged_singbox_backup);
-        // mktemp creates the backup path, while commit-config-stage requires
-        // copying the live config itself before it is changed.
-        remove_file(staged_singbox_backup);
         status = singbox_prepare_config_stage(staged_singbox_config);
         if (status != 0)
             return abort_reload(status, false, staged_singbox_config, staged_singbox_backup);
-        let hot_plan = module_capture(HOT_RELOAD_UC, [ "plan", staged_singbox_config ]);
-        if (hot_plan.status != 0) {
-            log_message("Hot reload candidate rejected before changing the running core", "error");
-            return abort_reload(hot_plan.status, false, staged_singbox_config, staged_singbox_backup);
+        if (!moving_config) {
+            let hot_plan = module_capture(HOT_RELOAD_UC, [ "plan", staged_singbox_config, previous_path ]);
+            if (hot_plan.status != 0) {
+                log_message("Hot reload candidate rejected before changing the running core", "error");
+                return abort_reload(hot_plan.status, false, staged_singbox_config, staged_singbox_backup);
+            }
+            hot_reload = !cold_restart && trim(hot_plan.output) == "hot";
         }
-        hot_reload = !cold_restart && trim(hot_plan.output) == "hot";
-        // Keep the rollback config before any live mutation, including a stop
-        // needed for memory-bounded validation of the candidate.
-        if (!hot_reload && (!command_success_from_args([ "cp", "-p", sing_box_config_path, staged_singbox_backup ]) ||
-            !fs.chmod(staged_singbox_backup, 0600)))
+        // Back up the applied file, even when the candidate's destination
+        // has never been used. Preserve an existing inactive destination too.
+        if (!common.copy_private_file_atomic(previous_path, staged_singbox_backup) ||
+            (moving_config && fs.stat(sing_box_config_path) != null &&
+                !common.copy_private_file_atomic(sing_box_config_path, staged_singbox_backup + ".destination")))
+            return abort_reload(1, false, staged_singbox_config, staged_singbox_backup);
+        if (hot_reload && !module_success(SINGBOX_UC, [ "configure-service", previous_path ]))
             return abort_reload(1, false, staged_singbox_config, staged_singbox_backup);
     }
 
@@ -1969,8 +2017,9 @@ function reload(reason, cold_restart) {
         module_success(PRIORITY_UC, [ "stop-runtime" ]);
         if (hot_reload) {
             log_message("Applying Xrust configuration with acknowledged hot reload", "info");
-            if (!module_success(SINGBOX_UC, [ "commit-config-stage", staged_singbox_config, staged_singbox_backup ]))
+            if (!module_success(SINGBOX_UC, [ "publish-reload-config", staged_singbox_config, sing_box_config_path ]))
                 return abort_hot_transition(1, staged_singbox_config, staged_singbox_backup);
+            reload_core_transaction.published = true;
             status = module_status(HOT_RELOAD_UC, [ "apply", staged_singbox_config + ".hot-plan" ]);
             if (status != 0 || getenv("FORKOP_HOT_RELOAD_FAIL_PHASE") == "after-apply")
                 return abort_hot_transition(status || 1, staged_singbox_config, staged_singbox_backup);
@@ -1990,7 +2039,10 @@ function reload(reason, cold_restart) {
                 return abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, transition_guard_active);
             }
             clear_runtime_config_error();
-            if (!module_success(SINGBOX_UC, [ "commit-config-stage", staged_singbox_config, staged_singbox_backup ]))
+            if (!module_success(SINGBOX_UC, [ "publish-reload-config", staged_singbox_config, sing_box_config_path ]))
+                return abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, transition_guard_active);
+            reload_core_transaction.published = true;
+            if (!module_success(SINGBOX_UC, [ "configure-service", sing_box_config_path ]))
                 return abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, transition_guard_active);
             status = module_status(STATE_UC, [
                 "start-managed-sing-box-runtime",
@@ -2011,9 +2063,15 @@ function reload(reason, cold_restart) {
             log_message("Reload verification failed after sing-box was reloaded; restoring the previous coherent runtime", "fatal");
             return hot_reload ? abort_hot_transition(status, staged_singbox_config, staged_singbox_backup) : abort_guarded_transition(status, staged_singbox_config, staged_singbox_backup, transition_guard_active);
         }
-        if (nft_candidate_batch_file != "" && !nft_candidate_finish(true, true))
+        let cache_transaction = SECTION_CACHE_DIR + ".reload." + owner_pid();
+        if (!module_success(SINGBOX_UC, [ "publish-section-cache", staged_singbox_config, cache_transaction ]))
             return hot_reload ? abort_hot_transition(1, staged_singbox_config, staged_singbox_backup) : abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, transition_guard_active);
-        if (transition_guard_active && nft_candidate_batch_file == "" && !module_success(NFT_UC, [ "remove-transition-guard", NFT_TABLE_NAME, NFT_FAKEIP_MARK ]))
+        reload_core_transaction.section_cache = cache_transaction;
+
+        let replacing_nft = nft_candidate_batch_file != "";
+        if (replacing_nft && !nft_candidate_finish(true, true))
+            return hot_reload ? abort_hot_transition(1, staged_singbox_config, staged_singbox_backup) : abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, transition_guard_active);
+        if (transition_guard_active && !replacing_nft && !module_success(NFT_UC, [ "remove-transition-guard", NFT_TABLE_NAME, NFT_FAKEIP_MARK ]))
             return hot_reload ? abort_hot_transition(1, staged_singbox_config, staged_singbox_backup) : abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, transition_guard_active);
         transition_guard_active = false;
         if (hot_reload) {
@@ -2023,9 +2081,9 @@ function reload(reason, cold_restart) {
             else if (int(trim(closed.output)) > 0)
                 log_message("Closed " + trim(closed.output) + " connections of removed rule sets", "info");
         }
-        remove_file(staged_singbox_config + ".hot-plan");
-        remove_file(staged_singbox_backup);
-        runtime_changed = true;
+        finish_reload_section_cache(false);
+        discard_singbox_config_stage(staged_singbox_config);
+        discard_reload_config_backup(staged_singbox_backup);
         finish_list_change_files(false);
         status = module_status(PRIORITY_UC, [ "start-runtime" ]);
         if (status != 0) {
@@ -2041,17 +2099,16 @@ function reload(reason, cold_restart) {
         }
     }
 
-    if (plan.needs_dnsmasq_configure == 1) {
-        status = dnsmasq_configure(true);
-        if (status != 0)
-            return abort_reload(status, true);
-        module_success(STATE_UC, [ "capture-reload-state", RELOAD_STATE_SNAPSHOT_FILE, as_string(RELOAD_STATE_FORMAT) ]);
-    }
-    else if (plan.needs_dnsmasq_restore == 1) {
-        status = dnsmasq_restore(true);
-        if (status != 0)
-            return abort_reload(status, true);
-        module_success(STATE_UC, [ "capture-reload-state", RELOAD_STATE_SNAPSHOT_FILE, as_string(RELOAD_STATE_FORMAT) ]);
+    let dns_status = 0;
+    if (plan.needs_dnsmasq_configure == 1 || plan.needs_dnsmasq_restore == 1) {
+        let action = plan.needs_dnsmasq_configure == 1 ? "configure" : "restore";
+        dns_status = dns_apply_status([ action, "force", "reload" ]);
+        if (dns_status == 0)
+            module_success(STATE_UC, [ "capture-reload-state", RELOAD_STATE_SNAPSHOT_FILE, as_string(RELOAD_STATE_FORMAT) ]);
+        else {
+            log_message("dnsmasq apply failed; retaining the verified Forkop runtime", "warn");
+            mark_pending_reload("dnsmasq_reload_failed");
+        }
     }
 
     if (plan.needs_cron_refresh == 1) {
@@ -2067,7 +2124,8 @@ function reload(reason, cold_restart) {
         as_string(RELOAD_STATE_FORMAT),
         RULE_CONDITION_CACHE_DIR,
         "1",
-        "1"
+        "1",
+        dns_status != 0 ? "dnsmasq-pending" : ""
     ]), reload_config_fingerprint, reason == "pending");
     if (status != 0)
         return status;
@@ -2084,7 +2142,7 @@ function reload(reason, cold_restart) {
     finish_list_change_files(false);
     // Required remote rule sets were materialized with the staged config.
     // Existing valid bytes stay offline; periodic workers own freshness.
-    return 0;
+    return dns_status;
 }
 
 function reload_tracked(reason) {
