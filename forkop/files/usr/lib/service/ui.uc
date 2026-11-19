@@ -22,6 +22,7 @@ const FORKOP_SERVICE_NAMES = [ SERVICE_NAME, TORRSERVER_SERVICE_NAME ];
 const STATE_UC = LIB_DIR + "/service/state.uc";
 const UI_UC = LIB_DIR + "/service/ui.uc";
 const STATE_DIR = getenv("FORKOP_UI_STATE_DIR") || "/var/run/forkop/ui-state";
+const RELOAD_LOCK_DIR = getenv("FORKOP_RELOAD_LOCK_DIR") || "/var/run/forkop.reload.lock";
 const PENDING_RELOAD_FILE = getenv("FORKOP_PENDING_RELOAD_FILE") || "/var/run/forkop/reload.pending";
 const PACKAGE_UPGRADE_QUIESCE_FILE = getenv("FORKOP_PACKAGE_UPGRADE_QUIESCE_FILE") || "/var/run/forkop/package-upgrade.quiesce";
 const RUNTIME_CONFIG_ERROR_FILE = getenv("FORKOP_RUNTIME_CONFIG_ERROR_FILE") || "/var/run/forkop/config-error";
@@ -1065,6 +1066,34 @@ function ui_capabilities_json() {
     write_json(capability_flags());
 }
 
+function monitoring_runtime_config(procd_services) {
+    if (locks.held(RELOAD_LOCK_DIR))
+        return null;
+
+    let path = "";
+    let pid = 0;
+    for (let _, instance in procd_services?.["sing-box"]?.instances || {}) {
+        if (instance.running !== true || int(instance.pid || 0) <= 0)
+            continue;
+        if (pid != 0 || type(instance.command) != "array")
+            return null;
+        let position = index(instance.command, "-c");
+        if (position < 0)
+            return null;
+        path = as_string(instance.command[position + 1]);
+        pid = int(instance.pid);
+    }
+
+    // Only the two paths exposed by the LuCI settings and its file ACL.
+    if (path != "/etc/sing-box/config.json" && path != "/tmp/sing-box/config.json")
+        return null;
+    let stat = fs.stat(path);
+    if (stat == null || stat.type != "file" || locks.held(RELOAD_LOCK_DIR))
+        return null;
+
+    return { path, revision: join(":", [ pid, stat.inode, stat.size, stat.mtime, stat.ctime ]) };
+}
+
 function current_ui_state_json() {
     refresh_action_dirs();
 
@@ -1130,6 +1159,7 @@ function current_ui_state_json() {
                 procd_services, TORRSERVER_SERVICE_NAME, "/proc",
                 trim(as_string(uci_core.get(CONFIG_NAME + ".settings.torrserver_direct_enabled"))) == "1")
         },
+        runtime_config: forkop_is_running ? monitoring_runtime_config(procd_services) : null,
         config_error,
         subscription_error: read_json_file(SUBSCRIPTION_APPLY_ERROR_FILE),
         capabilities,

@@ -11,9 +11,8 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 [ ! -e "$LIB/providers" ] || fail "provider modules are still installed"
 
 # Runtime code, LuCI views (handwritten, bundled and compacted), frontend
-# sources and translations must not mention the removed providers. The Zapret
-# Manager component keeps its own name, and the configuration migration is the
-# only other exception: it cleans up what the providers left behind.
+# sources and translations must not mention the removed providers. The updater,
+# the migration cleanup and the guard for external Zapret still use its name.
 if grep -rIin 'zapret\|nfqws\|nfqueue' \
     "$ROOT/forkop/files" \
     "$ROOT/luci-app-forkop/htdocs" \
@@ -22,7 +21,10 @@ if grep -rIin 'zapret\|nfqws\|nfqueue' \
     "$ROOT/fe-app-forkop/src" \
     "$ROOT/fe-app-forkop/locales" |
     grep -viE 'zapret[_-]manager|zapretmanager|zapret manager' |
-    grep -v '^'"$ROOT"'/forkop/files/usr/lib/config/migration\.uc:' >"$WORK/hits"; then
+    grep -Ev \
+        -e '^'"$ROOT"'/forkop/files/usr/lib/(config/migration|service/proxy_transport)\.uc:' \
+        -e '^'"$ROOT"'/forkop/files/usr/lib/service/lifecycle\.uc:[0-9]+:.*Cannot protect Connection transport from zapret' \
+        -e '^'"$ROOT"'/forkop/files/usr/lib/singbox/generator\.uc:[0-9]+:.*remain eligible for zapret' >"$WORK/hits"; then
     cat "$WORK/hits" >&2
     fail "Zapret provider references remain"
 fi

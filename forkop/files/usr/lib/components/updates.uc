@@ -3566,7 +3566,13 @@ function list_update_pid_end() {
 }
 
 function begin_list_ruleset_snapshot() {
-    list_ruleset_snapshot_dir = as_string(getenv("FORKOP_LIST_CHANGE_ROLLBACK_DIR") || "") || temp_path();
+    let rollback_dir = as_string(getenv("FORKOP_LIST_CHANGE_ROLLBACK_DIR") || "");
+    if (rollback_dir != "" && fs.stat(rollback_dir)?.type == "directory") {
+        log_message("A previous materialized-list rollback still needs recovery: " + rollback_dir, "error");
+        list_ruleset_snapshot_dir = "";
+        return;
+    }
+    list_ruleset_snapshot_dir = rollback_dir || temp_path();
     if (list_ruleset_snapshot_dir != "")
         remove_file(list_ruleset_snapshot_dir);
     if (list_ruleset_snapshot_dir == "" || !ensure_dir(list_ruleset_snapshot_dir)) {
@@ -3605,10 +3611,8 @@ function finish_list_ruleset_snapshot(commit) {
         return false;
 
     if (!commit) {
-        command_success_from_args([ "rm", "-rf", TMP_RULESET_FOLDER ]);
-        ensure_dir(TMP_RULESET_FOLDER);
-        let restored = command_success_from_args([ "cp", "-R", "-p", list_ruleset_snapshot_dir + "/.", TMP_RULESET_FOLDER ]);
-        command_success_from_args([ "rm", "-rf", list_ruleset_snapshot_dir ]);
+        if (!common.restore_directory_snapshot(list_ruleset_snapshot_dir, TMP_RULESET_FOLDER))
+            log_message("Could not restore the previous materialized lists; retained snapshot: " + list_ruleset_snapshot_dir, "error");
         list_ruleset_snapshot_dir = "";
         return false;
     }
@@ -4110,8 +4114,8 @@ function subscription_hot_transition(config_path) {
     let applied = committed && module_success([ hot_module, "apply", stage + ".hot-plan" ]);
     let reason = "hot_apply_failed";
     if (applied) {
-        let workers = module_success([ PRIORITY_UC, "start-runtime" ]);
-        workers = module_success([ DNS_FAILOVER_UC, "start-runtime" ]) && workers;
+        let workers = module_success([ PRIORITY_UC, "start-runtime" ]) &&
+            module_success([ DNS_FAILOVER_UC, "start-runtime", "", config_path ]);
         if (!workers) {
             reason = "workers_failed";
             applied = false;
@@ -4127,7 +4131,7 @@ function subscription_hot_transition(config_path) {
         cache_restored = cache_restored && module_success([ LIB_DIR + "/service/lifecycle.uc", "restore-selector-state", backup + ".selectors" ]);
         if (restored) {
             module_success([ PRIORITY_UC, "start-runtime" ]);
-            module_success([ DNS_FAILOVER_UC, "start-runtime" ]);
+            module_success([ DNS_FAILOVER_UC, "start-runtime", "applied" ]);
         }
         if (restored && cache_restored) {
             singbox_runtime_success([ "discard-config-stage", stage ]);
@@ -4165,7 +4169,7 @@ function subscription_restore_runtime(backup, config_path, timeout) {
     }
     subscription_restore_selectors(backup);
     module_success([ PRIORITY_UC, "start-runtime" ]);
-    module_success([ DNS_FAILOVER_UC, "start-runtime" ]);
+    module_success([ DNS_FAILOVER_UC, "start-runtime", "applied" ]);
     subscription_apply_failure("apply_failed", "previous");
     return true;
 }
@@ -4268,7 +4272,7 @@ function subscription_update_common_locked(force, target_section, target_source_
         if (!service_state_success([ "stop-managed-sing-box-runtime", transition_timeout ])) {
             command_success_from_args([ "rm", "-rf", backup_dir ]);
             module_success([ PRIORITY_UC, "start-runtime" ]);
-            module_success([ DNS_FAILOVER_UC, "start-runtime" ]);
+            module_success([ DNS_FAILOVER_UC, "start-runtime", "applied" ]);
             log_message("Refusing subscription runtime update: the previous sing-box runtime did not stop safely", "error");
             return false;
         }
@@ -4301,7 +4305,7 @@ function subscription_update_common_locked(force, target_section, target_source_
             log_message("Failed to restart Priority runtime after subscription update", "error");
             return false;
         }
-        if (!module_success([ DNS_FAILOVER_UC, "start-runtime" ])) {
+        if (!module_success([ DNS_FAILOVER_UC, "start-runtime", "", sing_box_config_path ])) {
             log_message("Failed to restart DNS failover runtime after subscription update", "error");
             return false;
         }

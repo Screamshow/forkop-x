@@ -9,10 +9,8 @@ cat <<'UC'
 let runtime_health=require("core.runtime_health");
 let now=0, probes=[], applies=[], finished=false;
 const STATE_FILE="state",LIB_DIR="lib",STATE_UC="state.uc",CORE_GRACE_SECONDS=90;
-let common={read_json_file:function(p){return{};},option:function(c,k,f){return f;}};
-function applied_worker_state(){return {main_servers:["a","b"],bootstrap_servers:["a","b"],main_index:0,bootstrap_index:0};}
-function settings(){return{};}
-function write_state(p,s){return true;}
+let common={read_json_file: () => ({version:1, health:{}, main_servers:["a","b"],
+    bootstrap_servers:["a","b"],main_index:0,bootstrap_index:0})};
 function duration_seconds(v,f){return f;}
 function probe_timeout(v){return 2;}
 function failure_threshold(v){return 3;}
@@ -51,17 +49,14 @@ ucode -L "$FORKOP_LIB" "$WORK/worker.uc"
 cat <<'UC'
 const STATE_FILE = "state", LIB_DIR = "lib", STATE_UC = "state.uc", CORE_GRACE_SECONDS = 90;
 let now, sustained_outage, switches, finished;
-let common = { read_json_file: () => ({}), option: (config, key, fallback) => fallback };
-function applied_worker_state() {
-    return { main_servers: ["primary", "backup"], bootstrap_servers: ["primary", "backup"],
-        main_index: 0, bootstrap_index: 0 };
-}
+let common = { read_json_file: () => ({ version: 1, health: { failure_threshold: "3" },
+    main_servers: ["primary", "backup"], bootstrap_servers: ["primary", "backup"],
+    main_index: 0, bootstrap_index: 0 }) };
 let runtime_health = { observe_runtime: () => ({ ready: true }) };
-function settings() { return now < 60 ? { dns_server: ["primary", "backup"] } : { dns_server: ["edited"] }; }
-function write_state() { return true; }
+function settings() { die("worker read unapplied settings"); }
 function duration_seconds(value, fallback) { return fallback; }
 function probe_timeout() { return 2; }
-function failure_threshold() { return 3; }
+function failure_threshold(value) { return int(value); }
 function now_seconds() { return now; }
 function clock() { return [now, 0]; }
 function command_output_from_args() { return "{}"; }
@@ -135,18 +130,26 @@ let common = require("core.common");
 let uci_core = require("core.uci");
 let runtime_dns = require("singbox.dns");
 let connections = require("config.connections");
-const CONFIG_NAME = "forkop", STATE_FILE = ARGV[0];
+const CONFIG_NAME = "forkop", STATE_FILE = ARGV[0], SECTION_CACHE_DIR = ARGV[1];
+let cfg = { config_path: "/old/config.json", dns_server: ["192.0.2.1", "192.0.2.2"] };
+function settings() { return cfg; }
 UC
 sed -n '/^function applied_worker_state(/,/^}/p' "$FORKOP_LIB/singbox/dns_failover.uc"
 cat <<'UC'
-let cfg = { config_path: "/old/config.json", dns_server: ["192.0.2.1", "192.0.2.2"] };
-let state = applied_worker_state(cfg, false);
+let state = applied_worker_state(false);
 assert(state.config_path == "/old/config.json");
 assert(join(",", state.inherited_tunnel_dns) == runtime_dns.tunnel_dns_tag("inherited"));
 fs.writefile(STATE_FILE, sprintf("%J", state));
-let restored = applied_worker_state({ config_path: "/new/config.json", dns_server: ["192.0.2.3"] }, true);
+cfg = { config_path: "/draft/config.json", dns_server: ["192.0.2.3"], dns_failover_failure_threshold: "9" };
+let committed = { ...state, config_path: "/committed/config.json", main_servers: ["198.51.100.1", "198.51.100.2"],
+    health: runtime_dns.health_settings({ dns_failover_failure_threshold: "5" }) };
+assert(common.write_private_json_file(SECTION_CACHE_DIR + "/" + runtime_dns.APPLIED_DNS_CACHE_NAME, committed));
+let next = applied_worker_state(false);
+assert(next.config_path == "/committed/config.json" && next.main_servers[1] == "198.51.100.2");
+assert(next.health.failure_threshold == "5");
+let restored = applied_worker_state(true);
 assert(restored.config_path == state.config_path && restored.main_servers[0] == state.main_servers[0]);
 UC
 } >"$WORK/applied.uc"
-FORKOP_UCI_STATE_FILE="$WORK/uci" ucode -L "$FORKOP_LIB" "$WORK/applied.uc" "$WORK/applied.json"
+FORKOP_UCI_STATE_FILE="$WORK/uci" ucode -L "$FORKOP_LIB" "$WORK/applied.uc" "$WORK/applied.json" "$WORK"
 echo 'DNS worker startup captures the applied path and inherited tunnel resolvers'

@@ -1,9 +1,9 @@
 #!/usr/bin/env ucode
 
-let fs = require("fs");
 let common = require("core.common");
 let subscription_share_link = require("subscription.share_link");
 let subscription_parser = require("subscription.parser");
+let source_cache = require("subscription.source_cache");
 
 let as_string = common.as_string;
 let read_json_file = common.read_json_file;
@@ -38,14 +38,6 @@ function legacy_metadata_path(section_name) {
     return FORKOP_SUBSCRIPTION_METADATA_DIR + "/" + section_name + ".json";
 }
 
-function persistent_source_path(source_section, suffix) {
-    return FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR + "/" + source_section + suffix;
-}
-
-function persistent_metadata_path(source_section) {
-    return persistent_source_path(source_section, ".metadata.json");
-}
-
 function trim_string(value) {
     return replace(as_string(value), /^[ \t\r\n]+|[ \t\r\n]+$/g, "");
 }
@@ -61,15 +53,6 @@ function parse_source_entry(entry) {
         url: trim_string(substr(entry, 0, delimiter_index)),
         user_agent: trim_string(substr(entry, delimiter_index + length(delimiter)))
     };
-}
-
-function file_first_line(path) {
-    let data = fs.readfile(path);
-    if (data == null)
-        return "";
-
-    let newline = index(data, "\n");
-    return newline >= 0 ? substr(data, 0, newline) : data;
 }
 
 function valid_metadata_object(value) {
@@ -128,25 +111,15 @@ function metadata_matches_source(item, source_index, source_section, has_source_
     return item_index == source_index;
 }
 
-function persistent_source_matches_entry(source_section, source_entry) {
-    if (source_entry == null || source_entry == "")
-        return true;
-
-    let parsed = parse_source_entry(source_entry);
-    let cached_url = file_first_line(persistent_source_path(source_section, ".url"));
-    let cached_user_agent = file_first_line(persistent_source_path(source_section, ".user_agent"));
-
-    if (cached_url != parsed.url)
-        return false;
-    if (parsed.user_agent != "" && cached_user_agent != parsed.user_agent)
-        return false;
-    return cached_user_agent != "";
-}
-
 function read_persistent_source_metadata(source_section, source_entry) {
-    if (!persistent_source_matches_entry(source_section, source_entry))
-        return [];
-    return metadata_items_from_value(read_json_file(persistent_metadata_path(source_section)));
+    let profile = source_cache.read(FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR, source_section).profile;
+    if (source_entry != null && source_entry != "") {
+        let parsed = parse_source_entry(source_entry);
+        if (profile.url != parsed.url || profile.user_agent == "" ||
+            (parsed.user_agent != "" && profile.user_agent != parsed.user_agent))
+            return [];
+    }
+    return metadata_items_from_value(profile.metadata);
 }
 
 function read_section_metadata(section_name, source_section, source_index) {
@@ -335,47 +308,16 @@ function remember_priority_group(state, tag_name, group) {
     state.priorityGroups[tag_name] = object_or_empty(group);
 }
 
-function source_hwid_path(source_section) {
-    return TMP_SUBSCRIPTION_FOLDER + "/" + source_section + ".hwid";
-}
-
-function hwid_matches_config(configured_hwid, cached_hwid) {
-    configured_hwid = as_string(configured_hwid);
-    cached_hwid = as_string(cached_hwid);
-
-    if (configured_hwid != "")
-        return cached_hwid == configured_hwid;
-    return true;
-}
-
-function source_cache_is_current(source_section, source_entry, expected_user_agent, expected_hwid) {
+function read_source_outbounds(source_section, source_entry, expected_user_agent, expected_hwid) {
+    let record = source_cache.read(TMP_SUBSCRIPTION_FOLDER, source_section);
     let parsed = parse_source_entry(source_entry);
-    let cached_url = file_first_line(TMP_SUBSCRIPTION_FOLDER + "/" + source_section + ".url");
-    let cached_user_agent = file_first_line(TMP_SUBSCRIPTION_FOLDER + "/" + source_section + ".user_agent");
-    let cached_hwid = file_first_line(source_hwid_path(source_section));
-    let configured_user_agent = as_string(expected_user_agent || "");
-    if (configured_user_agent != "")
-        parsed.user_agent = configured_user_agent;
-
-    if (cached_url != parsed.url)
-        return false;
-
-    if (parsed.user_agent != "" && cached_user_agent != parsed.user_agent)
-        return false;
-
-    if (!hwid_matches_config(expected_hwid, cached_hwid))
-        return false;
-
-    return true;
-}
-
-function source_json_path(source_section) {
-    return TMP_SUBSCRIPTION_FOLDER + "/" + source_section + ".json";
-}
-
-function read_source_outbounds(source_section) {
-    let subscription = object_or_empty(read_json_file(source_json_path(source_section)));
-    return subscription_parser.repair_cached_outbounds(array_or_empty(subscription.outbounds));
+    let user_agent = as_string(expected_user_agent) || parsed.user_agent;
+    let hwid = as_string(expected_hwid);
+    if (record.profile.url != parsed.url ||
+        (user_agent != "" && record.profile.user_agent != user_agent) ||
+        (hwid != "" && record.profile.hwid != hwid))
+        return [];
+    return subscription_parser.repair_cached_outbounds(array_or_empty(record.payload?.outbounds));
 }
 
 function new_section_state(section_name) {
@@ -411,7 +353,6 @@ return {
     remember_urltest_group_config,
     resolve_urltest_profile_aliases,
     remember_priority_group,
-    source_cache_is_current,
     read_source_outbounds,
     new_section_state
 };

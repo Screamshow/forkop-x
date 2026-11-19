@@ -241,80 +241,52 @@ function fixture_probe(latencies, tag_name) {
     return { alive: true, delay: int(value, 10) };
 }
 
-function choose_from_level(group, level_index, probe, skip_tag) {
-    let level = object_or_empty(array_or_empty(group.levels)[level_index]);
-    let best = null;
-
-    for (let tag_name in array_or_empty(level.outbounds)) {
-        if (as_string(skip_tag) != "" && tag_name == skip_tag)
-            continue;
-        let result = probe(tag_name, group);
-        if (!result.alive)
-            continue;
-
-        if (!group.pick_fastest)
-            return {
-                tag: tag_name,
-                levelIndex: level_index,
-                delay: result.delay
-            };
-
-        if (best == null || result.delay < best.delay)
-            best = {
-                tag: tag_name,
-                levelIndex: level_index,
-                delay: result.delay
-            };
-    }
-
-    return best;
+function new_probe_scan(group, kind, first_level, last_level, skip_tag, active_tag) {
+    return {
+        kind,
+        level: max(0, int(first_level || 0)),
+        last_level: min(length(group.levels) - 1, int(last_level || 0)),
+        member: 0,
+        skip_tag: as_string(skip_tag),
+        active_tag: as_string(active_tag),
+        active_delay: null,
+        best: null
+    };
 }
 
-function choose_from_level_range(group, start_index, end_index, probe, skip_tag) {
-    let levels = array_or_empty(group.levels);
-    if (length(levels) == 0)
-        return null;
+// One network probe per step. Finish the first level with a live member
+// before looking at lower priorities, even when choosing the fastest member.
+function advance_probe_scan(group, scan, probe) {
+    while (scan.level <= scan.last_level) {
+        let members = group.levels[scan.level].outbounds;
+        while (scan.member < length(members)) {
+            let tag = members[scan.member++];
+            if (tag == scan.skip_tag)
+                continue;
 
-    start_index = int(start_index || 0);
-    end_index = int(end_index || 0);
-    if (start_index < 0)
-        start_index = 0;
-    if (end_index >= length(levels))
-        end_index = length(levels) - 1;
-    if (start_index > end_index)
-        return null;
-
-    for (let i = start_index; i <= end_index; i++) {
-        let selected = choose_from_level(group, i, probe, skip_tag);
-        if (selected != null)
-            return selected;
-    }
-    return null;
-}
-
-function choose_fastest_same_level(group, level_index, active_tag, probe) {
-    let level = object_or_empty(array_or_empty(group.levels)[level_index]);
-    let active = null;
-    let best = null;
-
-    for (let tag_name in array_or_empty(level.outbounds)) {
-        let result = probe(tag_name, group);
-        if (tag_name == active_tag)
-            active = result;
-        if (!result.alive)
-            continue;
-        if (best == null || result.delay < best.delay) {
-            best = {
-                tag: tag_name,
-                levelIndex: level_index,
-                delay: result.delay
-            };
+            let result = probe(tag, group);
+            if (result.alive) {
+                if (tag == scan.active_tag)
+                    scan.active_delay = result.delay;
+                if (scan.best == null || result.delay < scan.best.delay)
+                    scan.best = { tag, levelIndex: scan.level, delay: result.delay };
+                if (!group.pick_fastest && scan.kind != "fastest")
+                    return true;
+            }
+            return false;
         }
+        if (scan.best != null)
+            return true;
+        scan.level++;
+        scan.member = 0;
     }
+    return true;
+}
 
-    if (best == null || best.tag == active_tag)
-        return null;
-    if (active == null || !active.alive || best.delay < active.delay)
+function probe_scan_selection(scan) {
+    let best = scan.best;
+    if (best != null && best.tag != scan.active_tag &&
+        (scan.active_delay == null || best.delay < scan.active_delay))
         return best;
     return null;
 }
@@ -350,60 +322,89 @@ function init_group_state(group) {
         active: "",
         levelIndex: -1,
         activeDelay: 0,
+        scan: null,
         nextActiveCheck: now_seconds(),
         nextRecoveryCheck: now_seconds() + duration_to_seconds(group.recovery_check_interval, 15),
         nextFastestCheck: now_seconds() + duration_to_seconds(group.fastest_check_interval, 180)
     };
 }
 
-function tick_group(state, group) {
+function finish_group_scan(state, group) {
+    let scan = state.scan;
+    state.scan = null;
+    let switched = switch_group(state, group, probe_scan_selection(scan));
     let now = now_seconds();
 
-    if (state.active == "" && now >= state.nextActiveCheck) {
-        let selected = choose_from_level_range(group, 0, length(group.levels) - 1, clash_probe);
-        switch_group(state, group, selected);
-        state.nextActiveCheck = now + duration_to_seconds(group.active_check_interval, 5);
+    if (scan.kind == "recovery") {
+        state.nextRecoveryCheck = now + duration_to_seconds(group.recovery_check_interval, 15);
+        if (switched)
+            state.nextFastestCheck = now + duration_to_seconds(group.fastest_check_interval, 180);
         return;
     }
-
-    if (state.active != "" && now >= state.nextActiveCheck) {
-        let active = clash_probe(state.active, group);
-        if (active.alive) {
-            state.activeDelay = active.delay;
+    if (scan.kind == "fastest") {
+        state.nextFastestCheck = now + duration_to_seconds(group.fastest_check_interval, 180);
+        return;
+    }
+    if (scan.kind == "failover") {
+        if (switched) {
+            state.nextRecoveryCheck = now + duration_to_seconds(group.recovery_check_interval, 15);
+            state.nextFastestCheck = now + duration_to_seconds(group.fastest_check_interval, 180);
         }
         else {
-            let selected = choose_from_level_range(
-                group,
-                state.levelIndex,
-                length(group.levels) - 1,
-                clash_probe,
-                state.active
-            );
-            if (switch_group(state, group, selected)) {
-                state.nextRecoveryCheck = now + duration_to_seconds(group.recovery_check_interval, 15);
-                state.nextFastestCheck = now + duration_to_seconds(group.fastest_check_interval, 180);
-            }
-            else {
-                state.active = "";
-                state.levelIndex = -1;
-            }
+            state.active = "";
+            state.levelIndex = -1;
         }
-        state.nextActiveCheck = now + duration_to_seconds(group.active_check_interval, 5);
+    }
+    state.nextActiveCheck = now + duration_to_seconds(group.active_check_interval, 5);
+}
+
+function tick_group(state, group, probe) {
+    if (state.scan != null) {
+        if (advance_probe_scan(group, state.scan, probe))
+            finish_group_scan(state, group);
+        return true;
     }
 
-    if (state.active != "" && state.levelIndex > 0 && now >= state.nextRecoveryCheck) {
-        let selected = choose_from_level_range(group, 0, state.levelIndex - 1, clash_probe);
-        if (switch_group(state, group, selected))
-            state.nextFastestCheck = now + duration_to_seconds(group.fastest_check_interval, 180);
-        state.nextRecoveryCheck = now + duration_to_seconds(group.recovery_check_interval, 15);
+    // Choose the oldest scheduled check so repeated active checks cannot
+    // crowd out recovery or fastest checks when other groups are busy.
+    let kind = "active";
+    let deadline = state.nextActiveCheck;
+    if (state.active != "" && state.levelIndex > 0 && state.nextRecoveryCheck < deadline) {
+        kind = "recovery";
+        deadline = state.nextRecoveryCheck;
     }
+    if (state.active != "" && group.switch_to_faster_same_priority && state.nextFastestCheck < deadline) {
+        kind = "fastest";
+        deadline = state.nextFastestCheck;
+    }
+    if (now_seconds() < deadline)
+        return false;
 
-    if (state.active != "" && group.switch_to_faster_same_priority && now >= state.nextFastestCheck) {
-        let selected = choose_fastest_same_level(group, state.levelIndex, state.active, clash_probe);
-        if (selected != null)
-            switch_group(state, group, selected);
-        state.nextFastestCheck = now + duration_to_seconds(group.fastest_check_interval, 180);
+    if (kind == "recovery")
+        state.scan = new_probe_scan(group, kind, 0, state.levelIndex - 1);
+    else if (kind == "fastest")
+        state.scan = new_probe_scan(group, kind, state.levelIndex, state.levelIndex, "", state.active);
+    else if (state.active == "")
+        state.scan = new_probe_scan(group, "initial", 0, length(group.levels) - 1);
+    else {
+        let active = probe(state.active, group);
+        if (active.alive) {
+            state.activeDelay = active.delay;
+            state.nextActiveCheck = now_seconds() + duration_to_seconds(group.active_check_interval, 5);
+        }
+        else {
+            state.scan = new_probe_scan(group, "failover", state.levelIndex, length(group.levels) - 1, state.active);
+        }
     }
+    return true;
+}
+
+function tick_groups(groups, states, probe) {
+    let busy = false;
+    for (let group in groups)
+        if (tick_group(states[group.tag], group, probe))
+            busy = true;
+    return busy;
 }
 
 function worker() {
@@ -415,11 +416,9 @@ function worker() {
     for (let group in groups)
         states[group.tag] = init_group_state(group);
 
-    while (true) {
-        for (let group in groups)
-            tick_group(states[group.tag], group);
-        system("sleep 1");
-    }
+    while (true)
+        if (!tick_groups(groups, states, clash_probe))
+            sleep(1000);
 }
 
 function stop_runtime() {
@@ -449,19 +448,17 @@ function start_runtime() {
 function select_fixture(group_path, latency_path, start_index, end_index, skip_tag) {
     let group = normalize_group(read_json_file(group_path), "fixture");
     let latencies = object_or_empty(read_json_file(latency_path));
-    let selected = choose_from_level_range(group, start_index, end_index, function(tag_name, _group) {
-        return fixture_probe(latencies, tag_name);
-    }, skip_tag);
-    write_json(selected == null ? {} : selected);
+    let scan = new_probe_scan(group, "initial", start_index, end_index, skip_tag);
+    while (!advance_probe_scan(group, scan, (tag) => fixture_probe(latencies, tag))) {}
+    write_json(probe_scan_selection(scan) || {});
 }
 
 function select_faster_fixture(group_path, latency_path, level_index, active_tag) {
     let group = normalize_group(read_json_file(group_path), "fixture");
     let latencies = object_or_empty(read_json_file(latency_path));
-    let selected = choose_fastest_same_level(group, int(level_index || 0), as_string(active_tag), function(tag_name, _group) {
-        return fixture_probe(latencies, tag_name);
-    });
-    write_json(selected == null ? {} : selected);
+    let scan = new_probe_scan(group, "fastest", level_index, level_index, "", active_tag);
+    while (!advance_probe_scan(group, scan, (tag) => fixture_probe(latencies, tag))) {}
+    write_json(probe_scan_selection(scan) || {});
 }
 
 let mode = ARGV[0] || "";

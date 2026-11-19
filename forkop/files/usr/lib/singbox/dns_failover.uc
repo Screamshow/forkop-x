@@ -13,12 +13,14 @@ const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
 const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
 const RUNTIME_STATE_DIR = getenv("FORKOP_RUNTIME_STATE_DIR") || "/var/run/forkop";
 const STATE_FILE = getenv("FORKOP_DNS_FAILOVER_STATE_FILE") || RUNTIME_STATE_DIR + "/dns-failover.json";
+const SECTION_CACHE_DIR = getenv("FORKOP_SECTION_CACHE_DIR") || RUNTIME_STATE_DIR + "/section-cache";
 const PID_FILE = getenv("FORKOP_DNS_FAILOVER_PID_FILE") || RUNTIME_STATE_DIR + "/dns-failover.pid";
 const DNS_FAILOVER_UC = getenv("FORKOP_DNS_FAILOVER_UC") || LIB_DIR + "/singbox/dns_failover.uc";
 const SERVICE_BIN = getenv("FORKOP_BIN") || "/usr/bin/forkop";
 const CHECK_DOMAIN = "example.com";
 const STATE_UC = LIB_DIR + "/service/state.uc";
 const CORE_GRACE_SECONDS = 90;
+const WAN_RELOAD_RETRY_SECONDS = 60;
 
 function as_string(value) {
     return value == null ? "" : "" + value;
@@ -74,9 +76,7 @@ function write_state(path, value) {
         return false;
     let stamp = clock();
     let temporary = as_string(path) + ".tmp." + as_string(stamp[0]) + "." + as_string(stamp[1]);
-    if (!common.write_json_file(temporary, value))
-        return false;
-    if (!fs.rename(temporary, path)) {
+    if (common.write_private_json_file(temporary, value) == null || !fs.rename(temporary, path)) {
         remove_file(temporary);
         return false;
     }
@@ -151,7 +151,6 @@ function verification_plan(previous, candidate) {
 }
 
 function verify_state(path, preflight, report) {
-    let cfg = settings();
     let previous = common.read_json_file(STATE_FILE);
     let state = runtime_dns.failover_selection(previous, common.read_json_file(path));
     if (state == null) {
@@ -160,7 +159,7 @@ function verify_state(path, preflight, report) {
     }
 
     let plan = verification_plan(previous, state);
-    let timeout_seconds = probe_timeout(common.option(cfg, "dns_check_timeout", "2s"));
+    let timeout_seconds = probe_timeout(previous.health?.timeout || runtime_dns.health_settings(settings()).timeout);
     // Before publishing, the main candidate still uses the current bootstrap.
     // A simultaneous bootstrap change must verify main after both are applied.
     let main_ok = !plan.main || (preflight
@@ -279,13 +278,20 @@ function update_dns_outage(outage, available, threshold) {
     }
 }
 
-function applied_worker_state(cfg, preserve_applied) {
+function applied_worker_state(preserve_applied) {
     let previous = common.read_json_file(STATE_FILE);
     if (preserve_applied && previous?.version == 1)
         return previous;
+    let generated = common.read_json_file(SECTION_CACHE_DIR + "/" + runtime_dns.APPLIED_DNS_CACHE_NAME);
+    if (generated?.version == 1)
+        return generated;
 
+    // Keep compatibility with a running configuration from before the
+    // generator supplied an applied snapshot.
+    let cfg = settings();
     let state = runtime_dns.normalize_state(cfg, previous);
     state.config_path = common.option(cfg, "config_path", "");
+    state.health = runtime_dns.health_settings(cfg);
     state.inherited_tunnel_dns = [];
     for (let section in uci_core.section_objects(CONFIG_NAME, "section"))
         if (connections.native_tunnel_dns_address(section) == "")
@@ -293,36 +299,44 @@ function applied_worker_state(cfg, preserve_applied) {
     return state;
 }
 
-function worker(preserve_applied) {
-    let cfg = settings();
-    let state = applied_worker_state(cfg, preserve_applied);
-    if (!state.provider && length(state.main_servers) <= 1 && length(state.bootstrap_servers) <= 1)
-        return 0;
-    if (!write_state(STATE_FILE, state))
+function worker() {
+    let state = common.read_json_file(STATE_FILE);
+    if (state?.version != 1)
         return 1;
 
-    let active_interval = duration_seconds(common.option(cfg, "dns_check_interval", "10s"), 10);
-    let recovery_interval = duration_seconds(common.option(cfg, "dns_recovery_check_interval", "60s"), 60);
-    let timeout_seconds = probe_timeout(common.option(cfg, "dns_check_timeout", "2s"));
-    let threshold = failure_threshold(common.option(cfg, "dns_failover_failure_threshold", "3"));
+    let health = state.health || runtime_dns.health_settings(settings());
+    let active_interval = duration_seconds(health.interval, 10);
+    let recovery_interval = duration_seconds(health.recovery_interval, 60);
+    let timeout_seconds = probe_timeout(health.timeout);
+    let threshold = failure_threshold(health.failure_threshold);
     let next_active = now_seconds();
     let next_recovery = now_seconds() + recovery_interval;
     let bootstrap_all_down = false;
     let outage = { failures: 0, reported: false };
     let active_failures = { main: 0, bootstrap: 0 };
     let observed_runtime = null;
+    let requested_wan = "";
+    let wan_retry_at = 0;
 
     while (true) {
         let now = now_seconds();
         // Keep monitoring the applied config until a successful transition
         // replaces this worker. UCI may already contain an unapplied edit.
         if (state.provider && now >= next_active) {
-            let expected = runtime_dns.state_template(cfg);
-            if (expected.provider && length(expected.main_servers) > 0 &&
-                !runtime_dns.state_matches(expected, state)) {
-                log_message("WAN DNS or mwan3 availability changed; regenerating DNS routes", "info");
-                command_status("(sleep 1; " + command_from_args([ SERVICE_BIN, "reload" ]) +
-                    ") >/dev/null 2>&1 1000>&- &");
+            // Provider routes are dynamic. Keep the applied provider mode and
+            // only rediscover WAN data that can change outside of UCI.
+            let expected = runtime_dns.state_template({ dns_use_provider: "1" });
+            if (runtime_dns.state_matches(expected, state))
+                requested_wan = "";
+            else if (length(expected.main_servers) > 0) {
+                let wan = sprintf("%J", expected.provider_routes);
+                if (wan != requested_wan || now >= wan_retry_at) {
+                    requested_wan = wan;
+                    wan_retry_at = now + max(WAN_RELOAD_RETRY_SECONDS, 3 * active_interval);
+                    log_message("WAN DNS or mwan3 availability changed; regenerating DNS routes", "info");
+                    command_status("(sleep 1; " + command_from_args([ SERVICE_BIN, "reload" ]) +
+                        ") >/dev/null 2>&1 1000>&- &");
+                }
             }
         }
 
@@ -396,28 +410,30 @@ function stop_runtime() {
     return worker_identity.stop(PID_FILE, DNS_FAILOVER_UC, LIB_DIR) ? 0 : 1;
 }
 
-function start_runtime(preserve_applied) {
-    let cfg = settings();
+function start_runtime(preserve_applied, config_path) {
     if (stop_runtime() != 0)
         return 1;
-    let applied = preserve_applied ? common.read_json_file(STATE_FILE) : null;
-    let enabled = applied?.version == 1
-        ? applied.provider || length(applied.main_servers) > 1 || length(applied.bootstrap_servers) > 1
-        : runtime_dns.failover_enabled(cfg);
+    let previous = common.read_json_file(STATE_FILE);
+    let applied = applied_worker_state(preserve_applied);
+    let enabled = applied.provider || length(applied.main_servers) > 1 || length(applied.bootstrap_servers) > 1;
     if (!enabled) {
         remove_file(STATE_FILE);
         return 0;
     }
-    if (!ensure_dir(RUNTIME_STATE_DIR))
+    if (config_path)
+        applied.config_path = config_path;
+    if (!write_state(STATE_FILE, applied))
         return 1;
 
-    let command = command_from_args([ "ucode", "-L", LIB_DIR, DNS_FAILOVER_UC, "worker", preserve_applied ? "applied" : "" ]) +
+    let command = command_from_args([ "ucode", "-L", LIB_DIR, DNS_FAILOVER_UC, "worker" ]) +
         " >/dev/null 2>&1 1000>&- & echo $! >" + shell_quote(PID_FILE);
-    if (command_status(command) != 0)
-        return 1;
-    if (worker_identity.record_started(PID_FILE, DNS_FAILOVER_UC, LIB_DIR))
+    if (command_status(command) == 0 && worker_identity.record_started(PID_FILE, DNS_FAILOVER_UC, LIB_DIR))
         return 0;
     stop_runtime();
+    if (previous != null)
+        write_state(STATE_FILE, previous);
+    else
+        remove_file(STATE_FILE);
     return 1;
 }
 
@@ -453,11 +469,11 @@ function select_fixture(state_path, alive_path, kind, recovery) {
 let mode = ARGV[0] || "";
 
 if (mode == "start-runtime")
-    exit(start_runtime(ARGV[1] == "applied"));
+    exit(start_runtime(ARGV[1] == "applied", ARGV[2]));
 else if (mode == "stop-runtime")
     exit(stop_runtime());
 else if (mode == "worker")
-    exit(worker(ARGV[1] == "applied"));
+    exit(worker());
 else if (mode == "verify-state")
     exit(verify_state(ARGV[1], false, ARGV[2] == "report") ? 0 : 1);
 else if (mode == "probe-candidate")

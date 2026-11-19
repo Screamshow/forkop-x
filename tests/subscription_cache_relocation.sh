@@ -9,6 +9,7 @@ export FORKOP_CACHE_TEST_DIR="$WORK"
 {
 cat <<'UC'
 let fs=require("fs"), common=require("core.common"), parser=require("subscription.parser");
+let source_cache=require("subscription.source_cache");
 let TMP_SUBSCRIPTION_FOLDER=getenv("FORKOP_CACHE_TEST_DIR")+"/runtime";
 let FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR=getenv("FORKOP_CACHE_TEST_DIR")+"/persistent";
 let auto_user_agents={}, default_ua="sing-box/1.14.2-x-1.0.4";
@@ -18,8 +19,6 @@ function subscription_parser(){return parser;}
 function generate_hwid(){return "auto-device";}
 function ensure_dir(p){if(!fs.stat(p))fs.mkdir(p,0700);}
 function chmod_path(p,m){fs.chmod(p,m=="700"?0700:0600);}
-function unlink_path(p){if(fs.stat(p))fs.unlink(p);}
-function object_has_extra_keys(p){let o=common.read_json_file(p);return type(o)=="object"&&length(keys(o))>0;}
 function log_message(m,l){die("unexpected persistence error\n");}
 function section_is_subscription_proxy(s){return true;}
 function section_name(s){return s.name;}
@@ -27,12 +26,9 @@ let connections={subscription_urls:function(s){return s.urls;}};
 function subscription_source_profile(s,e){return e;}
 function get_subscription_user_agent(v){return default_ua;}
 UC
-for fn in read_json write_file file_nonempty read_text write_text files_equal copy_file \
-    copy_file_if_changed write_text_if_changed source_id source_json_path source_url_path \
-    source_user_agent_path source_hwid_path ends_with cache_name_from_file cache_section_is_safe \
+for fn in source_id source_json_path source_url_path source_user_agent_path source_hwid_path cache_section_is_safe \
     subscription_cache_is_usable user_agent_supported user_agent_matches_config hwid_matches_config \
-    source_cache_matches_profile restore_persistent_subscription_cache persistent_metadata_path \
-    runtime_metadata_path cached_source_metadata_path persist_subscription_cache \
+    source_cache_profile_matches source_cache_matches_profile restore_persistent_subscription_cache persist_subscription_cache \
     recover_subscription_sources_for_sections persist_recovered_subscription_sources; do
     sed -n "/^function $fn(/,/^}/p" "$SOURCE"
 done
@@ -40,14 +36,14 @@ cat <<'UC'
 function seed(s,url,ua,hwid,label){
  let dir=FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR;
  if(!common.write_private_json_file(source_json_path(dir,s),{outbounds:[{type:"socks",tag:label,server:label+".invalid",server_port:1080}]}))die("seed\n");
- write_text(source_url_path(dir,s),url);write_text(source_user_agent_path(dir,s),ua);write_text(source_hwid_path(dir,s),hwid);
- common.write_private_json_file(persistent_metadata_path(s),{label:label});
+ fs.writefile(source_url_path(dir,s),url);fs.writefile(source_user_agent_path(dir,s),ua);fs.writefile(source_hwid_path(dir,s),hwid);
+ common.write_private_json_file(dir+"/"+s+".metadata.json",{label:label});
 }
 function entry(url,ua,hwid){return {valid:true,url:url,user_agent:ua||"",hwid:hwid||""};}
 function clear_runtime(){for(let p in fs.glob(TMP_SUBSCRIPTION_FOLDER+"/*")||[])fs.unlink(p);}
 function check(s,label){
- let o=read_json(source_json_path(TMP_SUBSCRIPTION_FOLDER,s));
- if(o.outbounds[0].tag!=label||read_json(runtime_metadata_path(s)).label!=label)die("source/metadata mismatch\n");
+ let o=source_cache.read(TMP_SUBSCRIPTION_FOLDER,s);
+ if(o.payload.outbounds[0].tag!=label||o.profile.metadata?.label!=label)die("source/metadata mismatch\n");
  if(fs.stat(source_json_path(TMP_SUBSCRIPTION_FOLDER,s)).mode!=0600)die("private mode lost\n");
 }
 seed("main-subscription-1","https://a.invalid","sing-box/1.14.2-x-1.0.1","auto-device","A");
@@ -63,7 +59,7 @@ for(let ua in ["sing-box/1.14.2-x-1.0.4","sing-box/1.14.2-rust-x-0.0.12"]){
 for(let p in fs.glob(FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR+"/other-subscription-1.*")||[])fs.unlink(p);
 clear_runtime();recover_subscription_sources_for_sections(sections);check("moved-subscription-1","A");check("main-subscription-2","C");
 // Matching sidecars must not cause an invalid persistent payload to be retained.
-write_text(source_json_path(FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR,"main-subscription-1"),"invalid");
+fs.writefile(source_json_path(FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR,"main-subscription-1"),"invalid");
 if(!persist_recovered_subscription_sources(sections)||!subscription_cache_is_usable(source_json_path(FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR,"main-subscription-1")))die("invalid persistent payload retained\n");
 // A populated but mismatched runtime slot must not bypass identity checks.
 if(restore_persistent_subscription_cache("main-subscription-1",TMP_SUBSCRIPTION_FOLDER,FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR,"https://unknown.invalid","","",default_ua))die("wrong URL accepted\n");
@@ -116,7 +112,10 @@ for version in 1.14.2-x-1.0.4 1.14.2-rust-x-0.0.12; do
     fi
     grep -q 'B.invalid\|b.invalid' "$WORK/actual/sing-box/subscriptions/test-subscription-1.json"
     grep -q 'a.invalid' "$WORK/actual/sing-box/subscriptions/test-subscription-2.json"
-    test "$(cat "$WORK/actual/persistent/test-subscription-1.url")" = 'https://aes2215.vs2112.51343.ru/test-b'
+    ucode -L "$FORKOP_LIB" -e '
+        let cache = require("subscription.source_cache");
+        assert(cache.read(ARGV[0], "test-subscription-1").profile.url == "https://aes2215.vs2112.51343.ru/test-b");
+    ' "$WORK/actual/persistent"
     # Clear only this test's runtime via the module's normal format migration.
     printf '9\n' > "$WORK/actual/persistent/cache-format"
     printf 'old-format' > "$WORK/actual/state/cache-format"

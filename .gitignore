@@ -166,6 +166,10 @@ ops/deployed-nginx/
 !/tests/subscription_runtime_readiness.sh
 !/tests/subscription_runtime_unchanged.sh
 !/tests/subscription_cache_relocation.sh
+!/tests/cache_failure_recovery.sh
+!/tests/config_migration_transaction.sh
+!/tests/monitoring_runtime_config.sh
+!/tests/priority_scheduler.sh
 !/tests/dns_failover_startup_grace.sh
 !/tests/service_memory.uc
 !/tests/rust_x_hot_reload.sh

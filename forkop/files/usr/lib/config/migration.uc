@@ -1628,23 +1628,33 @@ function apply_operations(cursor, operations) {
     };
 
     for (let op in operations) {
+        let staged = false;
         if (op.op == "create") {
-            if (op.anonymous && type(cursor.add) == "function")
-                created[as_string(op.section)] = cursor.add(CONFIG_NAME, op.type);
+            if (op.anonymous && type(cursor.add) == "function") {
+                let name = as_string(cursor.add(CONFIG_NAME, op.type));
+                if (name != "") {
+                    created[as_string(op.section)] = name;
+                    staged = true;
+                }
+            }
             else
-                cursor.set(CONFIG_NAME, op.section, op.type);
+                staged = cursor.set(CONFIG_NAME, op.section, op.type);
         }
         else if (op.op == "set")
-            cursor.set(CONFIG_NAME, section_ref(op.section), op.option, op.value);
+            staged = cursor.set(CONFIG_NAME, section_ref(op.section), op.option, op.value);
         else if (op.op == "delete")
-            cursor.delete(CONFIG_NAME, section_ref(op.section), op.option);
-        else if (op.op == "add_list")
-            cursor.set(CONFIG_NAME, section_ref(op.section), op.option, op.values);
-        else if (op.op == "set_list")
-            cursor.set(CONFIG_NAME, section_ref(op.section), op.option, op.values);
+            staged = cursor.delete(CONFIG_NAME, section_ref(op.section), op.option);
+        else if (op.op == "add_list" || op.op == "set_list")
+            staged = cursor.set(CONFIG_NAME, section_ref(op.section), op.option, op.values);
         else if (op.op == "set_type")
-            cursor.set(CONFIG_NAME, section_ref(op.section), op.type);
+            staged = cursor.set(CONFIG_NAME, section_ref(op.section), op.type);
+
+        if (!staged) {
+            warn("Cannot stage Forkop UCI migration operation '", op.op, "'\n");
+            return false;
+        }
     }
+    return true;
 }
 
 function runtime_cursor() {
@@ -1664,14 +1674,14 @@ function runtime_cursor() {
         },
         set: function(package_name, section_name, option_name, value) {
             if (value == null)
-                return uci_core.set_section(package_name + "." + section_name, option_name);
-            return uci_core.set(package_name + "." + section_name + "." + option_name, value);
+                return uci_core.set_section(package_name + "." + section_name, option_name, true);
+            return uci_core.set(package_name + "." + section_name + "." + option_name, value, true);
         },
         delete: function(package_name, section_name, option_name) {
-            return uci_core.delete(package_name + "." + section_name + "." + option_name);
+            return uci_core.delete(package_name + "." + section_name + "." + option_name, true);
         },
         commit: function(package_name) {
-            return uci_core.commit(package_name);
+            return uci_core.commit(package_name, true);
         }
     };
 }
@@ -1714,22 +1724,23 @@ function migrate_model(model, source) {
 }
 
 function migrate_runtime(source) {
+    let cursor = runtime_cursor();
+    if (!cursor.load(CONFIG_NAME))
+        return false;
+
+    let ctx = migrate_model(model_from_uci(cursor), source);
+    if (ctx.changed && (!apply_operations(cursor, ctx.operations) || !commit_cursor(cursor)))
+        return false;
+
     ensure_runtime_cache_format();
     remove_legacy_server_country_cache();
     remove_retired_byedpi_state();
     remove_retired_zapret_state();
 
-    let cursor = runtime_cursor();
-    cursor.load(CONFIG_NAME);
-    let ctx = migrate_model(model_from_uci(cursor), source);
-    if (!ctx.changed)
-        return true;
-
-    apply_operations(cursor, ctx.operations);
     for (let path in ctx.removed_caches)
         remove_cache_path(path);
 
-    return commit_cursor(cursor);
+    return true;
 }
 
 function commit_runtime() {

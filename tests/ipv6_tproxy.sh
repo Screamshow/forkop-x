@@ -16,8 +16,26 @@ cat >"$WORK_DIR/bin/ip" <<'EOF'
 printf '%s\n' "$*" >>"$IPV6_TEST_LOG"
 case "$*" in '-6 '*) [ "${IPV6_TEST_FAIL6:-0}" = 0 ] || exit 1 ;; esac
 case "$*" in
+  '-6 route list'*)
+    if [ "${IPV6_TEST_PRESENT:-0}" = 1 ]; then
+      printf '%s\n' "${IPV6_TEST_ROUTE6:-local default dev lo metric 1024 pref medium}"
+    fi
+    exit 0 ;;
   *'route list'*) [ "${IPV6_TEST_PRESENT:-0}" = 1 ] && echo 'local default dev lo scope host'; exit 0 ;;
-  *'rule list'*) [ "${IPV6_TEST_PRESENT:-0}" = 1 ] && echo '105: from all fwmark 0x4000000/0x4000000 lookup 305'; exit 0 ;;
+  *'rule list'*)
+    if [ "${IPV6_TEST_PRESENT:-0}" = 1 ]; then
+      echo '105: from all fwmark 0x4000000/0x4000000 lookup 305'
+      case "$1" in
+        -4)
+          [ "${IPV6_TEST_MISSING:-}" = source ] || echo '103: from all fwmark 0x4000000/0x4000000 iif lo lookup main'
+          [ "${IPV6_TEST_MISSING:-}" = router4 ] || echo '105: from all fwmark 0x10000000/0x10000000 lookup 305'
+          ;;
+        -6)
+          [ "${IPV6_TEST_MISSING:-}" = router6 ] || echo '105: from all fwmark 0x10000000/0x10000000 lookup 305'
+          ;;
+      esac
+    fi
+    exit 0 ;;
 esac
 [ "${IPV6_TEST_FAIL:-0}" = 0 ]
 EOF
@@ -49,7 +67,21 @@ for mode in enabled all-disabled lo-disabled missing; do
         fail "$mode attempted IPv6 routing"
     fi
     IPV6_TEST_PRESENT=1 ucode -L "$FORKOP_LIB" "$NFT_UC" tproxy-route-rule-present 305 0x04000000
+    for missing in source router4; do
+        if IPV6_TEST_PRESENT=1 IPV6_TEST_MISSING=$missing \
+            ucode -L "$FORKOP_LIB" "$NFT_UC" tproxy-route-rule-present 305 0x04000000; then
+            fail "$mode accepted incomplete IPv4 policy ($missing)"
+        fi
+    done
     if [ "$mode" = enabled ]; then
+        if IPV6_TEST_PRESENT=1 IPV6_TEST_MISSING=router6 \
+            ucode -L "$FORKOP_LIB" "$NFT_UC" tproxy-route-rule-present 305 0x04000000; then
+            fail 'accepted incomplete IPv6 policy'
+        fi
+        if IPV6_TEST_PRESENT=1 IPV6_TEST_ROUTE6='local ::1 dev lo metric 1024 pref medium' \
+            ucode -L "$FORKOP_LIB" "$NFT_UC" tproxy-route-rule-present 305 0x04000000; then
+            fail 'IPv6 host route was mistaken for a default route'
+        fi
         if IPV6_TEST_FAIL6=1 ucode -L "$FORKOP_LIB" "$NFT_UC" ensure-tproxy-route-rule 305 0x04000000 "$WORK_DIR/rt_tables"; then
             fail 'enabled IPv6 routing failure was ignored'
         fi

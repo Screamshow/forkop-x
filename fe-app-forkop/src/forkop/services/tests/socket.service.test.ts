@@ -10,7 +10,7 @@ class FakeWebSocket {
   readyState = FakeWebSocket.CONNECTING;
   private listeners = new Map<string, Array<(event: Event) => void>>();
 
-  constructor(_url: string) {
+  constructor(readonly url: string) {
     FakeWebSocket.instances.push(this);
   }
 
@@ -44,6 +44,32 @@ describe('socket service', () => {
   afterEach(() => {
     socket.resetAll();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('keeps socket query parameters out of logs', () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const url = 'ws://router.test/connections?token=example';
+    const unsubscribe = socket.subscribe(url, vi.fn());
+    const connection = FakeWebSocket.instances[0];
+
+    expect(connection.url).toBe(url);
+    connection.emit('open');
+    connection.emit('error');
+    connection.emit('close');
+    unsubscribe();
+
+    expect(info).toHaveBeenCalledWith(
+      '[INFO] [SOCKET] Connected to ws://router.test/connections',
+    );
+    expect(error).toHaveBeenCalledWith(
+      '[ERROR] [SOCKET] Socket error for ws://router.test/connections',
+    );
+    expect(warn).toHaveBeenCalledWith(
+      '[WARN] [SOCKET] Disconnected: ws://router.test/connections',
+    );
   });
 
   it('keeps the initial subscriber when the first connection fails', () => {

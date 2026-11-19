@@ -469,7 +469,13 @@ export namespace Forkop {
     progress?: LatencyActionProgress;
   }
 
+  export interface RuntimeConfigReference {
+    path: string;
+    revision: string;
+  }
+
   export interface UiState {
+    runtime_config?: RuntimeConfigReference | null;
     subscription_error?: {
       state: 'previous' | 'recovery_failed' | 'applied' | 'unknown';
       reason: string;

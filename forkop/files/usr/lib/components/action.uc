@@ -43,6 +43,7 @@ let sing_box_flash_after_remove_bytes = 0;
 let forkop_configuration_backup = "";
 let preserve_update_recovery_files = false;
 let forkop_package_init = "";
+let forkop_package_version_reader = "";
 let stage_archived_sing_box_package;
 let wait_forkop_running_after_sing_box_change;
 // Repository staging is declared before the download helpers. ucode needs a
@@ -425,7 +426,7 @@ function installed_package_version(package_name) {
 // is not installed as the same empty string. Verification after an upgrade
 // must tell them apart: opkg fails read-only queries while its global lock is
 // busy, and that is no reason to discard a good installation.
-function read_installed_package_version(package_name) {
+function read_installed_package_version(package_name, reader_path) {
     package_name = as_string(package_name);
     let output_file = make_tmp_file("version");
     if (output_file == "")
@@ -433,7 +434,7 @@ function read_installed_package_version(package_name) {
 
     let state;
     for (let attempt = 0; attempt <= 2; attempt++) {
-        let status = command_status(module_command([ LIB_DIR + "/core/packages.uc",
+        let status = command_status(module_command([ reader_path || LIB_DIR + "/core/packages.uc",
             "installed-version", package_name ]) + " >" + shell_quote(output_file) + " 2>&1");
         let line = trim(as_string(split(read_file(output_file), "\n")[0] || ""));
         if (substr(line, 0, 6) == "found ")
@@ -454,12 +455,12 @@ function read_installed_package_version(package_name) {
     return state;
 }
 
-function forkop_installed_version_mismatch(expected, names) {
+function forkop_installed_version_mismatch(expected, names, reader_path) {
     expected = as_string(expected);
     let mismatched = [];
     for (let name in names) {
         name = as_string(name);
-        let state = read_installed_package_version(name);
+        let state = read_installed_package_version(name, reader_path);
         if (state.state == "found" && state.version == expected)
             continue;
         if (state.state == "found")
@@ -1499,19 +1500,21 @@ function restart_forkop_after_successful_change() {
     return run_logged("Restarting Forkop after successful component change", command_from_args([ SERVICE_INIT, action ]));
 }
 
-function stop_forkop_before_sing_box_change() {
+function stop_forkop_before_sing_box_change(action, current_version, latest_version) {
     if (forkop_stopped_for_sing_box_change)
         return;
     // A SIGKILL during package replacement must not let a later TTL sweep
     // discard the exact rollback package. Mark before the first mutation.
     if (tmp_dir != "" && !write_file(tmp_dir + "/.forkop-recovery", "transition\n"))
-        action_fail("sing_box", "install", "Cannot protect rollback files before component change");
+        action_fail("sing_box", action, "Cannot protect rollback files before component change", current_version, latest_version);
+    if (forkop_was_running && (!file_exists(SERVICE_INIT) ||
+        !run_logged("Stopping Forkop before sing-box package change",
+            command_from_args([ "env", "FORKOP_INTERNAL_SERVICE_STOP=1", SERVICE_INIT, "stop" ]))))
+        action_fail("sing_box", action, "Cannot safely stop Forkop before sing-box package change", current_version, latest_version);
+
     forkop_stopped_for_sing_box_change = true;
     if (file_exists('/etc/init.d/forkop-tailscale'))
         command_success_from_args([ '/etc/init.d/forkop-tailscale', 'stop' ]);
-
-    if (forkop_was_running && file_exists(SERVICE_INIT))
-        run_logged("Stopping Forkop before sing-box package change", command_from_args([ "env", "FORKOP_INTERNAL_SERVICE_STOP=1", SERVICE_INIT, "stop" ]));
 
     if (forkop_was_running && file_exists(BIN_PATH))
         command_success_from_args([ BIN_PATH, "restore_dnsmasq" ]);
@@ -2095,7 +2098,7 @@ function install_package_sing_box(action, tiny, x, rust, requested_version) {
 
     let previous_marker = sing_box_runtime_output("read-variant-marker", []);
     let previous_version_state = sing_box_runtime_output("read-version-state", []);
-    stop_forkop_before_sing_box_change();
+    stop_forkop_before_sing_box_change(action, current_version, latest_version);
 
     let backup_binary = "";
     let backup_cronet = "";
@@ -2254,19 +2257,20 @@ function forkop_release_version(package_version) {
 
 function stage_forkop_rollback_packages() {
     let staged = [];
-    let current_version = installed_package_version("forkop");
-    let release = current_version != "" ? selected_forkop_release(forkop_release_version(current_version)) : null;
+    let current = read_installed_package_version("forkop", forkop_package_version_reader);
+    if (current.state != "found")
+        return null;
+    let release = selected_forkop_release(forkop_release_version(current.version));
     for (let name in [ "luci-app-forkop", "luci-i18n-forkop-ru", "forkop" ]) {
-        let version = installed_package_version(name);
-        if (version == "") {
-            if (name != "luci-i18n-forkop-ru")
-                return null;
+        let installed = name == "forkop" ? current : read_installed_package_version(name, forkop_package_version_reader);
+        if (name == "luci-i18n-forkop-ru" && installed.state == "missing")
             continue;
-        }
-        let archive = release != null && version == current_version ?
-            stage_forkop_release_archive(release, name, version) : null;
+        if (installed.state != "found")
+            return null;
+        let archive = release != null && installed.version == current.version ?
+            stage_forkop_release_archive(release, name, installed.version) : null;
         if (archive == null)
-            archive = stage_repository_package(name, version);
+            archive = stage_repository_package(name, installed.version);
         if (archive == null)
             return null;
         push(staged, archive);
@@ -2363,16 +2367,36 @@ function stop_forkop_for_package_restore() {
     return command_success_from_args([ "env", "FORKOP_INTERNAL_SERVICE_STOP=1", script, "stop" ]);
 }
 
+function remove_new_forkop_translation(staged) {
+    let name = "luci-i18n-forkop-ru";
+    for (let archive in staged)
+        if (archive.name == name)
+            return true;
+
+    let installed = read_installed_package_version(name, forkop_package_version_reader);
+    if (installed.state == "missing")
+        return true;
+    if (installed.state == "found" &&
+        run_logged("Removing translation added by the failed upgrade",
+            command_from_args(is_apk() ? [ "apk", "del", "--no-network", name ] : [ "opkg", "remove", name ]) + " </dev/null") &&
+        read_installed_package_version(name, forkop_package_version_reader).state == "missing")
+        return true;
+
+    updates_log("Cannot restore the previous absence of " + name, "error");
+    return false;
+}
+
 function restore_forkop_packages(staged) {
-    let restored = true;
+    let restored = remove_new_forkop_translation(staged);
     // Keep the backend last, just as in the normal opkg upgrade. Its postinst
     // owns service restoration after the matching LuCI files are back in place.
     if (is_apk()) {
         let args = [ "apk", "--preserve-env", "add", "--no-network", "--allow-untrusted", "--force-reinstall" ];
         for (let archive in staged)
             push(args, archive.path);
-        restored = run_logged("Restoring previous Forkop package set",
-            command_env({ FORKOP_INIT: forkop_package_init }) + " " + command_from_args(args) + " </dev/null");
+        if (!run_logged("Restoring previous Forkop package set",
+            command_env({ FORKOP_INIT: forkop_package_init }) + " " + command_from_args(args) + " </dev/null"))
+            restored = false;
     }
     else {
         for (let archive in staged) {
@@ -2382,25 +2406,27 @@ function restore_forkop_packages(staged) {
         }
     }
     for (let archive in staged) {
-        let actual = installed_package_version(archive.name);
-        if (actual != archive.version) {
-            updates_log("Restored " + archive.name + " version mismatch: expected " + archive.version + ", got " + actual, "error");
+        let installed = read_installed_package_version(archive.name, forkop_package_version_reader);
+        if (installed.state != "found" || installed.version != archive.version) {
+            updates_log("Restored " + archive.name + " version mismatch: expected " + archive.version +
+                ", got " + (installed.version || installed.error || installed.state), "error");
             restored = false;
         }
     }
-    if (restored) {
-        if (!stop_forkop_for_package_restore()) {
-            updates_log("Cannot confirm stopped Forkop after restoring previous packages", "error");
-            restored = false;
-        }
-        else if (!restore_forkop_configuration_backup(forkop_configuration_backup, "/etc/config")) {
-            updates_log("Cannot reapply configuration after previous package hooks", "error");
-            restored = false;
-        }
+    // Quiesce any runtime launched by package hooks, also on partial rollback.
+    if (!stop_forkop_for_package_restore()) {
+        updates_log("Cannot confirm stopped Forkop after restoring previous packages", "error");
+        return false;
+    }
+    if (!restored)
+        return false;
+    if (!restore_forkop_configuration_backup(forkop_configuration_backup, "/etc/config")) {
+        updates_log("Cannot reapply configuration after previous package hooks", "error");
+        return false;
     }
     if (!command_success_from_args([ SERVICE_INIT, forkop_was_enabled ? "enable" : "disable" ])) {
         updates_log("Cannot restore Forkop enabled state", "error");
-        restored = false;
+        return false;
     }
     if (forkop_was_running && !wait_for_forkop_restore()) {
         if (file_exists(SERVICE_INIT))
@@ -2648,6 +2674,11 @@ function install_forkop(requested_version) {
     if (!run_logged("Updating package lists before Forkop package change", pkg_list_update_command()))
         action_fail("forkop", "install", "Failed to update package lists", FORKOP_VERSION, latest_version);
 
+    // Changing the backend also replaces the reader. Keep these checks usable
+    // with older packages that predate the installed-version query.
+    forkop_package_version_reader = tmp_dir + "/package-versions.uc";
+    if (!command_success_from_args([ "cp", LIB_DIR + "/core/packages.uc", forkop_package_version_reader ]))
+        action_fail("forkop", "install", "Failed to preserve the installed package version reader", FORKOP_VERSION, latest_version);
     let rollback_packages = stage_forkop_rollback_packages();
     if (rollback_packages == null)
         action_fail("forkop", "install", "Cannot cache the exact installed Forkop packages for rollback", FORKOP_VERSION, latest_version);
@@ -2720,7 +2751,7 @@ function install_forkop(requested_version) {
     let installed_names = [ "forkop", "luci-app-forkop" ];
     if (i18n_file != "")
         push(installed_names, "luci-i18n-forkop-ru");
-    let version_mismatch = forkop_installed_version_mismatch(expected_package_version, installed_names);
+    let version_mismatch = forkop_installed_version_mismatch(expected_package_version, installed_names, forkop_package_version_reader);
     if (version_mismatch != "")
         fail_forkop_package_install(rollback_packages, version_mismatch, latest_version);
 

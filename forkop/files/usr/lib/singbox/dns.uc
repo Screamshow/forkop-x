@@ -272,15 +272,14 @@ function add_health_slot(result, kind, index_value) {
     push(result.sniff_inbounds, tag);
 }
 
-function config(settings, override_state) {
-    let state = runtime_state(settings, override_state);
-    let main = server_config(settings, state);
+function config_from_state(state) {
+    let main = server_config_from_state(state);
     if (main.unsupported)
         return { unsupported: main.unsupported, provider_unavailable: state.provider && length(state.provider_routes) == 0 };
 
     let result = {
         state,
-        servers: [ bootstrap_config(settings, state), main ],
+        servers: [ bootstrap_config_from_state(state), main ],
         outbounds: [],
         inbounds: [],
         rules: [],
@@ -314,6 +313,19 @@ function config(settings, override_state) {
     return result;
 }
 
+function config(settings, override_state) {
+    return config_from_state(runtime_state(settings, override_state));
+}
+
+function health_settings(settings) {
+    return {
+        interval: option(settings, "dns_check_interval", "10s"),
+        recovery_interval: option(settings, "dns_recovery_check_interval", "60s"),
+        timeout: option(settings, "dns_check_timeout", "2s"),
+        failure_threshold: option(settings, "dns_failover_failure_threshold", "3")
+    };
+}
+
 function default_domain_resolver(settings) {
     return !bool_option(settings, "dns_use_provider", false) && bool_option(settings, "dns_detour_enabled", false)
         ? runtime_constants.BOOTSTRAP_DNS_SERVER_TAG
@@ -321,6 +333,7 @@ function default_domain_resolver(settings) {
 }
 
 const TUNNEL_DNS_TAG_PREFIX = "native-tunnel-dns:";
+const APPLIED_DNS_CACHE_NAME = ".dns-failover.json";
 
 function tunnel_dns_tag(section_name) {
     return TUNNEL_DNS_TAG_PREFIX + section_name;
@@ -346,6 +359,7 @@ function tunnel_dns_server(main, tag, detour, address, protocol) {
 }
 
 return {
+    APPLIED_DNS_CACHE_NAME,
     DNS_FAILOVER_STATE_FILE,
     DNS_HEALTH_ADDRESS,
     active_values,
@@ -353,11 +367,13 @@ return {
     bootstrap_config,
     bootstrap_config_from_state,
     config,
+    config_from_state,
     default_domain_resolver,
     detour_tag,
     failover_enabled,
     failover_selection,
     health_port,
+    health_settings,
     normalize_state,
     runtime_state,
     server_config,

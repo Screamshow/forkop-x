@@ -20,12 +20,15 @@ EOF_NFT
 chmod +x "$WORK_DIR/bin/nft"
 printf '149.154.160.0/20\n2001:db8::/32\n' >"$WORK_DIR/telegram.txt"
 : >"$WORK_DIR/nft.log"
+printf '# first part of the batch\n' >"$WORK_DIR/candidate.nft"
 
 PATH="$WORK_DIR/bin:$PATH" NFT_ATOMIC_LOG="$WORK_DIR/nft.log" \
 FORKOP_NFT_BATCH_FILE="$WORK_DIR/candidate.nft" \
   ucode -L "$FORKOP_LIB" "$NFT_UC" nft-add-file-chunks-to-set \
     "$WORK_DIR/telegram.txt" ForkopTable forkop_subnets ips '' 5000
 [ ! -s "$WORK_DIR/nft.log" ] || fail "candidate preparation touched active nft"
+[ "$(head -n 1 "$WORK_DIR/candidate.nft")" = '# first part of the batch' ] ||
+  fail "candidate append replaced earlier commands"
 grep -Fq 'add element inet ForkopTable forkop_subnets { 149.154.160.0/20,2001:db8::/32 }' "$WORK_DIR/candidate.nft" ||
   fail "candidate lost Telegram IPv4 CIDR"
 
@@ -43,6 +46,21 @@ if PATH="$WORK_DIR/bin:$PATH" NFT_ATOMIC_LOG="$WORK_DIR/nft.log" FORKOP_NFT_CAND
   fail "injected candidate preparation failure was accepted"
 fi
 [ ! -s "$WORK_DIR/nft.log" ] || fail "preparation failure touched live nft"
+
+# The next command crosses a real file size limit. Ignore SIGXFSZ so the
+# write/flush status, rather than process termination, rejects the candidate.
+printf '#%1019s\n' '' >"$WORK_DIR/short.nft"
+if (
+  trap '' XFSZ
+  ulimit -f 1
+  PATH="$WORK_DIR/bin:$PATH" NFT_ATOMIC_LOG="$WORK_DIR/nft.log" \
+    FORKOP_NFT_BATCH_FILE="$WORK_DIR/short.nft" \
+    ucode -L "$FORKOP_LIB" "$NFT_UC" nft-add-file-chunks-to-set \
+      "$WORK_DIR/telegram.txt" ForkopTable forkop_subnets ips '' 5000
+); then
+  fail "short candidate write was accepted"
+fi
+[ ! -s "$WORK_DIR/nft.log" ] || fail "short write attempted live nft"
 
 : >"$WORK_DIR/nft.log"
 if PATH="$WORK_DIR/bin:$PATH" NFT_ATOMIC_LOG="$WORK_DIR/nft.log" NFT_ATOMIC_FAIL='-c -f' \

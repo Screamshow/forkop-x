@@ -5,6 +5,7 @@
 // dnsmasq forwarding to an unavailable local DNS listener indefinitely.
 let fs = require("fs");
 let uci = require("core.uci");
+let locks = require("core.locks");
 
 const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
 const BIN_PATH = getenv("FORKOP_BIN") || "/usr/bin/forkop";
@@ -35,7 +36,7 @@ function active() {
 }
 
 function transitioning() {
-    return fs.stat(RELOAD_LOCK_DIR) != null ||
+    return locks.held(RELOAD_LOCK_DIR) ||
         system("ucode -L " + quote(LIB_DIR) + " " + quote(UI_UC) +
             " package-upgrade-transition-active >/dev/null 2>&1") == 0;
 }

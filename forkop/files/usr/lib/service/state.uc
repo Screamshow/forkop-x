@@ -1665,6 +1665,7 @@ function sing_box_signature_body(settings, sections, mwan3_active) {
     body = signature_add_value(body, "settings.dns_check_interval", option(settings, "dns_check_interval", "10s"));
     body = signature_add_value(body, "settings.dns_recovery_check_interval", option(settings, "dns_recovery_check_interval", "60s"));
     body = signature_add_value(body, "settings.dns_check_timeout", option(settings, "dns_check_timeout", "2s"));
+    body = signature_add_value(body, "settings.dns_failover_failure_threshold", option(settings, "dns_failover_failure_threshold", "3"));
     let dns_detour_enabled = bool_option_value(settings, "dns_detour_enabled", false);
     body = signature_add_value(body, "settings.dns_detour_enabled", dns_detour_enabled);
     if (dns_detour_enabled == "1")

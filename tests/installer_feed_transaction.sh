@@ -148,4 +148,18 @@ restore_native_repository_file "$legacy_native"
 grep -Fq 'vendor.example.invalid' "$legacy_native" ||
   fail_test "native fallback overwrote a later vendor/user OPKG edit"
 
+cat > "$legacy_native" <<'EOF'
+src/gz core https://mirror.51343.ru/openwrt/releases/24.10.5/packages/aarch64_cortex-a53/base
+src/gz vendor https://packages.routerich.ru/24.10/mediatek/filogic/24.10.5/base
+EOF
+cp "$legacy_native" "$WORK_DIR/mixed"
+OPKG_DISTFEEDS_FILE="$legacy_native"
+MIRROR_SUPPORTED=1
+configure_package_mirror
+[ "$REPOSITORY_MODE" = native-feeds ] || fail_test "mixed vendor feeds took the mirror path"
+cmp -s "$WORK_DIR/mixed" "$legacy_native" ||
+  fail_test "one mirrored line caused a later vendor addition to be overwritten"
+[ -f "${legacy_native}.pre-forkop-mirror" ] ||
+  fail_test "native fallback consumed the backup for manually edited feeds"
+
 printf 'Installer feed transaction tests passed\n'

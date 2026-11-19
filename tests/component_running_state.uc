@@ -39,3 +39,48 @@ for (let c in cases) {
     fs.unlink(path);
     print("PASS: ", c[0], "\n");
 }
+
+let stop_fixture = '
+let tmp_dir = "/fixture", forkop_stopped_for_sing_box_change = false;
+let forkop_was_running = true, stop_ok = false, init_exists = true, failed = false;
+let events = [];
+const SERVICE_INIT = "/fixture/init", BIN_PATH = "/fixture/bin";
+function file_exists(path) { return path != SERVICE_INIT || init_exists; }
+function write_file(path, data) { return true; }
+function command_from_args(args) { return join(" ", args); }
+function run_logged(description, command) { push(events, command); return stop_ok; }
+function command_success_from_args(args) { push(events, args[1]); return true; }
+function prepare_sing_box_service_disabled() { push(events, "disable sing-box"); }
+function action_fail(component, action, message, current, latest) {
+    assert(component == "sing_box" && action == "install_x" && current == "old" && latest == "new", "lost action context");
+    failed = true;
+    die(message);
+}
+' + extract("stop_forkop_before_sing_box_change") + '
+const internal_stop = "env FORKOP_INTERNAL_SERVICE_STOP=1 /fixture/init stop";
+try { stop_forkop_before_sing_box_change("install_x", "old", "new"); }
+catch (e) { assert(failed, e.message); }
+assert(failed && !forkop_stopped_for_sing_box_change && join(" | ", events) == internal_stop,
+    "refused stop changed the running dataplane");
+
+init_exists = false;
+failed = false;
+events = [];
+try { stop_forkop_before_sing_box_change("install_x", "old", "new"); }
+catch (e) { assert(failed, e.message); }
+assert(failed && !forkop_stopped_for_sing_box_change && length(events) == 0,
+    "missing init script bypassed safe stop");
+
+init_exists = true;
+stop_ok = true;
+stop_forkop_before_sing_box_change("install_x", "old", "new");
+assert(forkop_stopped_for_sing_box_change &&
+    join(" | ", events) == internal_stop + " | stop | restore_dnsmasq | disable sing-box",
+    "confirmed stop must precede all component mutations");
+';
+let stop_fixture_path = "/tmp/forkop-component-stop-case." + fs.readlink("/proc/self") + ".uc";
+fs.writefile(stop_fixture_path, stop_fixture);
+let stop_status = system([ "ucode", stop_fixture_path ]);
+fs.unlink(stop_fixture_path);
+assert(stop_status == 0, "component change did not respect the stop result");
+print("PASS: component mutations follow a confirmed stop\n");

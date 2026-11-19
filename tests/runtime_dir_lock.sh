@@ -103,7 +103,9 @@ touch -t 200001010000 "$lock"
 : >"$work/won"
 i=0
 while [ "$i" -lt 16 ]; do
-  ( lock_op acquire "$lock" "$((1000 + i))" && echo won >>"$work/won" ) &
+  # Every contender refers to a live owner throughout the test. Use this
+  # test shell's PID, which also stays alive while all children finish.
+  ( lock_op acquire "$lock" "$$" && echo won >>"$work/won" ) &
   i=$((i + 1))
 done
 wait 2>/dev/null || true

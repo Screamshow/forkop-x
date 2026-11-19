@@ -1844,19 +1844,29 @@ pkg_list_update() {
     fi
 }
 
-repository_file_uses_forkop_mirror() {
-    repository_file="$1"
-    [ -r "$repository_file" ] || return 1
-    grep -Fq 'https://mirror.51343.ru/' "$repository_file"
+rewrite_package_feed_urls() {
+    # A release feed is recognised by what follows releases/ (a version with
+    # targets/ or packages/, or the vNN.x vendor layout).
+    feed_mirror_url="${MIRROR_BASE_URL%/}"
+    sed -E \
+        -e "s#https?://[^/[:space:]]+/([^[:space:]]*/)?releases/(v[0-9]+\\.x/)#${feed_mirror_url}/openwrt/releases/\\2#" \
+        -e "s#https?://[^/[:space:]]+/([^[:space:]]*/)?releases/([0-9]+\\.[0-9]+[^/[:space:]]*/(targets|packages)/)#${feed_mirror_url}/openwrt/releases/\\2#" \
+        -e "s#${feed_mirror_url}/openwrt/releases/v[0-9]+\\.x/v?([0-9]+\\.[0-9]+\\.[0-9]+)/mediatek/filogic/?([[:space:]]|$)#${feed_mirror_url}/openwrt/releases/\\1/targets/mediatek/filogic/packages\\2#" \
+        -e "s#${feed_mirror_url}/openwrt/releases/v[0-9]+\\.x/v([0-9]+\\.[0-9]+\\.[0-9]+)/([^/]+)/([^/]+)/packages/packages\\.adb#${feed_mirror_url}/openwrt/releases/\\1/targets/\\2/\\3/packages/packages.adb#" \
+        -e "s#${feed_mirror_url}/openwrt/releases/v[0-9]+\\.x/v([0-9]+\\.[0-9]+\\.[0-9]+)/([^/]+)/([^/]+)/packages\\.adb#${feed_mirror_url}/openwrt/releases/\\1/packages/\\2/\\3/packages.adb#" \
+        "$1"
 }
 
 restore_native_repository_file() {
     repository_file="$1"
     backup="${repository_file}.pre-forkop-mirror"
-    [ -f "$backup" ] || return 0
-    # A persistent backup is authority only while the live repository remains
-    # Forkop-owned. Never overwrite a vendor or user edit made afterwards.
-    repository_file_uses_forkop_mirror "$repository_file" || return 0
+    [ -f "$backup" ] && [ -s "$repository_file" ] || return 0
+    # Restore only the exact rewrite of the saved feeds. A mixed file may
+    # contain vendor or user changes alongside URLs Forkop redirected.
+    cmp -s "$backup" "$repository_file" && return 0
+    rewrite_package_feed_urls "$backup" | cmp -s "$repository_file" - ||
+        MIRROR_BASE_URL=https://mirror.51343.ru rewrite_package_feed_urls "$backup" | cmp -s "$repository_file" - ||
+        return 0
     temporary="${repository_file}.forkop-restore"
     cp "$backup" "$temporary" || fail "Failed to restore $repository_file"
     chmod 0644 "$temporary" 2>/dev/null || true
@@ -1867,11 +1877,13 @@ restore_native_repository_file() {
 remove_owned_apk_mirror_artifacts() {
     feed="/etc/apk/repositories.d/forkop.list"
     [ -f "$feed" ] || return 0
-    grep -Fqx \
-        -e 'https://mirror.51343.ru/forkop/mirror/current/packages.adb' \
-        -e 'https://mirror.51343.ru/forkop/mirror/current/aarch64_cortex-a53/packages.adb' \
-        -e 'https://mirror.51343.ru/forkop/mirror/current/x86_64/packages.adb' "$feed" || return 0
-    rm -f "$feed" /etc/apk/keys/forkop-mirror.pem
+    case "$(cat "$feed")" in
+        https://mirror.51343.ru/forkop/mirror/current/packages.adb|\
+        https://mirror.51343.ru/forkop/mirror/current/aarch64_cortex-a53/packages.adb|\
+        https://mirror.51343.ru/forkop/mirror/current/x86_64/packages.adb)
+            rm -f "$feed" /etc/apk/keys/forkop-mirror.pem
+            ;;
+    esac
 }
 
 restore_native_package_repositories() {
@@ -1908,17 +1920,7 @@ rewrite_package_repository_file() {
     [ -e "$repository_file" ] || return 0
 
     rewritten="$TMP_DIR/repository.$MIRROR_BACKUP_COUNT.rewritten"
-    # A release feed is recognised by what follows releases/ (a version with
-    # targets/ or packages/, or the vNN.x vendor layout), so any mirror path
-    # before it works: /releases, /openwrt/releases,
-    # /downloads.openwrt.org/releases and so on.
-    sed -E \
-        -e "s#https?://[^/[:space:]]+/([^[:space:]]*/)?releases/(v[0-9]+\\.x/)#${MIRROR_BASE_URL}/openwrt/releases/\\2#" \
-        -e "s#https?://[^/[:space:]]+/([^[:space:]]*/)?releases/([0-9]+\\.[0-9]+[^/[:space:]]*/(targets|packages)/)#${MIRROR_BASE_URL}/openwrt/releases/\\2#" \
-        -e "s#${MIRROR_BASE_URL}/openwrt/releases/v[0-9]+\\.x/v?([0-9]+\\.[0-9]+\\.[0-9]+)/mediatek/filogic/?([[:space:]]|$)#${MIRROR_BASE_URL}/openwrt/releases/\\1/targets/mediatek/filogic/packages\\2#" \
-        -e "s#${MIRROR_BASE_URL}/openwrt/releases/v[0-9]+\\.x/v([0-9]+\\.[0-9]+\\.[0-9]+)/([^/]+)/([^/]+)/packages/packages\\.adb#${MIRROR_BASE_URL}/openwrt/releases/\\1/targets/\\2/\\3/packages/packages.adb#" \
-        -e "s#${MIRROR_BASE_URL}/openwrt/releases/v[0-9]+\\.x/v([0-9]+\\.[0-9]+\\.[0-9]+)/([^/]+)/([^/]+)/packages\\.adb#${MIRROR_BASE_URL}/openwrt/releases/\\1/packages/\\2/\\3/packages.adb#" \
-        "$repository_file" > "$rewritten" || fail "Failed to prepare $repository_file"
+    rewrite_package_feed_urls "$repository_file" > "$rewritten" || fail "Failed to prepare $repository_file"
 
     # Feeds of an unknown layout must not end up half redirected; the caller
     # keeps the native feeds instead (status 2).

@@ -121,6 +121,23 @@ function command_from_args(args) {
     return join(" ", parts);
 }
 
+function append_nft_batch(path, data) {
+    let before = fs.stat(path);
+    if (before != null && before.type != "file")
+        return false;
+    let file = fs.open(path, "a", 0600);
+    if (file == null)
+        return false;
+    // A buffered write can report all bytes before the filesystem rejects
+    // the flush. Check the actual size after close, including the old batch.
+    let expected = length(data);
+    let written = file.write(data);
+    file.close();
+    let after = fs.stat(path);
+    return written == expected && after?.type == "file" &&
+        after.size == (before?.size || 0) + expected;
+}
+
 function run_args(args) {
     // nft -f submits a complete file as one netlink transaction. Candidate
     // preparation records mutations instead of exposing partial live state.
@@ -131,8 +148,7 @@ function run_args(args) {
         let words = [];
         for (let i = 1; i < length(args); i++)
             push(words, args[i]);
-        let line = join(" ", words);
-        return fs.writefile(NFT_BATCH_FILE, (fs.readfile(NFT_BATCH_FILE) || "") + line + "\n") != null;
+        return append_nft_batch(NFT_BATCH_FILE, join(" ", words) + "\n");
     }
     return system(command_from_args(args)) == 0;
 }
@@ -1226,11 +1242,13 @@ function has_local_default_route_text(route_list, family) {
     family = int(family || 4);
 
     for (let line in split(as_string(route_list), "\n")) {
-        line = trim(replace(as_string(line), /\r/g, ""));
-        line = replace(line, /[[:space:]]+/g, " ");
-        if (family == 4 && index(line, "local default dev lo scope host") >= 0)
+        let fields = normalized_fields(line);
+        if (fields[0] != "local" || fields[2] != "dev" || fields[3] != "lo")
+            continue;
+        if (family == 4 && (fields[1] == "default" || fields[1] == "0.0.0.0/0") &&
+            fields[4] == "scope" && fields[5] == "host")
             return true;
-        if (family == 6 && (index(line, "local ::") >= 0 || index(line, "local default") >= 0) && index(line, " dev lo") >= 0)
+        if (family == 6 && (fields[1] == "default" || fields[1] == "::/0"))
             return true;
     }
 
@@ -1288,12 +1306,22 @@ function tproxy_marking_rule6_present(table, mark) {
     return has_tproxy_marking_rule_text(command_output_from_args([ "ip", "-6", "rule", "list" ]), table, mark);
 }
 
-function tproxy_marking_rule_present(table, mark) {
-    return tproxy_marking_rule4_present(table, mark) && (!IPV6_TPROXY_ENABLED || tproxy_marking_rule6_present(table, mark));
-}
-
 function tproxy_route_rule_present(table, mark) {
-    return tproxy_route_present(table) && tproxy_marking_rule_present(table, mark);
+    if (!tproxy_route_present(table))
+        return false;
+
+    let rules4 = command_output_from_args([ "ip", "-4", "rule", "list" ]);
+    if (!has_tproxy_marking_rule_text(rules4, table, mark) ||
+        !has_tproxy_marking_rule_text(rules4, table, ROUTER_MARK) ||
+        !has_source_check_rule_text(rules4, mark))
+        return false;
+
+    if (!IPV6_TPROXY_ENABLED)
+        return true;
+
+    let rules6 = command_output_from_args([ "ip", "-6", "rule", "list" ]);
+    return has_tproxy_marking_rule_text(rules6, table, mark) &&
+        has_tproxy_marking_rule_text(rules6, table, ROUTER_MARK);
 }
 
 function ensure_ip_rule(present, argv, message) {
@@ -1572,7 +1600,7 @@ function nft_transition_guard_batch(table, mark, remove) {
         : "add chain inet " + as_string(table) + " " + NFT_TRANSITION_GUARD_CHAIN +
             " { type filter hook prerouting priority -101; policy accept; }\n" +
             guard_drop_rule(table, mark) + guard_drop_rule(table, ROUTER_MARK);
-    let ok = fs.writefile(path, data) != null && run_args([ "nft", "-c", "-f", path ]) &&
+    let ok = append_nft_batch(path, data) && run_args([ "nft", "-c", "-f", path ]) &&
         run_args([ "nft", "-f", path ]);
     fs.unlink(path);
     return ok;

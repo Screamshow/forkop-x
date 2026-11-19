@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest';
-import { expandRouteConditions } from './routeConditions';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  createRuntimeRouteRulesLoader,
+  expandRouteConditions,
+} from './routeConditions';
 import { formatRouteReason } from './routeReason';
 
 const reported =
@@ -59,5 +62,72 @@ describe('full runtime route conditions', () => {
     expect(
       formatRouteReason(full, '', undefined, { destinationIP: '203.0.113.42' }),
     ).toBe('ip_cidr=203.0.113.0/24');
+  });
+});
+
+describe('runtime route config refresh', () => {
+  const flash = '/etc/sing-box/config.json';
+  const ram = '/tmp/sing-box/config.json';
+  const body = (name: string) =>
+    JSON.stringify({ route: { rules: [{ domain: name }] } });
+
+  it('follows the running path and reads a revision only once', async () => {
+    const read = vi
+      .fn()
+      .mockResolvedValueOnce(body('before.test'))
+      .mockResolvedValueOnce(body('after.test'));
+    const update = vi.fn();
+    const loader = createRuntimeRouteRulesLoader(read, update);
+    await loader.load({ path: flash, revision: '1' });
+    await loader.load({ path: ram, revision: '1' });
+    await loader.load({ path: ram, revision: '1' });
+    expect(read.mock.calls).toEqual([[flash], [ram]]);
+    expect(update).toHaveBeenLastCalledWith([{ domain: 'after.test' }]);
+  });
+
+  it('ignores old reads after a same-path reload or leaving the view', async () => {
+    let resolveOld!: (value: string) => void;
+    let resolveAfterClear!: (value: string) => void;
+    const read = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveOld = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(body('new.test'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveAfterClear = resolve;
+          }),
+      );
+    const update = vi.fn();
+    const loader = createRuntimeRouteRulesLoader(read, update);
+    const old = loader.load({ path: ram, revision: '1' });
+    await loader.load({ path: ram, revision: '2' });
+    resolveOld(body('old.test'));
+    await old;
+    expect(update).toHaveBeenLastCalledWith([{ domain: 'new.test' }]);
+    const pending = loader.load({ path: ram, revision: '3' });
+    loader.clear();
+    resolveAfterClear(body('late.test'));
+    await pending;
+    expect(update).toHaveBeenLastCalledWith([]);
+  });
+
+  it('retries an unreadable revision while using the core’s original rule', async () => {
+    const read = vi
+      .fn()
+      .mockRejectedValueOnce(new Error())
+      .mockResolvedValueOnce(body('retry.test'));
+    const update = vi.fn();
+    const loader = createRuntimeRouteRulesLoader(read, update);
+    const reference = { path: ram, revision: '1' };
+    await loader.load(reference);
+    expect(update).toHaveBeenLastCalledWith([]);
+    await loader.load(reference);
+    expect(update).toHaveBeenLastCalledWith([{ domain: 'retry.test' }]);
   });
 });

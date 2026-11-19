@@ -21,7 +21,6 @@ type ClashProxyEntry = {
 type DashboardSectionCache = {
   version?: number;
   section?: string;
-  links?: Record<string, string>;
   skippedSubscriptionOutbounds?: { tag: string; reason: string }[];
   outboundMetadata?: Forkop.GetOutboundMetadata;
   urltestGroups?: Record<string, UrlTestCacheGroup>;
@@ -907,7 +906,6 @@ function getOutboundDisplayName(
   entry: ClashProxyEntry | undefined,
   link: string,
   outboundMetadata?: Forkop.GetOutboundMetadata,
-  preferMetadata = false,
 ) {
   const metadataName = outboundMetadata?.names?.[code];
   const linkName = getProxyUrlName(link);
@@ -915,8 +913,8 @@ function getOutboundDisplayName(
   const descriptiveLinkName = linkName === code ? '' : linkName;
 
   return (
-    (preferMetadata ? descriptiveMetadataName : descriptiveLinkName) ||
-    (preferMetadata ? descriptiveLinkName : descriptiveMetadataName) ||
+    descriptiveLinkName ||
+    descriptiveMetadataName ||
     metadataName ||
     linkName ||
     entry?.value?.name ||
@@ -932,7 +930,6 @@ function buildUrlTestInfo({
   groupCache,
   proxyByCode,
   manualLinkByCode,
-  cachedProxyLinks,
   outboundMetadata,
   showDetectedCountries,
 }: {
@@ -943,7 +940,6 @@ function buildUrlTestInfo({
   groupCache?: UrlTestCacheGroup;
   proxyByCode: Map<string, ClashProxyEntry>;
   manualLinkByCode: Map<string, string>;
-  cachedProxyLinks: Map<string, string>;
   outboundMetadata?: Forkop.GetOutboundMetadata;
   showDetectedCountries: boolean;
 }): Forkop.UrlTestInfo {
@@ -956,10 +952,7 @@ function buildUrlTestInfo({
   const outbounds = sortUrlTestMembers(
     childCodes.flatMap((childCode) => {
       const childEntry = proxyByCode.get(childCode);
-      const link =
-        manualLinkByCode.get(childCode) ||
-        cachedProxyLinks.get(childCode) ||
-        '';
+      const link = manualLinkByCode.get(childCode) || '';
       return [
         {
           code: childCode,
@@ -968,7 +961,6 @@ function buildUrlTestInfo({
             childEntry,
             link,
             outboundMetadata,
-            cachedProxyLinks.has(childCode),
           ),
           latency: childEntry?.value?.history?.[0]?.delay || 0,
           type: childEntry?.value?.type || '',
@@ -1005,7 +997,6 @@ function buildPriorityInfo({
   groupCache,
   proxyByCode,
   manualLinkByCode,
-  cachedProxyLinks,
   outboundMetadata,
   showDetectedCountries,
 }: {
@@ -1014,7 +1005,6 @@ function buildPriorityInfo({
   groupCache?: PriorityCacheGroup;
   proxyByCode: Map<string, ClashProxyEntry>;
   manualLinkByCode: Map<string, string>;
-  cachedProxyLinks: Map<string, string>;
   outboundMetadata?: Forkop.GetOutboundMetadata;
   showDetectedCountries: boolean;
 }): Forkop.PriorityInfo {
@@ -1066,7 +1056,7 @@ function buildPriorityInfo({
   );
   function buildMember(code: string): Forkop.PriorityMember {
     const childEntry = proxyByCode.get(code);
-    const link = manualLinkByCode.get(code) || cachedProxyLinks.get(code) || '';
+    const link = manualLinkByCode.get(code) || '';
     return {
       code,
       displayName: getOutboundDisplayName(
@@ -1074,7 +1064,6 @@ function buildPriorityInfo({
         childEntry,
         link,
         outboundMetadata,
-        cachedProxyLinks.has(code),
       ),
       latency: childEntry?.value?.history?.[0]?.delay || 0,
       type: childEntry?.value?.type || '',
@@ -1154,7 +1143,6 @@ function buildProxyGroupOutbounds(
   outboundMetadata?: Forkop.GetOutboundMetadata,
   urltestGroups: Record<string, UrlTestCacheGroup> = {},
   priorityGroups: Record<string, PriorityCacheGroup> = {},
-  cachedProxyLinks: Map<string, string> = new Map(),
 ) {
   const sectionName = section['.name'];
   const proxyByCode = getProxyEntryByCode(proxies);
@@ -1215,7 +1203,7 @@ function buildProxyGroupOutbounds(
       return [];
     }
 
-    const link = manualLinkByCode.get(code) || cachedProxyLinks.get(code) || '';
+    const link = manualLinkByCode.get(code) || '';
     const displayName =
       priorityConfig?.displayName ||
       urlTestConfig?.displayName ||
@@ -1224,7 +1212,6 @@ function buildProxyGroupOutbounds(
         item,
         link,
         outboundMetadata,
-        cachedProxyLinks.has(code),
       );
     const isRuntimeUrlTest = isUrlTestProxyEntry(item);
 
@@ -1250,7 +1237,6 @@ function buildProxyGroupOutbounds(
                 groupCache: urltestGroups[code],
                 proxyByCode,
                 manualLinkByCode,
-                cachedProxyLinks,
                 outboundMetadata,
                 showDetectedCountries:
                   urlTestConfig?.showDetectedCountries || showDetectedCountries,
@@ -1263,7 +1249,6 @@ function buildProxyGroupOutbounds(
               groupCache: priorityGroups[code],
               proxyByCode,
               manualLinkByCode,
-              cachedProxyLinks,
               outboundMetadata,
               showDetectedCountries: priorityConfig.showDetectedCountries,
             })
@@ -1499,7 +1484,6 @@ export async function getDashboardSections(): Promise<IGetDashboardSectionsRespo
                 dashboardCache,
               )
             : undefined;
-          const cachedProxyLinks = new Map<string, string>();
           const urltestGroups = mergeUrlTestGroups(
             getUrlTestGroups(dashboardCache),
             runtimeMetadata.urltestGroups,
@@ -1512,7 +1496,6 @@ export async function getDashboardSections(): Promise<IGetDashboardSectionsRespo
               outboundMetadata,
               urltestGroups,
               priorityGroups,
-              cachedProxyLinks,
             );
 
           return {

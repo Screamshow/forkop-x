@@ -81,7 +81,8 @@ function write_private_file(path, value) {
         return null;
     let written = handle.write(value);
     handle.close();
-    return written == length(value) ? written : null;
+    // stdio may report a buffered write before the filesystem accepts it.
+    return written == length(value) && fs.stat(path)?.size == written ? written : null;
 }
 
 function write_private_json_file(path, value) {
@@ -106,6 +107,43 @@ function copy_private_file_atomic(source, target) {
     if (!copied)
         fs.unlink(temporary);
     return copied;
+}
+
+function restore_directory_snapshot(snapshot, target) {
+    let original = fs.stat(snapshot);
+    if (original?.type != "directory")
+        return false;
+
+    let parent = fs.stat(substr(target, 0, rindex(target, "/")) || "/");
+    if (parent == null)
+        return false;
+    let stamp = clock();
+    let displaced = sprintf("%s.rollback.%d.%d", target, stamp[0], stamp[1]);
+    let staged = snapshot;
+    if (parent.dev.major != original.dev.major || parent.dev.minor != original.dev.minor) {
+        staged = displaced + ".staged";
+        if (!fs.mkdir(staged, original.mode))
+            return false;
+        if (system([ "cp", "-R", "-p", snapshot + "/.", staged ]) != 0) {
+            system([ "rm", "-rf", staged ]);
+            return false;
+        }
+    }
+
+    let had_target = fs.stat(target) != null;
+    if ((!had_target || fs.rename(target, displaced)) && fs.rename(staged, target)) {
+        if (had_target)
+            system([ "rm", "-rf", displaced ]);
+        if (staged != snapshot)
+            system([ "rm", "-rf", snapshot ]);
+        return true;
+    }
+
+    if (had_target && fs.stat(displaced) != null)
+        fs.rename(displaced, target);
+    if (staged != snapshot)
+        system([ "rm", "-rf", staged ]);
+    return false;
 }
 
 // Callers create parents separately: never narrow a shared parent such as /tmp.
@@ -215,6 +253,7 @@ return {
     write_private_file,
     write_private_json_file,
     copy_private_file_atomic,
+    restore_directory_snapshot,
     secure_private_dir,
     strip_internal_fields,
     array_or_empty,

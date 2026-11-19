@@ -690,14 +690,12 @@ function nft_candidate_begin() {
         log_message("Failed to create nft candidate batch: mktemp returned no path", "fatal");
         return false;
     }
+    if (common.write_private_file(nft_candidate_batch_file, "# Forkop nft candidate\n") != null)
+        return true;
     remove_file(nft_candidate_batch_file);
-    // fs.writefile() returns the byte count on OpenWrt. An empty seed is a
-    // successful zero-byte write but is falsey, so keep a harmless nft comment
-    // as the first line of every candidate transaction.
-    let created = write_file(nft_candidate_batch_file, "# Forkop nft candidate\n");
-    if (!created)
-        log_message("Failed to create nft candidate batch: ucode write_file returned false", "fatal");
-    return created;
+    nft_candidate_batch_file = "";
+    log_message("Failed to write the nft candidate batch", "fatal");
+    return false;
 }
 
 function nft_candidate_validate() {
@@ -1266,14 +1264,12 @@ function finish_list_change_files(restore) {
     if (path == "")
         return true;
     if (restore && fs.stat(path) != null) {
-        if (!command_success_from_args([ "rm", "-rf", TMP_RULESET_FOLDER ]) ||
-            !ensure_dir(TMP_RULESET_FOLDER) ||
-            !command_success_from_args([ "cp", "-R", "-p", path + "/.", TMP_RULESET_FOLDER ])) {
+        if (!common.restore_directory_snapshot(path, TMP_RULESET_FOLDER)) {
             log_message("Could not restore the previous materialized lists; retaining their rollback snapshot", "error");
             return false;
         }
     }
-    if (!command_success_from_args([ "rm", "-rf", path ]))
+    else if (!command_success_from_args([ "rm", "-rf", path ]))
         return false;
     list_change_rollback_dir = "";
     return true;
@@ -2091,7 +2087,7 @@ function reload(reason, cold_restart) {
             cleanup_failed_runtime();
             return status;
         }
-        status = module_status(DNS_FAILOVER_UC, [ "start-runtime" ]);
+        status = module_status(DNS_FAILOVER_UC, [ "start-runtime", "", sing_box_config_path ]);
         if (status != 0) {
             log_message("Failed to restart DNS failover runtime after sing-box reload", "fatal");
             cleanup_failed_runtime();

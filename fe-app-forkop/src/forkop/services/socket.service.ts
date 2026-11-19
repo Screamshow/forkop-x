@@ -4,6 +4,15 @@ import { logger } from './logger.service';
 type Listener = (data: any) => void;
 type ErrorListener = (error: Event | string) => void;
 
+function socketLogAddress(url: string): string {
+  try {
+    const endpoint = new URL(url);
+    return `${endpoint.origin}${endpoint.pathname}`;
+  } catch {
+    return 'WebSocket';
+  }
+}
+
 class SocketManager {
   private static instance: SocketManager;
   private sockets = new Map<string, WebSocket>();
@@ -28,17 +37,17 @@ class SocketManager {
   connect(url: string): void {
     if (this.sockets.has(url)) return;
 
+    const logAddress = socketLogAddress(url);
     let ws: WebSocket;
 
     try {
       ws = new WebSocket(url);
-    } catch (err) {
+    } catch {
       logger.error(
         '[SOCKET]',
-        `failed to construct WebSocket for ${url}:`,
-        err,
+        `Failed to construct WebSocket for ${logAddress}`,
       );
-      this.triggerError(url, err instanceof Event ? err : String(err));
+      this.triggerError(url, 'Failed to construct WebSocket');
       return;
     }
 
@@ -50,7 +59,7 @@ class SocketManager {
     ws.addEventListener('open', () => {
       if (this.sockets.get(url) !== ws) return;
       this.connected.set(url, true);
-      logger.info('[SOCKET]', 'Connected to', url);
+      logger.info('[SOCKET]', 'Connected to', logAddress);
     });
 
     ws.addEventListener('message', (event) => {
@@ -60,8 +69,8 @@ class SocketManager {
         for (const handler of handlers) {
           try {
             handler(event.data);
-          } catch (err) {
-            logger.error('[SOCKET]', `Handler error for ${url}:`, err);
+          } catch {
+            logger.error('[SOCKET]', `Handler error for ${logAddress}`);
           }
         }
       }
@@ -71,13 +80,13 @@ class SocketManager {
       if (this.sockets.get(url) !== ws) return;
       this.sockets.delete(url);
       this.connected.set(url, false);
-      logger.warn('[SOCKET]', `Disconnected: ${url}`);
+      logger.warn('[SOCKET]', `Disconnected: ${logAddress}`);
       this.triggerError(url, 'Connection closed');
     });
 
     ws.addEventListener('error', (err) => {
       if (this.sockets.get(url) !== ws) return;
-      logger.error('[SOCKET]', `Socket error for ${url}:`, err);
+      logger.error('[SOCKET]', `Socket error for ${logAddress}`);
       this.triggerError(url, err);
     });
   }
@@ -124,7 +133,10 @@ class SocketManager {
     if (ws && this.connected.get(url)) {
       ws.send(typeof data === 'string' ? data : JSON.stringify(data));
     } else {
-      logger.warn('[SOCKET]', `Cannot send: not connected to ${url}`);
+      logger.warn(
+        '[SOCKET]',
+        `Cannot send: not connected to ${socketLogAddress(url)}`,
+      );
       this.triggerError(url, 'Not connected');
     }
   }
@@ -140,8 +152,11 @@ class SocketManager {
     if (ws) {
       try {
         ws.close();
-      } catch (err) {
-        logger.error('[SOCKET]', `Failed to close socket ${url}:`, err);
+      } catch {
+        logger.error(
+          '[SOCKET]',
+          `Failed to close socket ${socketLogAddress(url)}`,
+        );
       }
     }
   }
@@ -163,8 +178,11 @@ class SocketManager {
       for (const cb of handlers) {
         try {
           cb(err);
-        } catch (e) {
-          logger.error('[SOCKET]', `Error handler threw for ${url}:`, e);
+        } catch {
+          logger.error(
+            '[SOCKET]',
+            `Error handler threw for ${socketLogAddress(url)}`,
+          );
         }
       }
     }

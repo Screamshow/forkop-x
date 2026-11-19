@@ -370,8 +370,7 @@ function reality_public_key_valid(value) {
     return match(as_string(value), /^[A-Za-z0-9_-]{43}$/) != null;
 }
 
-function validate_subscription(path) {
-    let value = read_json_file(path);
+function validate_subscription_value(value) {
     if (type(value) != "object" || type(value.outbounds) != "array" || length(value.outbounds) == 0)
         return false;
 
@@ -383,6 +382,10 @@ function validate_subscription(path) {
     }
 
     return true;
+}
+
+function validate_subscription(path) {
+    return validate_subscription_value(read_json_file(path));
 }
 
 function write_json_file(path, value) {
@@ -2864,9 +2867,7 @@ function repair_cached_subscription_file(path) {
         return !!fs.chmod(path, 0600);
     let stamp = clock();
     let temporary = sprintf("%s.%d.%d.repair", path, stamp[0], stamp[1]);
-    if (common.write_private_file(temporary, after + "\n") == null)
-        return false;
-    if (!fs.rename(temporary, path)) {
+    if (common.write_private_file(temporary, after + "\n") == null || !fs.rename(temporary, path)) {
         fs.unlink(temporary);
         return false;
     }
@@ -3175,6 +3176,7 @@ function module_exports() {
         add_certificate_pins,
         parse_hysteria2_server_ports,
         validate_subscription,
+        validate_subscription_value,
         normalize_content_validated,
         normalized_skipped_message,
         try_decode_gzip_content_file,

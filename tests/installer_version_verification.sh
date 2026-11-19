@@ -10,10 +10,11 @@ let calls = 0;
 let waits = 0;
 let script = [];
 let status_code = 0;
+let reader_used = "";
 const LIB_DIR = "/usr/lib/forkop";
 function as_string(value) { return value == null ? "" : "" + value; }
 function shell_quote(value) { return value; }
-function module_command(args) { return "ucode " + args[1]; }
+function module_command(args) { reader_used = args[0]; return "ucode " + args[1]; }
 function make_tmp_file(prefix) { return "mock-output"; }
 function owner_pid() { return 1; }
 function updates_log(message, level) {}
@@ -26,18 +27,20 @@ function command_success_from_args(args) {
     return true;
 }
 UCODE
-sed -n '/^function read_installed_package_version(package_name) {/,/^}/p' "$ACTION"
+sed -n '/^function read_installed_package_version(/,/^}/p' "$ACTION"
 cat <<'UCODE'
 script = [ "found 2.5.0\n" ];
 let state = read_installed_package_version("forkop");
 assert(state.state == "found" && state.version == "2.5.0", "installed version not read");
 assert(calls == 1 && waits == 0, "successful query retried");
+assert(reader_used == LIB_DIR + "/core/packages.uc", "default package reader was lost");
 
 calls = 0; waits = 0;
 script = [ "missing\n" ];
-state = read_installed_package_version("forkop");
+state = read_installed_package_version("forkop", "/tmp/preserved-packages.uc");
 assert(state.state == "missing" && state.version == "", "missing package not reported");
 assert(calls == 1 && waits == 0, "missing package retried");
+assert(reader_used == "/tmp/preserved-packages.uc", "query reused the package helper that was replaced");
 
 calls = 0; waits = 0;
 script = [
@@ -77,7 +80,7 @@ function read_installed_package_version(package_name) {
     return states[package_name];
 }
 UCODE
-sed -n '/^function forkop_installed_version_mismatch(expected, names) {/,/^}/p' "$ACTION"
+sed -n '/^function forkop_installed_version_mismatch(/,/^}/p' "$ACTION"
 cat <<'UCODE'
 let found = (version) => ({ state: "found", version, error: "" });
 const MISSING = { state: "missing", version: "", error: "" };

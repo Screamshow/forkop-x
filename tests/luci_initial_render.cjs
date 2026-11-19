@@ -14,13 +14,13 @@ async function checkInitialRender() {
     render: async () => 'rendered grid',
   };
   const context = vm.createContext({
-    main: { FORKOP_UCI_PACKAGE: 'forkop', injectGlobalStyles() {},
+    main: { FORKOP_UCI_PACKAGE: 'forkop', translateForkop: value => value, injectGlobalStyles() {},
       ForkopShellMethods: methods, coreService() {} },
     form: { Map: function () { return map; } },
     ui: { changes: { forkopHoldoffConfigured: true } },
     uci: {}, view: { extend: value => value },
     window: { setTimeout: fn => scheduled.push(fn) },
-    section: tab, settings: tab, dashboard: tab, monitoring: tab,
+    section: tab, settings: tab, dashboard: tab, monitoring: tab, whatsapp: tab,
     diagnostic: tab, updates: tab, tailscale: tab,
     _: value => value, console,
   });

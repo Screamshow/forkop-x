@@ -522,7 +522,7 @@ function base_config(settings, service_address, runtime_context) {
     let log_level = option(settings, "log_level", "warn");
     let rewrite_ttl = int_option(settings, "dns_rewrite_ttl", "60");
     let cache_path = cache_identity.path(option(settings, "cache_path", "/tmp/sing-box/cache.db"), object_or_empty(runtime_context).core_version);
-    let dns_config = runtime_dns.config(settings);
+    let dns_config = runtime_dns.config_from_state(runtime_context.dns_state);
     if (dns_config.provider_unavailable) {
         warn(dns_config.unsupported, "\n");
         exit(runtime_constants.PROVIDER_DNS_UNAVAILABLE);
@@ -1071,15 +1071,12 @@ function assert_unique_outbound_tags(config) {
 function add_subscription_source_with_state(config, section, source_index, source_entry, taken, selector_tags, urltest_candidate_tags, state, show_metadata, include_urltest_groups, hide_urltest_group_outbounds, hide_detour_outbounds, node_prefix) {
     let section_name = section[".name"];
     let source_section = runtime_subscription.source_id(section_name, source_index);
-    if (!runtime_subscription.source_cache_is_current(
+    let source_outbounds = runtime_subscription.read_source_outbounds(
         source_section,
         source_entry,
         connections.subscription_user_agent(section, source_entry),
         connections.subscription_hwid(section, source_entry)
-    ))
-        return 0;
-
-    let source_outbounds = runtime_subscription.read_source_outbounds(source_section);
+    );
     source_outbounds = subscription_exclude_regex_outbounds(
         source_outbounds,
         effective_subscription_exclude_regex(section, source_entry)
@@ -3756,7 +3753,9 @@ function generate_config(output_path, service_address, mwan3_active, supports_xh
 
     let bootstrap_lists = getenv("FORKOP_LIFECYCLE_LIST_BOOTSTRAP") == "1";
     let source_aware_dns = bootstrap_lists ? [] : source_aware_dns_sources(sections);
+    let dns_state = runtime_dns.runtime_state(settings);
     let config = base_config(settings, service_address, {
+        dns_state,
         core_version: sing_box_version,
         supports_bittorrent_direct: rust_x_core_version(sing_box_version) && cli_bool(supports_bittorrent_direct),
         mwan3_active: cli_bool(mwan3_active),
@@ -3806,6 +3805,25 @@ function generate_config(output_path, service_address, mwan3_active, supports_xh
     assert_unique_outbound_tags(config);
     outbound_reachability.prune(config, runtime_prunable_outbounds);
     strip_internal_fields(config);
+    if (!bootstrap_lists) {
+        dns_state.config_path = option(settings, "config_path", "");
+        dns_state.health = runtime_dns.health_settings(settings);
+        let tags = {};
+        for (let server in config.dns.servers)
+            tags[server.tag] = true;
+        dns_state.inherited_tunnel_dns = [];
+        for (let section in sections) {
+            let tag = runtime_dns.tunnel_dns_tag(section[".name"]);
+            if (tags[tag] && connections.native_tunnel_dns_address(section) == "")
+                push(dns_state.inherited_tunnel_dns, tag);
+        }
+        let cache_dir = output_path + ".section-cache";
+        if (!common.secure_private_dir(cache_dir) ||
+            common.write_private_json_file(cache_dir + "/" + runtime_dns.APPLIED_DNS_CACHE_NAME, dns_state) == null) {
+            warn("failed to write generated DNS failover state\n");
+            exit(1);
+        }
+    }
     if (!write_json_file(output_path, config)) {
         warn("failed to write ", output_path, "\n");
         exit(1);

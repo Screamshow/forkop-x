@@ -26,12 +26,30 @@ import { Forkop } from '../../types';
 import { formatRouteReason } from './routeReason';
 import { customRulesetTag, customRulesetLabel } from './rulesetLabels';
 import {
+  createRuntimeRouteRulesLoader,
   expandRouteConditions,
   type RuntimeRouteRule,
 } from './routeConditions';
+import {
+  getCachedRuntimeUiState,
+  refreshRuntimeUiState,
+  subscribeRuntimeUiState,
+} from '../../services/runtimeUiState.service';
+import {
+  getServiceAvailability,
+  type ServiceAvailability,
+} from '../../helpers/serviceAvailability';
 
 let runtimeRouteRules: RuntimeRouteRule[] = [];
 const expandedRouteConditions = new Map<string, string>();
+const runtimeRouteRulesLoader = createRuntimeRouteRulesLoader(
+  (path) => fs.read(path),
+  (rules) => {
+    runtimeRouteRules = rules;
+    expandedRouteConditions.clear();
+    if (monitoringMounted) renderConnections();
+  },
+);
 
 function getFullRouteRule(connection: MonitoredConnection): string {
   const rule = connection.rule || '';
@@ -43,29 +61,6 @@ function getFullRouteRule(connection: MonitoredConnection): string {
   }
   return expandedRouteConditions.get(rule)!;
 }
-
-async function loadRuntimeRouteRules(mountId: number) {
-  try {
-    const config = JSON.parse(await fs.read('/etc/sing-box/config.json'));
-    if (!monitoringMounted || mountId !== monitoringMountId) return;
-    runtimeRouteRules = Array.isArray(config.route?.rules)
-      ? config.route.rules
-      : [];
-    expandedRouteConditions.clear();
-    renderConnections();
-  } catch {
-    // Keep the API's original rule when the runtime config is unavailable.
-  }
-}
-import {
-  getCachedRuntimeUiState,
-  refreshRuntimeUiState,
-  subscribeRuntimeUiState,
-} from '../../services/runtimeUiState.service';
-import {
-  getServiceAvailability,
-  type ServiceAvailability,
-} from '../../helpers/serviceAvailability';
 
 type MonitoringTabId = 'active' | 'closed';
 
@@ -1463,18 +1458,49 @@ function setServiceAvailability(next: ServiceAvailability) {
 
 function watchServiceState() {
   serviceStateUnsubscribe?.();
+  const mountId = monitoringMountId;
+  let legacyConfigRequested = false;
   serviceStateUnsubscribe = subscribeRuntimeUiState((uiState) => {
     if (!monitoringMounted) {
       return;
     }
 
-    setServiceAvailability(
-      getServiceAvailability({
-        loading: false,
-        failed: false,
-        running: uiState.service.forkop.running,
-      }),
-    );
+    const availability = getServiceAvailability({
+      loading: false,
+      failed: false,
+      running: uiState.service.forkop.running,
+    });
+    setServiceAvailability(availability);
+    if (availability !== 'running') {
+      runtimeRouteRulesLoader.clear();
+      legacyConfigRequested = false;
+    } else if (uiState.runtime_config) {
+      void runtimeRouteRulesLoader.load(uiState.runtime_config);
+    } else if (uiState.runtime_config === undefined && !legacyConfigRequested) {
+      // Older backend packages only expose the configured path through UCI.
+      legacyConfigRequested = true;
+      void CustomForkopMethods.getConfigSections()
+        .then((sections) => {
+          if (
+            !monitoringMounted ||
+            mountId !== monitoringMountId ||
+            serviceAvailability !== 'running' ||
+            getCachedRuntimeUiState()?.runtime_config !== undefined
+          ) {
+            return;
+          }
+          const settings = sections.find(
+            (section) => section['.type'] === 'settings',
+          );
+          return runtimeRouteRulesLoader.load({
+            path: settings?.config_path || '/etc/sing-box/config.json',
+            revision: 'legacy',
+          });
+        })
+        .catch(() => {
+          legacyConfigRequested = false;
+        });
+    }
   });
 }
 
@@ -1507,9 +1533,6 @@ async function onPageMount() {
   monitoringMountId += 1;
   const mountId = monitoringMountId;
 
-  runtimeRouteRules = [];
-  expandedRouteConditions.clear();
-  void loadRuntimeRouteRules(mountId);
   resetMonitoringState();
   bindControls();
   renderControls();
@@ -1548,6 +1571,7 @@ async function onPageMount() {
 function onPageUnmount() {
   monitoringMounted = false;
   monitoringMountId += 1;
+  runtimeRouteRulesLoader.clear();
 
   if (renderTimer) {
     clearInterval(renderTimer);

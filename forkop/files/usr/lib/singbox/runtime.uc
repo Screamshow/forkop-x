@@ -894,7 +894,7 @@ function publish_section_cache(temp_config_path, retained_transaction) {
         if (!prepared)
             break;
         entry = as_string(entry);
-        if (match(entry, /^[A-Za-z0-9_-]+\.json$/) == null)
+        if (entry != runtime_dns.APPLIED_DNS_CACHE_NAME && match(entry, /^[A-Za-z0-9_-]+\.json$/) == null)
             continue;
 
         let source = source_dir + "/" + entry;
@@ -1103,7 +1103,8 @@ function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferre
         let reason = generator_failure_reason(runtime_log, generate_status);
         let retryable = generate_status == runtime_constants.PROVIDER_DNS_UNAVAILABLE;
         log_message("Failed to generate sing-box configuration: " + reason, retryable ? "warn" : "fatal");
-        remove_files([ temp_config, runtime_log ]);
+        discard_config_stage(temp_config);
+        remove_file(runtime_log);
         exit(retryable ? generate_status : 1);
     }
     log_file_lines(runtime_log, "warn", "sing-box config generator: ");
@@ -1118,7 +1119,8 @@ function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferre
         !module_success([ RULESET_CACHE_UC, "materialize-config", temp_config,
             as_string(stage_path) != "" ? "required" : "cache-only" ])) {
         log_message("[rule-set-unavailable] A required rule-set could not be downloaded or validated. Settings were not applied; the previous running configuration is preserved.", "error");
-        remove_files([ temp_config, runtime_log ]);
+        discard_config_stage(temp_config);
+        remove_file(runtime_log);
         exit(1);
     }
 
@@ -1128,7 +1130,8 @@ function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferre
             : check_with_subscription_recovery(temp_config, runtime_log);
         if (check_result.status != 0) {
             log_message("Generated sing-box configuration is invalid: " + check_result.reason + ". Aborted.", "fatal");
-            remove_files([ temp_config, runtime_log ]);
+            discard_config_stage(temp_config);
+            remove_file(runtime_log);
             exit(1);
         }
     }
@@ -1150,7 +1153,8 @@ function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferre
         NFT_LOCALV6_SET_NAME
     ])) {
         log_message("Failed to update nftables runtime sets from the generated sing-box configuration. Aborted.", "fatal");
-        remove_files([ temp_config, runtime_log ]);
+        discard_config_stage(temp_config);
+        remove_file(runtime_log);
         exit(1);
     }
 

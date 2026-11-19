@@ -1,65 +1,26 @@
-import { downloadAsTxt } from '../../helpers/downloadAsTxt';
-
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 class Logger {
-  private logs: string[] = [];
-  private readonly levels: LogLevel[] = ['debug', 'info', 'warn', 'error'];
-
-  private format(level: LogLevel, ...args: unknown[]): string {
-    return `[${level.toUpperCase()}] ${args.join(' ')}`;
-  }
-
-  private push(level: LogLevel, ...args: unknown[]): void {
-    if (!this.levels.includes(level)) level = 'info';
-    const message = this.format(level, ...args);
-    this.logs.push(message);
-
-    switch (level) {
-      case 'error':
-        console.error(message);
-        break;
-      case 'warn':
-        console.warn(message);
-        break;
-      case 'info':
-        console.info(message);
-        break;
-      default:
-        console.log(message);
-    }
+  private write(level: LogLevel, ...args: unknown[]): void {
+    console[level === 'debug' ? 'log' : level](
+      `[${level.toUpperCase()}] ${args.join(' ')}`,
+    );
   }
 
   debug(...args: unknown[]): void {
-    this.push('debug', ...args);
+    this.write('debug', ...args);
   }
 
   info(...args: unknown[]): void {
-    this.push('info', ...args);
+    this.write('info', ...args);
   }
 
   warn(...args: unknown[]): void {
-    this.push('warn', ...args);
+    this.write('warn', ...args);
   }
 
   error(...args: unknown[]): void {
-    this.push('error', ...args);
-  }
-
-  clear(): void {
-    this.logs = [];
-  }
-
-  getLogs(): string {
-    return this.logs.join('\n');
-  }
-
-  download(filename = 'logs.txt'): void {
-    if (typeof document === 'undefined') {
-      console.warn('Logger.download() доступен только в браузере');
-      return;
-    }
-    downloadAsTxt(this.getLogs(), filename);
+    this.write('error', ...args);
   }
 }
 

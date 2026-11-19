@@ -392,7 +392,7 @@ function exists(path) {
     return c.get(parts.package, parts.section, parts.option) != null;
 }
 
-function delete_path(path) {
+function delete_path(path, require_success) {
     path = as_string(path);
     if (fixture_enabled())
         return state_delete(path);
@@ -408,18 +408,17 @@ function delete_path(path) {
         return false;
 
     try {
-        if (parts.option == "")
-            c.delete(parts.package, parts.section);
-        else
-            c.delete(parts.package, parts.section, parts.option);
-        return true;
+        let result = parts.option == ""
+            ? c.delete(parts.package, parts.section)
+            : c.delete(parts.package, parts.section, parts.option);
+        return !require_success || result === true;
     }
     catch (e) {
         return false;
     }
 }
 
-function set_section(path, type_name) {
+function set_section(path, type_name, require_success) {
     path = as_string(path);
     if (fixture_enabled())
         return state_set(path, type_name);
@@ -449,8 +448,8 @@ function set_section(path, type_name) {
         return false;
 
     try {
-        c.set(parts.package, parts.section, as_string(type_name));
-        return true;
+        let result = c.set(parts.package, parts.section, as_string(type_name));
+        return !require_success || result === true;
     }
     catch (e) {
         return false;
@@ -475,7 +474,7 @@ function add(package_name, type_name) {
     }
 }
 
-function set(path, value) {
+function set(path, value, require_success) {
     path = as_string(path);
     if (fixture_enabled())
         return state_set(path, value_to_string(value));
@@ -491,8 +490,8 @@ function set(path, value) {
         return false;
 
     try {
-        c.set(parts.package, parts.section, parts.option, type(value) == "array" ? value : as_string(value));
-        return true;
+        let result = c.set(parts.package, parts.section, parts.option, type(value) == "array" ? value : as_string(value));
+        return !require_success || result === true;
     }
     catch (e) {
         return false;
@@ -565,7 +564,7 @@ function del_list(path, value) {
     }
 }
 
-function commit(package_name) {
+function commit(package_name, require_success) {
     if (fixture_enabled())
         return state_commit(package_name);
 
@@ -574,7 +573,8 @@ function commit(package_name) {
         return false;
 
     try {
-        return c.commit(package_name) != false;
+        let result = c.commit(package_name);
+        return require_success ? result === true : result != false;
     }
     catch (e) {
         return false;

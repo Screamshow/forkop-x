@@ -2,13 +2,53 @@
 
 let fs = require("fs");
 
-// A directory lock is taken in two steps: the directory first, its owner
-// second. Between them the directory has no owner, so a caller that reads
-// "no owner" as "nobody holds this" removes a lock another worker is still
-// taking. These helpers keep that window closed and hand ownership over
-// through the pid file alone, so the directory a caller sees is never the
-// one it destroys.
 const OWNER_WRITE_GRACE_SECONDS = 5;
+
+// The guard serializes owner mutations, including stale takeover. Its inode
+// must stay in place across release. The PID record remains readable by
+// callers using the previous directory layout.
+const MUTATE_OWNER = '
+    lock_dir=$1
+    operation=$2
+    pid=$3
+    grace=$4
+    exec 9>>"$lock_dir.guard" || exit 1
+    if command -v flock >/dev/null 2>&1; then
+        flock -x 9 || exit 1
+    else
+        busybox flock -x 9 || exit 1
+    fi
+    if [ "$operation" = release ]; then
+        [ -d "$lock_dir" ] || exit 0
+        rm -f "$lock_dir/pid" && rmdir "$lock_dir"
+        exit $?
+    fi
+    created=0
+    if mkdir "$lock_dir" 2>/dev/null; then
+        created=1
+    elif [ -d "$lock_dir" ]; then
+        owner=
+        if [ -f "$lock_dir/pid" ]; then
+            read -r owner <"$lock_dir/pid"
+        fi
+        case "$owner" in
+            "") ucode -e \'let mtime = require("fs").stat(ARGV[0])?.mtime;
+                let now = int(clock()[0]);
+                exit(mtime > 0 && now - mtime >= int(ARGV[1]) ? 0 : 1);\' "$lock_dir" "$grace" || exit 1 ;;
+            0*|*[!0-9]*) ;;
+            *) kill -0 "$owner" 2>/dev/null && exit 1 ;;
+        esac
+    else
+        exit 1
+    fi
+    pending="$lock_dir.guard.pid"
+    if printf "%s\\n" "$pid" >"$pending" && mv -f "$pending" "$lock_dir/pid"; then
+        exit 0
+    fi
+    rm -f "$pending"
+    [ "$created" -eq 0 ] || rmdir "$lock_dir"
+    exit 1
+';
 
 function as_string(value) {
     return value == null ? "" : "" + value;
@@ -46,12 +86,9 @@ function current_epoch() {
     return int(clock()[0]) || 0;
 }
 
-// Only one caller may write the owner: noclobber creates the file with
-// O_EXCL, so a caller that lost a race for an abandoned lock is told, instead
-// of overwriting the owner that won it.
-function claim_owner(lock_dir, owner_pid) {
-    return command_success([ "sh", "-c", "set -C; printf '%s\\n' \"$2\" > \"$1\"",
-        "lock", as_string(lock_dir) + "/pid", as_string(owner_pid) ]);
+function mutate_owner(lock_dir, operation, owner_pid) {
+    return command_success([ "sh", "-c", MUTATE_OWNER, "lock",
+        lock_dir, operation, owner_pid, OWNER_WRITE_GRACE_SECONDS ]);
 }
 
 function held(lock_dir) {
@@ -76,8 +113,7 @@ function release(lock_dir) {
     if (lock_dir == "")
         return;
 
-    command_success([ "rm", "-f", lock_dir + "/pid" ]);
-    command_success([ "rmdir", lock_dir ]);
+    mutate_owner(lock_dir, "release", "");
 }
 
 function acquire(lock_dir, owner_pid) {
@@ -86,28 +122,7 @@ function acquire(lock_dir, owner_pid) {
     if (lock_dir == "" || match(owner_pid, /^[1-9][0-9]*$/) == null)
         return false;
 
-    if (command_success([ "mkdir", lock_dir ])) {
-        if (claim_owner(lock_dir, owner_pid))
-            return true;
-        release(lock_dir);
-        return false;
-    }
-
-    if (held(lock_dir))
-        return false;
-
-    // The lock was abandoned: replace it. Two callers can still reach this
-    // point together, and one of them can remove the directory the other has
-    // just created, so the owner file decides the outcome. Whoever loses the
-    // exclusive write of the owner has not taken the lock and says so,
-    // instead of working alongside the caller that did take it.
-    command_success([ "rm", "-f", lock_dir + "/pid" ]);
-    if (!command_success([ "rmdir", lock_dir ]))
-        return false;
-    if (!command_success([ "mkdir", lock_dir ]))
-        return false;
-
-    return claim_owner(lock_dir, owner_pid);
+    return mutate_owner(lock_dir, "acquire", owner_pid);
 }
 
 return {

@@ -52,19 +52,16 @@ repository_file_has_vendor_origin() {
     grep -Eqi 'https?://[^/]*(packages\.routerich\.ru|[^/]*gl[-.]?inet[^/]*)/' "$repository_file"
 }
 
-repository_file_uses_mirror() {
-    [ -r "$1" ] && grep -Fq "$MIRROR_BASE_URL/" "$1"
-}
-
 restore_native_repository_file() {
     repository_file="$1"
     backup="${repository_file}.pre-forkop-mirror"
-    [ -f "$backup" ] || return 0
-    # A backup is acted on only while its corresponding live file is still the
-    # Forkop mirror version. Do not overwrite a vendor/user edit made later.
-    repository_file_uses_mirror "$repository_file" || return 0
-    # Only restore a file that Forkop demonstrably backed up. This leaves any
-    # user-managed third-party feeds untouched.
+    [ -f "$backup" ] && [ -s "$repository_file" ] || return 0
+    # Restore only the exact rewrite of the saved feeds. A mixed file may
+    # contain vendor or user changes alongside URLs Forkop redirected.
+    cmp -s "$backup" "$repository_file" && return 0
+    rewrite_feed_urls "$backup" | cmp -s "$repository_file" - ||
+        MIRROR_BASE_URL=https://mirror.51343.ru rewrite_feed_urls "$backup" | cmp -s "$repository_file" - ||
+        return 0
     cp "$backup" "${repository_file}.forkop-restore"
     chmod 0644 "${repository_file}.forkop-restore"
     mv "${repository_file}.forkop-restore" "$repository_file"
@@ -73,12 +70,14 @@ restore_native_repository_file() {
 
 remove_owned_apk_mirror_artifacts() {
     feed="$repositories_dir/forkop.list"
-    if [ -f "$feed" ] && grep -Fqx \
-        -e "$MIRROR_BASE_URL/forkop/mirror/current/packages.adb" \
-        -e "$MIRROR_BASE_URL/forkop/mirror/current/aarch64_cortex-a53/packages.adb" \
-        -e "$MIRROR_BASE_URL/forkop/mirror/current/x86_64/packages.adb" "$feed"; then
-        rm -f "$feed" "$keys_dir/forkop-mirror.pem"
-    fi
+    [ -f "$feed" ] || return 0
+    case "$(cat "$feed")" in
+        "$MIRROR_BASE_URL"/forkop/mirror/current/packages.adb|\
+        "$MIRROR_BASE_URL"/forkop/mirror/current/aarch64_cortex-a53/packages.adb|\
+        "$MIRROR_BASE_URL"/forkop/mirror/current/x86_64/packages.adb)
+            rm -f "$feed" "$keys_dir/forkop-mirror.pem"
+            ;;
+    esac
 }
 
 # A release feed is recognised by what follows releases/ (a version with
@@ -88,6 +87,7 @@ rewrite_feed_urls() {
     sed -E \
         -e "s#https?://[^/[:space:]]+/([^[:space:]]*/)?releases/(v[0-9]+\\.x/)#${MIRROR_BASE_URL}/openwrt/releases/\\2#" \
         -e "s#https?://[^/[:space:]]+/([^[:space:]]*/)?releases/([0-9]+\\.[0-9]+[^/[:space:]]*/(targets|packages)/)#${MIRROR_BASE_URL}/openwrt/releases/\\2#" \
+        -e "s#${MIRROR_BASE_URL}/openwrt/releases/v[0-9]+\\.x/v?([0-9]+\\.[0-9]+\\.[0-9]+)/mediatek/filogic/?([[:space:]]|$)#${MIRROR_BASE_URL}/openwrt/releases/\\1/targets/mediatek/filogic/packages\\2#" \
         -e "s#${MIRROR_BASE_URL}/openwrt/releases/v[0-9]+\\.x/v([0-9]+\\.[0-9]+\\.[0-9]+)/([^/]+)/([^/]+)/packages/packages\\.adb#${MIRROR_BASE_URL}/openwrt/releases/\\1/targets/\\2/\\3/packages/packages.adb#" \
         -e "s#${MIRROR_BASE_URL}/openwrt/releases/v[0-9]+\\.x/v([0-9]+\\.[0-9]+\\.[0-9]+)/([^/]+)/([^/]+)/packages\\.adb#${MIRROR_BASE_URL}/openwrt/releases/\\1/packages/\\2/\\3/packages.adb#" \
         "$1"

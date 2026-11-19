@@ -1,4 +1,41 @@
+import type { Forkop } from '../../types';
+
 export type RuntimeRouteRule = Record<string, unknown>;
+
+export function createRuntimeRouteRulesLoader(
+  read: (path: string) => Promise<string>,
+  update: (rules: RuntimeRouteRule[]) => void,
+) {
+  let requested: Forkop.RuntimeConfigReference | undefined;
+  return {
+    clear() {
+      if (!requested) return;
+      requested = undefined;
+      update([]);
+    },
+    async load(reference: Forkop.RuntimeConfigReference) {
+      if (
+        requested?.path === reference.path &&
+        requested.revision === reference.revision
+      ) {
+        return;
+      }
+
+      const request = { ...reference };
+      requested = request;
+      update([]);
+      try {
+        const config = JSON.parse(await read(request.path));
+        if (requested === request) {
+          update(Array.isArray(config?.route?.rules) ? config.route.rules : []);
+        }
+      } catch {
+        // Retry on the next state refresh, displaying the core's original rule.
+        if (requested === request) requested = undefined;
+      }
+    },
+  };
+}
 
 export function expandRouteConditions(
   reported: string,
