@@ -2103,12 +2103,15 @@ function reload(reason, cold_restart) {
     if (plan.needs_dnsmasq_configure == 1 || plan.needs_dnsmasq_restore == 1) {
         let action = plan.needs_dnsmasq_configure == 1 ? "configure" : "restore";
         dns_status = dns_apply_status([ action, "force", "reload" ]);
-        if (dns_status == 0)
-            module_success(STATE_UC, [ "capture-reload-state", RELOAD_STATE_SNAPSHOT_FILE, as_string(RELOAD_STATE_FORMAT) ]);
-        else {
-            log_message("dnsmasq apply failed; retaining the verified Forkop runtime", "warn");
-            mark_pending_reload("dnsmasq_reload_failed");
+        if (dns_status == 0) {
+            dns_status = module_status(STATE_UC, [ "refresh-reload-dnsmasq-signature", RELOAD_STATE_SNAPSHOT_FILE ]);
+            if (dns_status != 0)
+                log_message("Could not record the applied dnsmasq settings; queued a retry", "warn");
         }
+        else
+            log_message("dnsmasq apply failed; retaining the verified Forkop runtime", "warn");
+        if (dns_status != 0)
+            mark_pending_reload("dnsmasq_reload_failed");
     }
 
     if (plan.needs_cron_refresh == 1) {

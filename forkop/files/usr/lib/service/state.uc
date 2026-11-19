@@ -1,6 +1,7 @@
 #!/usr/bin/env ucode
 
 let fs = require("fs");
+let common = require("core.common");
 let locks = require("core.locks");
 let uci_core = require("core.uci");
 let netstat = require("core.netstat");
@@ -1171,6 +1172,11 @@ function dnsmasq_signature_body(settings, dnsmasq, legacy_dnsmasq_present) {
     body = signature_add_value(body, "dhcp.@dnsmasq[0].forkop_dns_cachesize_present", option(dnsmasq, "forkop_dns_cachesize_present", ""));
     body = signature_add_value(body, "dhcp.@dnsmasq[0].forkop_dns_cachesize", option(dnsmasq, "forkop_dns_cachesize", ""));
     body = signature_add_value(body, "dhcp.forkop.present", arg_bool(legacy_dnsmasq_present) ? "1" : "0");
+    for (let key in [ "forkop_server", "forkop_noresolv", "forkop_cachesize", "forkop_notinterface" ]) {
+        let value = option(dnsmasq, key, "");
+        if (value != "")
+            body = signature_add_value(body, "dhcp.@dnsmasq[0]." + key, value);
+    }
 
     return body;
 }
@@ -1805,7 +1811,11 @@ function uci_dnsmasq() {
         forkop_dns_noresolv_present: uci_get("dhcp.@dnsmasq[0].forkop_dns_noresolv_present"),
         forkop_dns_noresolv: uci_get("dhcp.@dnsmasq[0].forkop_dns_noresolv"),
         forkop_dns_cachesize_present: uci_get("dhcp.@dnsmasq[0].forkop_dns_cachesize_present"),
-        forkop_dns_cachesize: uci_get("dhcp.@dnsmasq[0].forkop_dns_cachesize")
+        forkop_dns_cachesize: uci_get("dhcp.@dnsmasq[0].forkop_dns_cachesize"),
+        forkop_server: uci_get("dhcp.@dnsmasq[0].forkop_server"),
+        forkop_noresolv: uci_get("dhcp.@dnsmasq[0].forkop_noresolv"),
+        forkop_cachesize: uci_get("dhcp.@dnsmasq[0].forkop_cachesize"),
+        forkop_notinterface: uci_get("dhcp.@dnsmasq[0].forkop_notinterface")
     };
 }
 
@@ -1825,6 +1835,27 @@ function current_reload_state_values(format) {
 
 function capture_reload_state(path, format) {
     write_reload_state(path, current_reload_state_values(format || "1"));
+}
+
+function refresh_reload_dnsmasq_signature(path) {
+    let snapshot = fs.readfile(path);
+    let dns_signature = /\ndnsmasq_signature=[^\n]*/;
+    let mode = match(snapshot || "", /\ndont_touch_dhcp=([01])\n/);
+    if (mode == null || match(snapshot, dns_signature) == null)
+        return false;
+
+    // The snapshot records the DNS mode that this reload used. Other UCI
+    // changes may already belong to a subsequent reload.
+    let signature = signature_hash(dnsmasq_signature_body({ dont_touch_dhcp: mode[1] },
+        uci_dnsmasq(), uci_exists("dhcp.forkop")));
+    if (signature == "")
+        return false;
+    let updated = replace(snapshot, dns_signature, "\ndnsmasq_signature=" + signature);
+    let staged = path + ".dnsmasq";
+    if (common.write_private_file(staged, updated) != null && fs.rename(staged, path))
+        return true;
+    unlink_file(staged);
+    return false;
 }
 
 function write_current_reload_state_clean(path, format, cache_dir) {
@@ -1921,6 +1952,8 @@ else if (mode == "clear-reload-state")
     clear_reload_state(ARGV[1], ARGV[2]);
 else if (mode == "capture-reload-state")
     capture_reload_state(ARGV[1], ARGV[2] || "1");
+else if (mode == "refresh-reload-dnsmasq-signature")
+    exit(ARGV[1] && refresh_reload_dnsmasq_signature(ARGV[1]) ? 0 : 1);
 else if (mode == "write-current-reload-state-clean")
     write_current_reload_state_clean(ARGV[1], ARGV[2] || "1", ARGV[3]);
 else if (mode == "write-captured-reload-state")

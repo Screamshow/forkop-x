@@ -143,3 +143,40 @@ printf '%s\n' "$plan" | grep -Eq '^needs_sing_box_reload[[:space:]]+0$'
 printf '%s\n' "$plan" | grep -Eq '^needs_nft_rebuild[[:space:]]+0$'
 printf '%s\n' "$plan" | grep -Eq '^changed_service_triggers[[:space:]]+1$'
 echo 'Pending dnsmasq retry retains applied core/nft state and requests outstanding trigger sync'
+
+# A successful dnsmasq step may read DHCP after another UCI edit commits.
+# The snapshot must only pick up DHCP's new signature using the applied mode.
+cat >"$WORK/phase-b" <<'UCI'
+forkop.settings=settings
+forkop.settings.dont_touch_dhcp=0
+forkop.settings.exclude_ntp=0
+forkop.settings.component_update_check_enabled=0
+dhcp.@dnsmasq[0]=dnsmasq
+dhcp.@dnsmasq[0].server=1.1.1.1
+UCI
+FORKOP_UCI_STATE_FILE="$WORK/phase-b" ucode -L "$LIB" "$STATE" capture-reload-state "$WORK/phase-b-snapshot" 1
+sed 's/^dhcp.@dnsmasq\[0\].server=.*/dhcp.@dnsmasq[0].server=127.0.0.42/' "$WORK/phase-b" >"$WORK/phase-b-applied"
+sed -e 's/^forkop.settings.dont_touch_dhcp=0/forkop.settings.dont_touch_dhcp=1/' \
+    -e 's/^forkop.settings.exclude_ntp=0/forkop.settings.exclude_ntp=1/' \
+    -e 's/^forkop.settings.component_update_check_enabled=0/forkop.settings.component_update_check_enabled=1/' \
+    "$WORK/phase-b-applied" >"$WORK/phase-c"
+cat >>"$WORK/phase-c" <<'UCI'
+forkop.settings.enable_badwan_interface_monitoring=1
+forkop.settings.badwan_monitored_interfaces=wan lan
+UCI
+FORKOP_UCI_STATE_FILE="$WORK/phase-b-applied" ucode -L "$LIB" "$STATE" capture-reload-state "$WORK/phase-b-expected" 1
+FORKOP_UCI_STATE_FILE="$WORK/phase-c" ucode -L "$LIB" "$STATE" refresh-reload-dnsmasq-signature "$WORK/phase-b-snapshot"
+cmp "$WORK/phase-b-expected" "$WORK/phase-b-snapshot"
+test ! -e "$WORK/phase-b-snapshot.dnsmasq"
+FORKOP_UCI_STATE_FILE="$WORK/phase-c" ucode -L "$LIB" "$STATE" capture-reload-state "$WORK/phase-c-snapshot" 1
+plan="$(ucode -L "$LIB" "$LIB/service/reload.uc" plan-state-files "$WORK/phase-b-snapshot" "$WORK/phase-c-snapshot" 1 1 0 0 0)"
+for field in needs_dnsmasq_restore needs_nft_rebuild needs_cron_refresh changed_service_triggers; do
+    printf '%s\n' "$plan" | grep -Eq "^$field[[:space:]]+1$"
+done
+grep -v '^dnsmasq_signature=' "$WORK/phase-b-expected" >"$WORK/incomplete"
+if FORKOP_UCI_STATE_FILE="$WORK/phase-c" ucode -L "$LIB" "$STATE" refresh-reload-dnsmasq-signature "$WORK/incomplete"; then
+    echo 'Invalid DNS snapshot was accepted' >&2
+    exit 1
+fi
+test ! -e "$WORK/incomplete.dnsmasq"
+echo 'Post-dnsmasq refresh preserves concurrent DNS, nft, cron and trigger edits for the next reload'

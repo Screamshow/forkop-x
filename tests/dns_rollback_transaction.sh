@@ -173,4 +173,67 @@ for action in configure restore; do
     [ "$(grep -c '^restart$' "$DNSMASQ_LOG")" = 2 ] || fail "failed $action did not restart dnsmasq under the old settings"
 done
 
-printf 'DNS rollback transaction checks passed\n'
+# Recover default-instance backups written before the versioned transaction.
+cat >"$WORK_DIR/legacy.defaults" <<'EOF_STATE'
+dhcp.@dnsmasq[0]=dnsmasq
+dhcp.@dnsmasq[0].server=127.0.0.42
+dhcp.@dnsmasq[0].noresolv=1
+dhcp.@dnsmasq[0].cachesize=0
+dhcp.@dnsmasq[0].forkop_server=1.1.1.1#53 8.8.8.8#53
+dhcp.@dnsmasq[0].forkop_noresolv=0
+dhcp.@dnsmasq[0].forkop_cachesize=77
+dhcp.@dnsmasq[0].forkop_notinterface=mesh
+dhcp.@dnsmasq[0].notinterface=mesh lan
+EOF_STATE
+legacy_upstream_restored() {
+    [ "$(value 'dhcp.@dnsmasq[0].server')" = '1.1.1.1#53 8.8.8.8#53' ] || fail 'legacy upstream list was not restored'
+    [ "$(value 'dhcp.@dnsmasq[0].noresolv')" = 0 ] || fail 'legacy noresolv was not restored'
+    [ "$(value 'dhcp.@dnsmasq[0].cachesize')" = 77 ] || fail 'legacy cachesize was not restored'
+    absent 'dhcp.@dnsmasq[0].forkop_server'
+    absent 'dhcp.@dnsmasq[0].forkop_noresolv'
+    absent 'dhcp.@dnsmasq[0].forkop_cachesize'
+    absent 'dhcp.@dnsmasq[0].forkop_notinterface'
+}
+for path in failsafe configure-then-restore; do
+    cp "$WORK_DIR/legacy.defaults" "$STATE"
+    : >"$DNSMASQ_LOG"
+    ucode -L "$FORKOP_LIB" "$APPLY" has-managed-state || fail 'legacy ownership missed'
+    if [ "$path" = configure-then-restore ]; then
+        ucode -L "$FORKOP_LIB" "$APPLY" configure force
+        [ "$(value 'dhcp.@dnsmasq[0].server')" = 127.0.0.42 ] || fail 'migration bypassed Forkop DNS'
+        [ "$(value 'dhcp.@dnsmasq[0].forkop_dns_server')" = '1.1.1.1#53 8.8.8.8#53' ] ||
+            fail 'versioned backup captured the Forkop resolver'
+        ucode -L "$FORKOP_LIB" "$APPLY" restore force
+    else
+        ucode -L "$FORKOP_LIB" "$APPLY" failsafe-restore
+    fi
+    legacy_upstream_restored
+    [ "$(value 'dhcp.@dnsmasq[0].notinterface')" = mesh ] || fail 'orphan interface backup was not restored'
+    grep -Fxq restart "$DNSMASQ_LOG" || fail 'legacy rollback did not reload dnsmasq'
+done
+
+# Recover configurations already upgraded by a version that backed up its
+# own active resolver while leaving the original legacy fields intact.
+grep -v '\.forkop_' "$WORK_DIR/legacy.defaults" >"$STATE"
+ucode -L "$FORKOP_LIB" "$APPLY" configure force
+grep '\.forkop_' "$WORK_DIR/legacy.defaults" >>"$STATE"
+ucode -L "$FORKOP_LIB" "$APPLY" restore force
+legacy_upstream_restored
+
+# Preserve later external DNS edits even when legacy fields still exist.
+sed 's/^dhcp.@dnsmasq\[0\].server=.*/dhcp.@dnsmasq[0].server=9.9.9.9/' "$WORK_DIR/legacy.defaults" >"$STATE"
+ucode -L "$FORKOP_LIB" "$APPLY" failsafe-restore
+[ "$(value 'dhcp.@dnsmasq[0].server')" = 9.9.9.9 ] || fail 'legacy restore overwrote external DNS'
+absent 'dhcp.@dnsmasq[0].forkop_server'
+
+# Preserve the complete old backup if enabling forwarding fails mid-migration.
+cp "$WORK_DIR/legacy.defaults" "$STATE"
+LC_ALL=C sort "$STATE" >"$WORK_DIR/reload.before"
+: >"$DNSMASQ_FAULT_ONCE"
+if ucode -L "$FORKOP_LIB" "$APPLY" configure force reload; then
+    fail 'failed legacy migration was reported as applied'
+fi
+LC_ALL=C sort "$STATE" >"$WORK_DIR/reload.after"
+cmp -s "$WORK_DIR/reload.before" "$WORK_DIR/reload.after" || fail 'failed legacy migration discarded the backup'
+
+printf 'DNS rollback transaction and legacy-backup checks passed\n'
