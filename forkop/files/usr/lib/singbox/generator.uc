@@ -2405,7 +2405,7 @@ function manual_hysteria2_outbound(link, tag_name) {
     let port_value = as_string(query.mport || "") != "" ? query.mport : url_port(link);
     let ports = subscription_parser.parse_hysteria2_server_ports(port_value);
     let port = parse_port(port_value);
-    let password = url_userinfo(link);
+    let password = url_userinfo(link, true);
     if (host == "" || (ports == null && port == null) || password == "")
         runtime_generate_unsupported("manual Hysteria2 proxy link is invalid");
 
@@ -2434,9 +2434,10 @@ function manual_link_outbound(link, tag_name) {
     if (scheme == "vmess")
         return manual_vmess_outbound(link, tag_name);
 
-    // Decode query values individually: decoding the whole URI turns an
-    // encoded '&' inside xHTTP extra/session keys into a query separator.
-    link = url_strip_fragment_value(scheme == "vless" || scheme == "trojan" ? link : url_decode(link));
+    // Split the URI before decoding the credentials and query values.
+    if (scheme != "vless" && scheme != "trojan" && scheme != "hy2" && scheme != "hysteria2")
+        link = url_decode(link);
+    link = url_strip_fragment_value(link);
     scheme = url_scheme(link);
     if (scheme == "socks4" || scheme == "socks4a" || scheme == "socks5")
         return manual_socks_outbound(link, tag_name);

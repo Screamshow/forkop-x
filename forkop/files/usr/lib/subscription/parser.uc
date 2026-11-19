@@ -617,7 +617,9 @@ function parse_url(url) {
     let hostport = authority;
     let at_pos = rindex(authority, "@");
     if (at_pos >= 0) {
-        userinfo = urldecode(substr(authority, 0, at_pos));
+        let raw_userinfo = substr(authority, 0, at_pos);
+        userinfo = scheme == "hy2" || scheme == "hysteria2"
+            ? core_url.decode(raw_userinfo, true) : urldecode(raw_userinfo);
         hostport = substr(authority, at_pos + 1);
     }
 
@@ -2826,13 +2828,20 @@ function repair_cached_outbounds(outbounds) {
         if (type(outbound) != "object")
             continue;
         normalize_sing_box_xhttp_transport(outbound);
-        // Old URI imports kept the original link even when transport fields
-        // were dropped. Recover only missing fields for the same endpoint.
-        let parsed = parse_share_link(as_string(outbound.share_link));
+        // Old URI imports kept the original link. Use it to repair the same endpoint.
+        let link = as_string(outbound.share_link);
+        let parsed = parse_share_link(link);
         if (type(parsed) != "object" || parsed.type != outbound.type ||
             parsed.server != outbound.server || parsed.server_port != outbound.server_port ||
-            parsed.uuid != outbound.uuid || parsed.password != outbound.password)
+            parsed.uuid != outbound.uuid)
             continue;
+        if (parsed.password != outbound.password) {
+            // Repair only the value produced by the old form-style decoder.
+            if (outbound.type != "hysteria2" || core_url.userinfo(link) != outbound.password ||
+                sprintf("%J", parsed.server_ports) != sprintf("%J", outbound.server_ports))
+                continue;
+            outbound.password = parsed.password;
+        }
         if (type(outbound.transport) == "object" && outbound.transport.type == "xhttp" &&
             type(parsed.transport) == "object" && parsed.transport.type == "xhttp") {
             for (let key in ["uplink_http_method", "session_placement", "session_key", "sc_max_buffered_posts",

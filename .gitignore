@@ -187,6 +187,7 @@ ops/deployed-nginx/
 !/tests/subscription_upgrade_ipk_vm.sh
 !/tests/hysteria2_certificate_pins.sh
 !/tests/hysteria2_default_port.sh
+!/tests/hysteria2_uri_auth.sh
 !/tests/packages_installed_version.sh
 !/tests/installer_version_verification.sh
 !/tests/nft_reply_direction.sh

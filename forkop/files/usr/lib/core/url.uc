@@ -27,13 +27,13 @@ function hex_digit_value(value) {
     return -1;
 }
 
-function decode(value) {
+function decode(value, preserve_plus) {
     value = as_string(value);
     let result = "";
 
     for (let i = 0; i < length(value); i++) {
         let c = substr(value, i, 1);
-        if (c == "+") {
+        if (c == "+" && !preserve_plus) {
             result += " ";
             continue;
         }
@@ -138,12 +138,12 @@ function port(value) {
     return substr(value_authority, colon + 1);
 }
 
-function userinfo(value) {
+function userinfo(value, preserve_plus) {
     let value_authority = strip_first_scheme_marker(strip_fragment(value));
     let end = first_index_any(value_authority, ["/", "?", "#"], 0);
     value_authority = end >= 0 ? substr(value_authority, 0, end) : value_authority;
     let at = rindex(value_authority, "@");
-    return at >= 0 ? decode(substr(value_authority, 0, at)) : "";
+    return at >= 0 ? decode(substr(value_authority, 0, at), preserve_plus) : "";
 }
 
 function path(value) {
