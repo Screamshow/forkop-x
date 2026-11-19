@@ -29,9 +29,9 @@ let subscription_section={".name":"probe",".type":"section",enabled:"1",action:"
 for(let suffix in ["url","user_agent","hwid"])
  fs.writefile(work+"/cache/probe-subscription-1."+suffix,suffix=="url"?"https://feed.example/test":suffix=="user_agent"?"Happ":"");
 // supports_trojan is the generator argument runtime.uc derives from Features.
-function generate(fixture,version,output,supports_trojan){
+function generate(fixture,version,output,supports_trojan,xray_features){
  write(work+"/fixture.json",fixture);
- let args=["env","TMP_SUBSCRIPTION_FOLDER="+work+"/cache","FORKOP_RUNTIME_STATE_DIR="+work+"/state","TMP_SING_BOX_FOLDER="+work+"/singbox","FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR="+work+"/persistent","FORKOP_LIB="+lib,"ucode","-L",lib,lib+"/singbox/generator.uc","generate-config-fixture",work+"/fixture.json",output,"127.0.0.1","0","1","",version,supports_trojan||""];
+ let args=["env","TMP_SUBSCRIPTION_FOLDER="+work+"/cache","FORKOP_RUNTIME_STATE_DIR="+work+"/state","TMP_SING_BOX_FOLDER="+work+"/singbox","FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR="+work+"/persistent","FORKOP_LIB="+lib,"ucode","-L",lib,lib+"/singbox/generator.uc","generate-config-fixture",work+"/fixture.json",output,"127.0.0.1","0","1","",version,supports_trojan||"","0","0",xray_features||""];
  return system(join(" ",map(args,quote))+" >"+quote(work+"/generation.log")+" 2>&1");
 }
 function tag_set(config){let tags={};for(let o in config.outbounds)tags[o.tag]=true;return tags;}
@@ -187,6 +187,41 @@ expect(generate(manual, trojan_core, work+"/generated.json", "1") == 0, "manual 
 let auth_manual = outbounds_of_type(json(fs.readfile(work+"/generated.json")), ["trojan"]);
 expect(length(auth_manual) == 2 && auth_manual[0].password == "qa+one+two" &&
     auth_manual[1].password == "qa+one+two", "manually imported Trojan passwords must preserve plus");
+
+let xray_features = "transport.xhttp.split,transport.grpc.multi,tls.xray-pins,tls.verify-name";
+let vless_base = "vless://" + uuid + "@127.0.0.1:8443?";
+let download = { address: "127.0.0.2", port: 9443, network: "xhttp", security: "tls",
+    tlsSettings: { serverName: "front.example", verifyPeerCertByName: "cert.example" },
+    xhttpSettings: { path: "/download", host: "get.example", extra: { xPaddingBytes: "300-400" } } };
+let extra = replace(sprintf("%J", { xPaddingBytes: "100-200", downloadSettings: download }), /./g,
+    function(c) { return sprintf("%%%02X", ord(c)); });
+let ws_default = vless_base + "type=ws&security=none&host=ws.example#ws-default";
+let clear_split = vless_base + "type=xhttp&path=%2Fupload&extra=" + extra + "#xhttp-split";
+let grpc_multi = "trojan://pw@127.0.0.1:8443?type=grpc&peer=localhost&serviceName=%2Fsvc%2Fmany&mode=multi#grpc-multi";
+let split = normalize(clear_split)[0];
+expect(split.tls == null && split.transport.x_padding_bytes == "100-200", "XHTTP uplink must keep cleartext and its own padding");
+let secondary = split.transport.download_settings;
+expect(secondary?.server == "127.0.0.2" && secondary.server_port == 9443 && secondary.transport.path == "/download" &&
+    secondary.transport.host == "get.example" && secondary.transport.x_padding_bytes == "300-400" &&
+    secondary.tls.server_name == "front.example" && secondary.tls.verify_server_name[0] == "cert.example", "XHTTP download settings were lost");
+let link_serializer = require("subscription.share_link");
+let exported_split = normalize(link_serializer.serialize_outbound_link(split))[0];
+expect(exported_split.transport.download_settings?.server == "127.0.0.2" &&
+    exported_split.transport.download_settings.tls.verify_server_name[0] == "cert.example", "XHTTP split export roundtrip");
+let grpc = normalize(grpc_multi)[0];
+expect(grpc.transport.multi_mode === true && grpc.tls.server_name == "localhost", "gRPC multi URI and Trojan peer");
+expect(normalize(link_serializer.serialize_outbound_link(grpc))[0].transport.multi_mode === true, "export gRPC multi mode");
+manual.section[0].selector_proxy_links = [ws_default, clear_split, grpc_multi];
+expect(generate(manual, trojan_core, work+"/generated.json", "1", xray_features) == 0, "Xray extensions manual fixture failed: " + log_text());
+let configured = json(fs.readfile(work+"/generated.json")).outbounds;
+let ws = filter(configured, node => node.transport?.type == "ws")[0];
+let xhttp = filter(configured, node => node.transport?.type == "xhttp")[0];
+let grpc_out = filter(configured, node => node.transport?.type == "grpc")[0];
+expect(ws?.transport.path == "/", "manually imported WS should default its path to /");
+expect(xhttp?.transport.download_settings?.tls?.verify_server_name[0] == "cert.example", "manual XHTTP split download lost verification name");
+expect(grpc_out?.transport.multi_mode === true && grpc_out.tls.server_name == "localhost", "manual Trojan peer or gRPC multi lost");
+expect(generate(manual, trojan_core, work+"/kept.json", "1") != 0 &&
+    index(last_log_line(), "separate XHTTP download connection") >= 0, "old core silently accepted XHTTP split");
 
 manual.section[0].selector_proxy_links=["ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpwdw@127.0.0.1:8388#SS%20Manual"];
 expect(generate(manual,trojan_core,work+"/kept.json","1")!=0,"manual Shadowsocks link accepted on Trojan-capable Xrust");

@@ -39,8 +39,10 @@ let cached={type:"hysteria2",tag:"c",server:"127.0.0.1",server_port:8443,passwor
 parser.repair_cached_outbounds([cached]);
 assert(cached.tls.certificate_sha256 && cached.tls.certificate_sha256[0]==pin,"cached Hysteria2 pin not repaired");
 let xray=normalize(sprintf("%J",{outbounds:[{protocol:"hysteria",tag:"x",settings:{version:2,address:"127.0.0.1",port:8443},
- streamSettings:{network:"hysteria",security:"tls",hysteriaSettings:{version:2,auth:"pw"},tlsSettings:{serverName:"localhost",pinnedPeerCertSha256:[ARGV[3]]}}}]}));
-assert(xray.type=="hysteria2" && xray.tls.certificate_sha256 && xray.tls.certificate_sha256[0]==pin,"Xray Hysteria2 pin dropped");
+ streamSettings:{network:"hysteria",security:"tls",hysteriaSettings:{version:2,auth:"pw"},tlsSettings:{serverName:"localhost",pinnedPeerCertSha256:[ARGV[3]]},
+ finalmask:{udp:[{type:"salamander",settings:{password:"mask-password"}}]}}}]}));
+assert(xray.type=="hysteria2" && xray.tls.xray_pinned_peer_cert_sha256 && xray.tls.xray_pinned_peer_cert_sha256[0]==pin,"Xray Hysteria2 pin dropped");
+assert(xray.obfs?.type=="salamander" && xray.obfs.password=="mask-password","Xray Hysteria2 Salamander dropped");
 UC
 ucode -L "$LIB" "$WORK/roundtrip.uc" "$WORK" "$PIN" "$LINK" "$HEX"
 echo 'Hysteria2 pin survives export, cache repair and Xray JSON import'

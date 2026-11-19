@@ -22,21 +22,23 @@ function normalize(raw) {
 }
 for (let pin in [hex, colon, expected]) {
     let node = normalize(uri + encode(pin));
-    expect(type(node.tls.certificate_sha256) == "array" && node.tls.certificate_sha256[0] == expected, "URL pin lost or corrupted");
+    expect(type(node.tls.xray_pinned_peer_cert_sha256) == "array" && node.tls.xray_pinned_peer_cert_sha256[0] == expected, "URL pin lost or corrupted");
     let exported = links.serialize_outbound_link(node);
-    expect(normalize(exported).tls.certificate_sha256[0] == expected, "pin export roundtrip");
-    delete node.tls.certificate_sha256;
+    expect(normalize(exported).tls.xray_pinned_peer_cert_sha256[0] == expected, "pin export roundtrip");
+    delete node.tls.xray_pinned_peer_cert_sha256;
+    node.tls.certificate_sha256 = [expected];
     parser.repair_cached_outbounds([node]);
-    expect(node.tls.certificate_sha256[0] == expected, "cached URI pin repair");
+    expect(node.tls.xray_pinned_peer_cert_sha256[0] == expected && node.tls.certificate_sha256 == null, "cached URI pin migration");
 }
 let node = normalize(sprintf("%J", { outbounds: [{protocol:"vless", tag:"pinned", settings:{vnext:[{
     address:"127.0.0.1", port:443, users:[{id:"00000000-0000-4000-8000-000000000001"}]
 }]}, streamSettings:{network:"tcp", security:"tls", tlsSettings:{serverName:"localhost", pinnedPeerCertSha256:[colon, hex]}}}] }));
-expect(length(node.tls.certificate_sha256) == 1 && node.tls.certificate_sha256[0] == expected, "Xray pins and deduplication");
+expect(length(node.tls.xray_pinned_peer_cert_sha256) == 1 && node.tls.xray_pinned_peer_cert_sha256[0] == expected, "Xray pins and deduplication");
+delete node.tls.xray_pinned_peer_cert_sha256;
 node.tls.certificate_sha256 = expected;
 expect(normalize(links.serialize_outbound_link(node)).tls.certificate_sha256[0] == expected, "native scalar pin export");
-expect(normalize(uri + encode(hex + "," + replace(hex, /^01/, "02"))).tls.certificate_sha256[1] != expected, "multiple pins");
-expect(normalize(replace(uri, /&pcs=$/, "")).tls.certificate_sha256 == null, "absent pin");
+expect(normalize(uri + encode(hex + "," + replace(hex, /^01/, "02"))).tls.xray_pinned_peer_cert_sha256[1] != expected, "multiple pins");
+expect(normalize(replace(uri, /&pcs=$/, "")).tls.xray_pinned_peer_cert_sha256 == null, "absent pin");
 let empty = {};
 parser.add_certificate_pins(empty, []);
 expect(empty.certificate_sha256 == null, "empty pin array must remain absent");

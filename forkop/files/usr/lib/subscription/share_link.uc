@@ -78,7 +78,7 @@ function add_query(params, key, value) {
         push(params, uri_encode(key) + "=" + uri_encode(value));
 }
 
-function add_xhttp_extra_query(params, transport) {
+function xhttp_extra(transport) {
     let extra = {};
     for (let item in [
         ["xPaddingBytes", "x_padding_bytes"],
@@ -119,8 +119,41 @@ function add_xhttp_extra_query(params, transport) {
             extra.xmux = xmux;
     }
 
-    if (length(keys(extra)) > 0)
-        add_query(params, "extra", sprintf("%J", extra));
+    return extra;
+}
+
+function tls_values(value) {
+    return type(value) == "array" ? value : value == null ? [] : [value];
+}
+
+function add_xray_verification_query(params, tls) {
+    add_query(params, "pcs", join(",", tls_values(tls.xray_pinned_peer_cert_sha256)));
+    add_query(params, "vcn", join(",", tls_values(tls.verify_server_name)));
+}
+
+function xhttp_download_stream(download) {
+    let transport = download.transport;
+    let result = { address: download.server, port: download.server_port, network: "xhttp", security: "none",
+        xhttpSettings: { host: transport.host, path: transport.path, headers: transport.headers, extra: xhttp_extra(transport) } };
+    let tls = download.tls;
+    if (type(tls) != "object" || tls.enabled === false)
+        return result;
+    if (type(tls.reality) == "object" && tls.reality.enabled !== false) {
+        result.security = "reality";
+        result.realitySettings = { serverName: tls.server_name, fingerprint: tls.utls?.fingerprint,
+            password: tls.reality.public_key, shortId: tls.reality.short_id,
+            supportX25519MLKEM768: tls.reality.support_x25519mlkem768,
+            mldsa65Verify: tls.reality.__forkop_mldsa65_verify };
+    }
+    else {
+        result.security = "tls";
+        result.tlsSettings = { serverName: tls.server_name, fingerprint: tls.utls?.fingerprint,
+            allowInsecure: tls.insecure, alpn: tls.alpn,
+            pinnedPeerCertSha256: join(",", tls_values(tls.xray_pinned_peer_cert_sha256)),
+            verifyPeerCertByName: join(",", tls_values(tls.verify_server_name)),
+            pinSHA256: tls.certificate_sha256 };
+    }
+    return result;
 }
 
 function add_tls_query(params, outbound, trojan_default_tls) {
@@ -146,10 +179,8 @@ function add_tls_query(params, outbound, trojan_default_tls) {
     }
 
     add_query(params, "sni", tls.server_name);
-    let pins = type(tls.certificate_sha256) == "array" ? tls.certificate_sha256 :
-        (tls.certificate_sha256 != null ? [tls.certificate_sha256] : []);
-    if (length(pins) > 0)
-        add_query(params, "pcs", join(",", pins));
+    add_xray_verification_query(params, tls);
+    add_query(params, "pinSHA256", join(",", tls_values(tls.certificate_sha256)));
     if (tls.insecure === true)
         add_query(params, "allowInsecure", "1");
     if (type(tls.utls) == "object" && tls.utls.enabled !== false)
@@ -175,6 +206,8 @@ function add_transport_query(params, outbound) {
     }
     else if (transport_type == "grpc") {
         add_query(params, "serviceName", transport.service_name);
+        if (transport.multi_mode === true)
+            add_query(params, "mode", "multi");
     }
     else if (transport_type == "http") {
         add_query(params, "path", transport.path);
@@ -187,7 +220,11 @@ function add_transport_query(params, outbound) {
         add_query(params, "path", transport.path);
         add_query(params, "host", transport.host);
         add_query(params, "mode", transport.mode);
-        add_xhttp_extra_query(params, transport);
+        let extra = xhttp_extra(transport);
+        if (type(transport.download_settings) == "object" && type(transport.download_settings.transport) == "object")
+            extra.downloadSettings = xhttp_download_stream(transport.download_settings);
+        if (length(keys(extra)) > 0)
+            add_query(params, "extra", sprintf("%J", extra));
     }
 }
 
@@ -272,6 +309,7 @@ function serialize_hysteria2(outbound) {
     let tls = type(outbound.tls) == "object" ? outbound.tls : null;
     if (tls) {
         add_query(params, "sni", tls.server_name);
+        add_xray_verification_query(params, tls);
         if (tls.insecure === true)
             add_query(params, "insecure", "1");
         if (type(tls.alpn) == "array" && length(tls.alpn) > 0)

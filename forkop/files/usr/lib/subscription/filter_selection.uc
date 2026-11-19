@@ -3,6 +3,7 @@
 let fs = require("fs");
 let common = require("core.common");
 let identity = require("subscription.filter_identity");
+let parser = require("subscription.parser");
 let uci = require("core.uci");
 let connections = require("config.connections");
 const CONFIG = getenv("FORKOP_CONFIG_NAME") || "forkop";
@@ -18,6 +19,11 @@ function list(value) {
 function connection(source, outbound) {
     let key = identity.connection_key(outbound);
     return key == "" ? "" : sprintf("%J", [ source, key ]);
+}
+
+function previous_password_connection(source, outbound) {
+    let password = parser.legacy_uri_password(outbound);
+    return password == null ? "" : connection(source, { ...outbound, password });
 }
 
 function path(rule) {
@@ -38,7 +44,7 @@ function candidates(section) {
         let file = section[".name"] + "-subscription-" + index_value + ".json";
         let feed = common.read_json_file(RUNTIME + "/" + file) || common.read_json_file(CACHE + "/" + file);
         let prefix = connections.subscription_node_prefix(section, source);
-        for (let outbound in common.array_or_empty(feed?.outbounds)) {
+        for (let outbound in parser.repair_cached_outbounds(common.array_or_empty(feed?.outbounds))) {
             let key = connection(source, outbound);
             if (key == "")
                 continue;
@@ -46,8 +52,30 @@ function candidates(section) {
             if (!name)
                 continue;
             push(result, { name: prefix != "" ? prefix + " " + name : name, key,
-                hidden: common.bool_option(outbound, "__forkop_hidden", false) });
+                hidden: common.bool_option(outbound, "__forkop_hidden", false),
+                previous_password_key: previous_password_connection(source, outbound) });
         }
+    }
+    return result;
+}
+
+function migrate_password_keys(bound_keys, candidates) {
+    let result = [];
+    for (let key in bound_keys) {
+        let exact = false;
+        let repairs = {};
+        for (let candidate in candidates) {
+            if (candidate.key == key) {
+                exact = true;
+                break;
+            }
+            if (candidate.previous_password_key == key)
+                repairs[candidate.key] = true;
+        }
+        let choices = keys(repairs);
+        let bound = !exact && length(choices) == 1 ? choices[0] : key;
+        if (index(result, bound) < 0)
+            push(result, bound);
     }
     return result;
 }
@@ -120,7 +148,7 @@ function reconcile(values, saved, previous, next) {
                 if (candidate.name == name && index(keys, candidate.key) < 0)
                     push(keys, candidate.key);
         }
-        keys = migrate_address(keys, name, previous, next);
+        keys = migrate_address(migrate_password_keys(keys, next), name, previous, next);
         let matches = display_matches(filter(next, candidate => index(keys, candidate.key) >= 0), name);
         // Keep a tombstone if the selected connection disappears. A new owner
         // of its name must not take over an existing selection.
@@ -286,4 +314,5 @@ function bound_names(saved, side, values) {
     return result;
 }
 
-return { connection, candidates, reconcile, snapshot, finish, read, urltest_key, priority_key, bound_names };
+return { connection, previous_password_connection, migrate_password_keys,
+    candidates, reconcile, snapshot, finish, read, urltest_key, priority_key, bound_names };

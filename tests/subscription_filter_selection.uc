@@ -116,6 +116,22 @@ expect(index(saved[selection.urltest_key(section, "group")].include[0].keys,
 function candidate(node, src) {
     return { name: node.tag, key: selection.connection(src || source, node) };
 }
+
+let repaired_auth = { type: "trojan", tag: "Repaired", server: "127.0.0.1", server_port: 443,
+    password: "qa+one", share_link: "trojan://qa+one@127.0.0.1:443#Repaired" };
+let previous_auth = { ...repaired_auth, password: "qa one" };
+let before_key = selection.connection(source, previous_auth);
+let after_key = selection.connection(source, repaired_auth);
+let repaired_candidate = { ...candidate(repaired_auth), previous_password_key: selection.previous_password_connection(source, repaired_auth) };
+eq(repaired_candidate.previous_password_key, before_key, "recognize the old decoding of the same share link");
+eq(selection.migrate_password_keys([before_key], [repaired_candidate]), [after_key], "migrate a unique repaired password");
+eq(selection.migrate_password_keys([before_key], [repaired_candidate, candidate(previous_auth)]), [before_key],
+    "preserve an exact match if the provider also has a separate node with the old password");
+eq(selection.migrate_password_keys([before_key], [repaired_candidate, { ...repaired_candidate, key: "ambiguous" }]), [before_key],
+    "avoid migrating an ambiguous repair");
+eq(selection.reconcile(["Repaired"], [{name:"Repaired", keys:[before_key]}], [], [repaired_candidate]).records[0].keys,
+    [after_key], "persist repaired URLTest selection on the next reconciliation");
+
 let original = candidate(new_node);
 let moved = candidate(addressed);
 function migration(next, previous) {

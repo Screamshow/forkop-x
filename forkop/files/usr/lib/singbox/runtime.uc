@@ -301,6 +301,11 @@ function output_has_feature(output, feature) {
     return false;
 }
 
+function xray_client_features(version_output) {
+    return join(",", filter(["transport.xhttp.split", "transport.grpc.multi", "tls.xray-pins", "tls.verify-name"],
+        feature => output_has_feature(version_output, feature)));
+}
+
 function sing_box_supports_xhttp(version, version_output) {
     // Legacy Extended builds predate Features. X must declare the transport;
     // its package name and upstream version alone do not imply XHTTP support.
@@ -1094,7 +1099,8 @@ function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferre
             core_version,
             sing_box_supports_trojan(core_version, version_output) ? "1" : "0",
             sing_box_supports_bittorrent_direct(core_version, version_output) ? "1" : "0",
-            sing_box_supports_vless_encryption(core_version, version_output) ? "1" : "0"
+            sing_box_supports_vless_encryption(core_version, version_output) ? "1" : "0",
+            xray_client_features(version_output)
         ]) + " >" + shell_quote(runtime_log) + " 2>&1"
     );
     if (SINGBOX_CONFIG_FAIL_PHASE == "generate")

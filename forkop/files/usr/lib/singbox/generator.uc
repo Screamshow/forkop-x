@@ -10,6 +10,8 @@ let filter_identity = require("subscription.filter_identity");
 let filter_selection = require("subscription.filter_selection");
 // Keep private connection identities out of outboundMetadata/UI caches.
 let subscription_filter_connections = {};
+let subscription_previous_password_connections = {};
+let runtime_xray_client_features = [];
 let runtime_country = require("singbox.country");
 let runtime_dns = require("singbox.dns");
 let runtime_route = require("singbox.route");
@@ -639,8 +641,59 @@ function outbound_uses_xhttp(outbound) {
 
 function outbound_uses_certificate_pins(outbound) {
     let tls = object_or_empty(object_or_empty(outbound).tls);
-    let value = tls.certificate_sha256;
-    return type(value) == "array" ? length(value) > 0 : as_string(value) != "";
+    for (let value in [tls.certificate_sha256, tls.xray_pinned_peer_cert_sha256])
+        if (type(value) == "array" ? length(value) > 0 : as_string(value) != "")
+            return true;
+    return false;
+}
+
+function has_xray_client_feature(feature) {
+    return index(runtime_xray_client_features, feature) >= 0;
+}
+
+function unsupported_xray_tls(tls) {
+    tls = object_or_empty(tls);
+    if (tls.verify_server_name != null && !has_xray_client_feature("tls.verify-name"))
+        return "requires separate TLS certificate name verification (vcn)";
+    if (tls.xray_pinned_peer_cert_sha256 != null &&
+        (tls.certificate_sha256 != null || tls.certificate_public_key_sha256 != null))
+        return "combines Xray TLS pins with native TLS pins";
+    return "";
+}
+
+function unsupported_xray_client_option(outbound) {
+    let transport = object_or_empty(outbound.transport);
+    let reason = unsupported_xray_tls(outbound.tls);
+    if (reason != "")
+        return reason;
+    if (transport.type == "xhttp" && transport.download_settings != null) {
+        if (!has_xray_client_feature("transport.xhttp.split"))
+            return "requires a separate XHTTP download connection";
+        if (transport.download_settings.tls?.xray_pinned_peer_cert_sha256 != null &&
+            !has_xray_client_feature("tls.xray-pins"))
+            return "requires Xray certificate pinning on the XHTTP download connection";
+        if (!runtime_supports_reality_mldsa65 &&
+            as_string(transport.download_settings.tls?.reality?.__forkop_mldsa65_verify || "") != "")
+            return "requires REALITY ML-DSA-65 verification on the XHTTP download connection";
+        return unsupported_xray_tls(transport.download_settings.tls);
+    }
+    if (transport.type == "grpc" && transport.multi_mode === true &&
+        index(as_string(transport.service_name || ""), "/") == 0 && !has_xray_client_feature("transport.grpc.multi"))
+        return "requires gRPC multi mode with a custom method path";
+    return "";
+}
+
+function adapt_xray_options_for_core(outbound) {
+    if (outbound.tls?.xray_pinned_peer_cert_sha256 != null && !has_xray_client_feature("tls.xray-pins")) {
+        // Older Xrust versions can still enforce the original strict leaf pin.
+        outbound.tls = { ...outbound.tls, certificate_sha256: outbound.tls.xray_pinned_peer_cert_sha256 };
+        delete outbound.tls.xray_pinned_peer_cert_sha256;
+    }
+    if (outbound.transport?.type == "grpc" && outbound.transport.multi_mode === true &&
+        !has_xray_client_feature("transport.grpc.multi")) {
+        outbound.transport = { ...outbound.transport };
+        delete outbound.transport.multi_mode;
+    }
 }
 
 // Mirrors the outbound types rejected by the Xrust profile without the
@@ -767,6 +820,10 @@ function ensure_explicit_outbound_supported(outbound, source, name) {
         runtime_generate_unsupported(as_string(source) + " '" + as_string(name) + "' requires TLS certificate SHA-256 pinning; use Xrust or a core with verified certificate_sha256 support");
     if (!runtime_supports_xhttp && outbound_uses_xhttp(outbound))
         runtime_generate_unsupported(as_string(source) + " '" + as_string(name) + "' uses XHTTP transport, but installed sing-box does not advertise XHTTP support");
+    let unsupported = unsupported_xray_client_option(outbound);
+    if (unsupported != "")
+        runtime_generate_unsupported(as_string(source) + " '" + as_string(name) + "' " + unsupported + " with the installed core");
+    adapt_xray_options_for_core(outbound);
 }
 
 function subscription_outbound_display_name(outbound) {
@@ -838,6 +895,11 @@ function compatible_subscription_outbounds(outbounds, section_name) {
         }
         if (!runtime_supports_xhttp && outbound_uses_xhttp(outbound)) {
             warn_skipped_subscription_outbound(section_name, outbound, "installed sing-box does not advertise XHTTP support");
+            continue;
+        }
+        let unsupported = unsupported_xray_client_option(outbound);
+        if (unsupported != "") {
+            warn_skipped_subscription_outbound(section_name, outbound, unsupported + " with the installed core");
             continue;
         }
         push(retained, outbound);
@@ -1128,6 +1190,7 @@ function add_subscription_source_with_state(config, section, source_index, sourc
         }
         let new_tag = unique_tag(base, taken);
         subscription_filter_connections[new_tag] = filter_selection.connection(source_entry, outbound);
+        subscription_previous_password_connections[new_tag] = filter_selection.previous_password_connection(source_entry, outbound);
         taken[new_tag] = true;
         tag_map[base] = new_tag;
         if (as_string(outbound.tag || "") != "")
@@ -1135,6 +1198,7 @@ function add_subscription_source_with_state(config, section, source_index, sourc
         if (as_string(outbound.remark || "") != "")
             tag_map[as_string(outbound.remark)] = new_tag;
         let prepared_outbound = copy_subscription_outbound(outbound, new_tag);
+        adapt_xray_options_for_core(prepared_outbound);
         use_supported_utls_fingerprint(prepared_outbound, "subscription outbound for rule '" + section_name + "'", display_name);
         push(prepared, prepared_outbound);
         push(display_names, display_name);
@@ -1511,6 +1575,15 @@ function filter_candidate_outbounds(filter_mode, urltest_candidate_tags, names, 
     return deduplicate_alias_outbounds(all_outbounds, metadata);
 }
 
+function current_filter_bindings(saved, side, values, tags) {
+    let bindings = filter_selection.bound_names(saved, side, values);
+    let candidates = map(tags, tag => ({ key: subscription_filter_connections[tag],
+        previous_password_key: subscription_previous_password_connections[tag] }));
+    for (let name, keys in bindings)
+        bindings[name] = filter_selection.migrate_password_keys(keys, candidates);
+    return bindings;
+}
+
 function urltest_filtered_outbounds(section, urltest_id, urltest_candidate_tags, state) {
     let saved = filter_selection.read(section[".name"])[filter_selection.urltest_key(section, urltest_id)];
     return filter_candidate_outbounds(
@@ -1519,8 +1592,8 @@ function urltest_filtered_outbounds(section, urltest_id, urltest_candidate_tags,
         object_or_empty(object_or_empty(state.outboundMetadata).names),
         urltest_country_metadata(section, urltest_id, state),
         { ...object_or_empty(state.outboundMetadata),
-            includeBindings: filter_selection.bound_names(saved, "include", connections.urltest_include_outbounds(section, urltest_id)),
-            excludeBindings: filter_selection.bound_names(saved, "exclude", connections.urltest_exclude_outbounds(section, urltest_id)) },
+            includeBindings: current_filter_bindings(saved, "include", connections.urltest_include_outbounds(section, urltest_id), urltest_candidate_tags),
+            excludeBindings: current_filter_bindings(saved, "exclude", connections.urltest_exclude_outbounds(section, urltest_id), urltest_candidate_tags) },
         connections.urltest_include_outbounds(section, urltest_id),
         connections.urltest_include_regex(section, urltest_id),
         connections.urltest_include_countries(section, urltest_id),
@@ -1558,8 +1631,8 @@ function priority_level_filtered_outbounds(group_id, level_id, urltest_candidate
         object_or_empty(object_or_empty(state.outboundMetadata).names),
         priority_level_country_metadata(group_id, level_id, state),
         { ...object_or_empty(state.outboundMetadata),
-            includeBindings: filter_selection.bound_names(saved, "include", connections.priority_level_include_outbounds(group_id, level_id)),
-            excludeBindings: filter_selection.bound_names(saved, "exclude", connections.priority_level_exclude_outbounds(group_id, level_id)) },
+            includeBindings: current_filter_bindings(saved, "include", connections.priority_level_include_outbounds(group_id, level_id), urltest_candidate_tags),
+            excludeBindings: current_filter_bindings(saved, "exclude", connections.priority_level_exclude_outbounds(group_id, level_id), urltest_candidate_tags) },
         connections.priority_level_include_outbounds(group_id, level_id),
         connections.priority_level_include_regex(group_id, level_id),
         connections.priority_level_include_countries(group_id, level_id),
@@ -2071,12 +2144,11 @@ function apply_link_tls(outbound, scheme, query) {
 
     let tls = { enabled: true };
     // Hysteria2 links carry the whole-certificate pin as pinSHA256.
-    let pins = as_string(query.pcs || "");
-    if ((scheme == "hysteria2" || scheme == "hy2") && as_string(query.pinSHA256 || "") != "")
-        pins = pins != "" ? pins + "," + as_string(query.pinSHA256) : as_string(query.pinSHA256);
-    subscription_parser.add_certificate_pins(tls, pins);
-    if (as_string(query.sni || "") != "")
-        tls.server_name = as_string(query.sni);
+    subscription_parser.add_xray_tls_verification(tls, query.pcs, query.vcn);
+    subscription_parser.add_certificate_pins(tls, query.pinSHA256);
+    let server_name = as_string(query.sni || (scheme == "trojan" ? query.peer : "") || "");
+    if (server_name != "")
+        tls.server_name = server_name;
     if (bool_query(query.allowInsecure || query.insecure || ""))
         tls.insecure = true;
 
@@ -2150,13 +2222,15 @@ function apply_link_transport(outbound, query) {
             result.host = hosts;
     }
     else if (transport == "ws") {
-        result.path = as_string(query.path || "");
+        result.path = as_string(query.path || "/");
         if (as_string(query.host || "") != "")
             result.headers = { Host: as_string(query.host) };
         optional_query_number(result, "max_early_data", query.ed);
     }
     else if (transport == "grpc") {
         optional_query_string(result, "service_name", query.serviceName);
+        if (query.mode == "multi")
+            result.multi_mode = true;
     }
     else if (transport == "httpupgrade") {
         optional_query_string(result, "path", query.path);
@@ -3722,7 +3796,7 @@ function enabled_sections(deferred_sections) {
     return result;
 }
 
-function generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan, supports_bittorrent_direct, supports_vless_encryption) {
+function generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan, supports_bittorrent_direct, supports_vless_encryption, xray_features) {
     // Provenance and UI metadata belong to this candidate, never the live cache.
     runtime_subscription.set_section_cache_dir(output_path + ".section-cache");
     runtime_prunable_outbounds = {};
@@ -3740,6 +3814,7 @@ function generate_config(output_path, service_address, mwan3_active, supports_xh
     runtime_supports_all_fingerprints = !rust_x_core_version(sing_box_version);
     runtime_supports_vless_encryption = !rust_x_core_version(sing_box_version) || cli_bool(supports_vless_encryption);
     runtime_supports_reality_mldsa65 = !rust_x_core_version(sing_box_version);
+    runtime_xray_client_features = split(as_string(xray_features), ",");
     runtime_supports_xhttp = supports_xhttp == null || as_string(supports_xhttp) == ""
         ? true
         : cli_bool(supports_xhttp);
@@ -3831,11 +3906,11 @@ function generate_config(output_path, service_address, mwan3_active, supports_xh
     }
 }
 
-function generate_config_fixture(fixture_path, output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan, supports_bittorrent_direct, supports_vless_encryption) {
+function generate_config_fixture(fixture_path, output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan, supports_bittorrent_direct, supports_vless_encryption, xray_features) {
     use_fixture_cursor(fixture_path);
     runtime_subscription.set_section_cache_dir(output_path + ".section-cache");
     runtime_ruleset_folder = output_path + ".rulesets";
-    generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan, supports_bittorrent_direct, supports_vless_encryption);
+    generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan, supports_bittorrent_direct, supports_vless_encryption, xray_features);
 }
 
 function stdin_contains(needle) {
@@ -3877,9 +3952,9 @@ function service_route_check_section_fixture() {
 let mode = ARGV[0] || "";
 
 if (mode == "generate-config")
-    generate_config(ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5] || "", ARGV[6] || "", ARGV[7] || "", ARGV[8] || "0", ARGV[9] || "0");
+    generate_config(ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5] || "", ARGV[6] || "", ARGV[7] || "", ARGV[8] || "0", ARGV[9] || "0", ARGV[10] || "");
 else if (mode == "generate-config-fixture")
-    generate_config_fixture(ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5], ARGV[6] || "", ARGV[7] || "", ARGV[8] || "", ARGV[9] || "0", ARGV[10] || "0");
+    generate_config_fixture(ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5], ARGV[6] || "", ARGV[7] || "", ARGV[8] || "", ARGV[9] || "0", ARGV[10] || "0", ARGV[11] || "");
 else if (mode == "stdin-contains")
     exit(stdin_contains(ARGV[1]) ? 0 : 1);
 else if (mode == "csv-to-json-array")
