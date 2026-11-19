@@ -618,7 +618,7 @@ function parse_url(url) {
     let at_pos = rindex(authority, "@");
     if (at_pos >= 0) {
         let raw_userinfo = substr(authority, 0, at_pos);
-        userinfo = scheme == "hy2" || scheme == "hysteria2"
+        userinfo = scheme == "trojan" || scheme == "hy2" || scheme == "hysteria2"
             ? core_url.decode(raw_userinfo, true) : urldecode(raw_userinfo);
         hostport = substr(authority, at_pos + 1);
     }
@@ -2837,7 +2837,8 @@ function repair_cached_outbounds(outbounds) {
             continue;
         if (parsed.password != outbound.password) {
             // Repair only the value produced by the old form-style decoder.
-            if (outbound.type != "hysteria2" || core_url.userinfo(link) != outbound.password ||
+            if ((outbound.type != "hysteria2" && outbound.type != "trojan") ||
+                core_url.userinfo(link) != outbound.password ||
                 sprintf("%J", parsed.server_ports) != sprintf("%J", outbound.server_ports))
                 continue;
             outbound.password = parsed.password;

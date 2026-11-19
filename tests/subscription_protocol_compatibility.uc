@@ -170,6 +170,24 @@ manual.section[0].selector_proxy_links=["trojan://pw@127.0.0.1:443?sni=localhost
 expect(generate(manual,trojan_core,work+"/generated.json","1")==0,"manual Trojan link without security rejected: "+log_text());
 let default_tls=outbounds_of_type(json(fs.readfile(work+"/generated.json")),["trojan"])[0];
 expect(default_tls?.tls?.enabled===true&&default_tls.tls.server_name=="localhost","manual Trojan link without security must default to TLS like subscriptions: "+sprintf("%J",default_tls));
+
+let trojan_literal = "trojan://qa+one%2Btwo@127.0.0.1:443?sni=localhost#Literal";
+let trojan_escaped = "trojan://qa%2Bone%2Btwo@127.0.0.1:8443?sni=localhost#Escaped";
+let trojan_links = [trojan_literal, trojan_escaped];
+let auth_nodes = normalize(join("\n", trojan_links) + "\n");
+expect(length(auth_nodes) == 2 && auth_nodes[0].password == "qa+one+two" &&
+    auth_nodes[1].password == "qa+one+two", "Trojan passwords in subscriptions must preserve plus");
+let cached_trojan = { ...auth_nodes[0], password: "qa one+two", share_link: trojan_literal };
+let changed_trojan = { ...cached_trojan, password: "another password" };
+parser.repair_cached_outbounds([cached_trojan, changed_trojan]);
+expect(cached_trojan.password == "qa+one+two" && changed_trojan.password == "another password",
+    "repair a legacy Trojan password without replacing a different credential");
+manual.section[0].selector_proxy_links = trojan_links;
+expect(generate(manual, trojan_core, work+"/generated.json", "1") == 0, "manual Trojan password fixture failed");
+let auth_manual = outbounds_of_type(json(fs.readfile(work+"/generated.json")), ["trojan"]);
+expect(length(auth_manual) == 2 && auth_manual[0].password == "qa+one+two" &&
+    auth_manual[1].password == "qa+one+two", "manually imported Trojan passwords must preserve plus");
+
 manual.section[0].selector_proxy_links=["ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpwdw@127.0.0.1:8388#SS%20Manual"];
 expect(generate(manual,trojan_core,work+"/kept.json","1")!=0,"manual Shadowsocks link accepted on Trojan-capable Xrust");
 expect(index(last_log_line(),"which is not included in Xrust; remove it or use a VLESS, Trojan or Hysteria2 connection")>=0,"unclear manual link error: "+last_log_line());

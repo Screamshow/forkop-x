@@ -2383,7 +2383,7 @@ function manual_trojan_outbound(link, tag_name) {
 
     let host = url_host(link);
     let port = parse_port(url_port(link));
-    let password = url_userinfo(link);
+    let password = url_userinfo(link, true);
     if (host == "" || port == null || password == "")
         runtime_generate_unsupported("manual Trojan proxy link is invalid");
 
