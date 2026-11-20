@@ -686,8 +686,19 @@ function unsupported_xray_client_option(outbound) {
 function adapt_xray_options_for_core(outbound) {
     if (outbound.tls?.xray_pinned_peer_cert_sha256 != null && !has_xray_client_feature("tls.xray-pins")) {
         // Older Xrust versions can still enforce the original strict leaf pin.
-        outbound.tls = { ...outbound.tls, certificate_sha256: outbound.tls.xray_pinned_peer_cert_sha256 };
+        let pins = outbound.tls.xray_pinned_peer_cert_sha256;
+        outbound.tls = { ...outbound.tls };
         delete outbound.tls.xray_pinned_peer_cert_sha256;
+        if (outbound.type == "hysteria2") {
+            subscription_parser.add_certificate_pins(outbound.tls, pins);
+            if (outbound.tls.certificate_sha256 == null)
+                runtime_generate_unsupported("Hysteria2 TLS certificate SHA-256 pin list is empty");
+            // For HY2, the validated and mandatory leaf pin replaces the CA check.
+            outbound.tls.insecure = true;
+        }
+        else {
+            outbound.tls.certificate_sha256 = pins;
+        }
     }
 }
 

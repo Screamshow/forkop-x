@@ -1657,7 +1657,16 @@ function parse_clash_record(record) {
         }
         if (options.sni != "")
             outbound.tls.server_name = options.sni;
-        if (is_true(options.skip_verify))
+        let fingerprint = trim(record.fingerprint);
+        if (fingerprint != "") {
+            let hex = lc(replace(fingerprint, /:/g, ""));
+            if (!match(hex, /^[0-9a-f]{64}$/))
+                return null;
+            // Mihomo authenticates the leaf or anchors the chain at the
+            // pinned certificate, like Xray's certificate pin policy.
+            add_xray_tls_verification(outbound.tls, hex, record["name-cert-verify"]);
+        }
+        else if (is_true(options.skip_verify))
             outbound.tls.insecure = true;
         if (options.alpn != "")
             outbound.tls.alpn = split_csv(options.alpn);
