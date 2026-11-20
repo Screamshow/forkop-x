@@ -159,11 +159,6 @@ function file_nonempty(path) {
     return stat != null && int(stat.size || 0) > 0;
 }
 
-function path_basename(path) {
-    let parts = split(as_string(path), "/");
-    return length(parts) > 0 ? as_string(parts[length(parts) - 1]) : "";
-}
-
 function now_seconds() {
     return int(clock()[0]);
 }
@@ -505,22 +500,6 @@ function ensure_repository_indexes() {
 function pkg_install_name_command(package_name) {
     return is_apk() ? command_from_args([ "apk", "add", package_name ]) + " </dev/null" :
         command_from_args([ "opkg", "install", package_name ]) + " </dev/null";
-}
-
-function pkg_install_name_downgrade(package_name, package_version) {
-    package_name = as_string(package_name);
-    if (is_apk()) {
-        package_version = as_string(package_version);
-        if (package_version == "")
-            return false;
-        let package_spec = package_name + "=" + package_version;
-        if (pkg_is_installed(package_name))
-            return command_success(command_from_args([ "apk", "add", "--force-reinstall", "--upgrade", package_spec ]) + " </dev/null");
-        return command_success(command_from_args([ "apk", "add", package_spec ]) + " </dev/null");
-    }
-
-    return command_success(command_from_args([ "opkg", "install", "--force-overwrite", "--force-reinstall", "--force-downgrade", package_name ]) + " </dev/null") ||
-        command_success(command_from_args([ "opkg", "install", "--force-downgrade", package_name ]) + " </dev/null");
 }
 
 function pkg_install_files_command(files) {
@@ -948,10 +927,6 @@ function sing_box_removed_space_error() {
         sing_box_flash_after_remove_bytes, 0);
 }
 
-function pkg_install_files(files) {
-    return command_success(pkg_install_files_command(files));
-}
-
 function pkg_remove_sing_box_conflict(package_name) {
     package_name = as_string(package_name);
     if (!pkg_is_installed(package_name))
@@ -980,7 +955,7 @@ function remove_previous_sing_box_packages() {
     return true;
 }
 
-function compare_versions(lhs, rhs) {
+function compare_versions(lhs, rhs, exact_package_version) {
     lhs = as_string(lhs);
     rhs = as_string(rhs);
     if (lhs == "" || rhs == "")
@@ -996,6 +971,8 @@ function compare_versions(lhs, rhs) {
             return -1;
         if (apk_result == "=")
             return 0;
+        if (exact_package_version)
+            return null;
     }
 
     if (command_exists("opkg")) {
@@ -1007,6 +984,8 @@ function compare_versions(lhs, rhs) {
             return 0;
     }
 
+    if (exact_package_version)
+        return null;
     return module_success([ LIB_DIR + "/core/helpers.uc", "version-at-least", lhs, rhs ]) ? 1 : -1;
 }
 
@@ -1877,58 +1856,15 @@ function restore_sing_box_variant_state(previous_marker, previous_version_state)
         command_success_from_args([ '/etc/init.d/forkop-tailscale', 'start' ]);
 }
 
-function replace_sing_box_package_variant(target_package, conflict_package, target_version) {
-    prepare_sing_box_package_service_install();
-    if ((as_string(conflict_package) == "" || !pkg_is_installed(conflict_package)) &&
-        (target_package == "sing-box-extended" || !pkg_is_installed("sing-box-extended")))
-        return pkg_install_name_downgrade(target_package, target_version);
-
-    if (target_package != "sing-box-extended" && !pkg_remove_sing_box_conflict("sing-box-extended"))
-        return false;
-    if (as_string(conflict_package) != "" && !pkg_remove_sing_box_conflict(conflict_package))
-        return false;
-    return pkg_install_name_downgrade(target_package, target_version);
-}
-
-function restore_sing_box_package_variant(previous_variant) {
-    if (previous_variant == "x" || previous_variant == "rust-x") {
-        let target = stage_sing_box_x_package(resolve_sing_box_x_release("", previous_variant == "rust-x"), "");
-        if (target == null) return false;
-        for (let name in [ "rust-x", "sing-box-x", "sing-box", "sing-box-tiny", "sing-box-extended" ])
-            if (name != target.name && !pkg_remove_sing_box_conflict(name)) return false;
-        return pkg_install_files([ target.path ]);
-    }
-    if (previous_variant == "tiny")
-        return replace_sing_box_package_variant("sing-box-tiny", "sing-box", available_package_version("sing-box-tiny"));
-    if (previous_variant == "stable")
-        return replace_sing_box_package_variant("sing-box", "sing-box-tiny", available_package_version("sing-box"));
-    if (previous_variant == "not-installed") {
-        pkg_remove_sing_box_conflict("rust-x");
-        pkg_remove_sing_box_conflict("sing-box-x");
-        pkg_remove_sing_box_conflict("sing-box-extended");
-        pkg_remove_sing_box_conflict("sing-box-tiny");
-        pkg_remove_sing_box_conflict("sing-box");
-        remove_managed_sing_box_service_script();
-        remove_file("/usr/bin/sing-box");
-        return true;
-    }
-    return false;
-}
-
 function restore_sing_box_install_backup(previous_variant, backup_binary, rollback_file) {
     if (previous_variant == "extended")
         return restore_sing_box_backup(backup_binary) && restore_extended_package_files();
     if (sing_box_variant_is_package_managed(previous_variant)) {
-        // The legacy compressed-archive action does not use this package
-        // transaction; preserve its existing rollback behavior.
-        if (rollback_file == null)
-            return restore_sing_box_package_variant(previous_variant) ||
-                (as_string(backup_binary) != "" && restore_sing_box_backup(backup_binary));
         let package_name = previous_variant == "rust-x" ? "rust-x" : previous_variant == "x" ? "sing-box-x" : previous_variant == "tiny" ? "sing-box-tiny" :
-            previous_variant == "stable" ? "sing-box" : "sing-box-extended";
+            "sing-box";
         let previous_version = as_string(rollback_file) != "" ? staged_package_field(rollback_file, "version") : "";
         if (previous_version != "" && installed_package_version(package_name) == previous_version &&
-            read_sing_box_binary_version("/usr/bin/sing-box", previous_variant == "extended" ? "/usr/lib" : "") != "")
+            read_sing_box_binary_version("/usr/bin/sing-box", "") != "")
             return true;
         remove_file("/usr/bin/sing-box");
         if (as_string(rollback_file) != "" && file_nonempty(rollback_file) &&
@@ -1944,7 +1880,14 @@ function restore_sing_box_install_backup(previous_variant, backup_binary, rollba
 
     if (as_string(backup_binary) != "")
         return restore_sing_box_backup(backup_binary);
-    return restore_sing_box_package_variant(previous_variant);
+    if (previous_variant != "not-installed")
+        return false;
+
+    for (let name in [ "rust-x", "sing-box-x", "sing-box-extended", "sing-box-tiny", "sing-box" ])
+        pkg_remove_sing_box_conflict(name);
+    remove_managed_sing_box_service_script();
+    remove_file("/usr/bin/sing-box");
+    return true;
 }
 
 function restore_sing_box_after_failed_package_install(target_package, previous_variant, backup_binary, backup_cronet, previous_marker, previous_version_state, cronet_touched, rollback_file) {
@@ -2066,6 +2009,15 @@ function install_package_sing_box(action, tiny, x, rust, requested_version) {
         action_fail("sing_box", action, "Failed to resolve " + label + " package from mirror", current_version);
 
     let previous_variant = sing_box_runtime_output("variant", []);
+    if (action == "update_rust_x") {
+        let comparison = compare_versions(package_version, latest_version, true);
+        if (comparison == null)
+            action_fail("sing_box", action, "Cannot compare installed and mirror Xrust package versions", package_version, latest_version);
+        if (comparison >= 0)
+            action_success("sing_box", action, comparison == 0 ? "Installed Xrust package is already up to date" :
+                "Installed Xrust package is newer than the mirror", package_version, latest_version, 0,
+                status_from_compare(comparison));
+    }
     if (action == "install" && previous_variant == target_variant &&
         current_version == latest_version)
         action_success("sing_box", action, "Installed sing-box package is already up to date",
@@ -2219,8 +2171,9 @@ function resolve_forkop_release(latest_version, selected) {
     let release = parse_forkop_release_plan(plan, latest_version, i18n_required);
     if (release != null) {
         try {
-            let assets = json(release_json).assets;
-            release.assets = type(assets) == "array" ? assets : [];
+            let metadata = json(release_json);
+            release.assets = type(metadata.assets) == "array" ? metadata.assets : [];
+            release.xrust_version = metadata.xrust_version;
         }
         catch (e) { return null; }
     }
@@ -2253,6 +2206,43 @@ function forkop_release_version(package_version) {
     if (is_apk())
         return replace(as_string(package_version), /_rc([0-9]+)$/, "-canary.$1");
     return as_string(package_version);
+}
+
+function forkop_release_requires_xrust(version) {
+    let parts = match(as_string(version), /^([0-9]+)[.][0-9]+[.][0-9]+(-canary[.][0-9]+)?$/);
+    return parts != null && int(parts[1]) >= 3;
+}
+
+function check_forkop_xrust_requirement(latest_version) {
+    let installed = installed_package_version("rust-x");
+    // The package database alone does not detect a manually replaced binary.
+    let build = rust_x_build_version(sing_box_runtime_output("version", []));
+    if (build == "" || match(installed, /^[0-9]+[.][0-9]+[.][0-9]+-r?[1-9][0-9]*$/) == null ||
+        replace(installed, /-r?[0-9]+$/, "") != build)
+        action_fail("forkop", "install", "Install Xrust in LuCI, then retry the Forkop update.",
+            FORKOP_VERSION, latest_version);
+    return installed;
+}
+
+function stage_forkop_xrust(release, current_version, latest_version) {
+    let pin = release.xrust_version;
+    if (type(pin) != "string" || match(pin, /^[0-9]+[.][0-9]+[.][0-9]+$/) == null)
+        action_fail("forkop", "install", "The Forkop release does not specify an exact Xrust version",
+            FORKOP_VERSION, latest_version);
+    let pinned_release = resolve_sing_box_x_release(pin, true);
+    if (pinned_release == null)
+        action_fail("forkop", "install", "Xrust " + pin + " is unavailable for this router",
+            FORKOP_VERSION, latest_version);
+    if (pinned_release.version == current_version)
+        return null;
+
+    let target = stage_sing_box_x_package(pinned_release, pinned_release.version);
+    let rollback = stage_previous_sing_box_package("rust-x");
+    if (target == null || rollback == null || rollback.version != current_version)
+        action_fail("forkop", "install", "Cannot stage the exact Xrust packages for update and rollback",
+            FORKOP_VERSION, latest_version);
+    rollback.version_state = sing_box_runtime_output("read-version-state", []);
+    return { target, rollback };
 }
 
 function stage_forkop_rollback_packages() {
@@ -2297,8 +2287,8 @@ function forkop_package_space_error(overlay_kib, tmp_kib, target_bytes, rollback
     return "";
 }
 
-function forkop_package_preflight(backend_file, app_file, i18n_file, rollback_packages, version) {
-    let target_bytes = 0;
+function forkop_package_preflight(backend_file, app_file, i18n_file, rollback_packages, version, xrust) {
+    let target_bytes = xrust != null ? xrust.target.size : 0;
     for (let item in [ [ backend_file, "forkop" ], [ app_file, "luci-app-forkop" ],
         [ i18n_file, "luci-i18n-forkop-ru" ] ]) {
         if (item[0] == "") continue;
@@ -2420,6 +2410,16 @@ function restore_forkop_packages(staged) {
     }
     if (!restored)
         return false;
+    for (let archive in staged) {
+        if (archive.name != "rust-x")
+            continue;
+        let build = rust_x_build_version(read_sing_box_binary_version("/usr/bin/sing-box", ""));
+        if (build != replace(archive.version, /-r?[0-9]+$/, "") ||
+            !sing_box_runtime_success("restore-version-state", [ archive.version_state ])) {
+            updates_log("Cannot restore the previous Xrust binary and version state", "error");
+            return false;
+        }
+    }
     if (!restore_forkop_configuration_backup(forkop_configuration_backup, "/etc/config")) {
         updates_log("Cannot reapply configuration after previous package hooks", "error");
         return false;
@@ -2603,7 +2603,7 @@ function release_dependencies_to_preinstall(files) {
     for (let line in split(last_logged_output, "\n")) {
         // apk: "(1/2) Installing flock (2.40-r1)"; opkg: "Installing flock (2.40-1) to root..."
         let parsed = match(trim(line), /^(\([0-9]+\/[0-9]+\) )?Installing ([A-Za-z0-9][A-Za-z0-9._+-]*) \(/);
-        if (parsed != null && !array_has([ "forkop", "luci-app-forkop", "luci-i18n-forkop-ru" ], parsed[2]) &&
+        if (parsed != null && !array_has([ "forkop", "luci-app-forkop", "luci-i18n-forkop-ru", "rust-x" ], parsed[2]) &&
             !array_has(names, parsed[2]))
             push(names, parsed[2]);
     }
@@ -2625,16 +2625,63 @@ function preinstall_release_dependencies(files) {
     return true;
 }
 
+function clear_compressed_upgrade_backup() {
+    for (let name in [ "sing-box", "sing-box.init", "libcronet.so" ])
+        remove_file(COMPRESSED_UPGRADE_BACKUP + "/" + name);
+    return command_success_from_args([ "rmdir", COMPRESSED_UPGRADE_BACKUP ]);
+}
+
+function stage_compressed_upgrade_backup() {
+    let staged = tmp_dir + "/compressed-upgrade";
+    if (!file_nonempty("/usr/bin/sing-box") ||
+        index(read_file("/etc/init.d/sing-box"), SB_MANAGED_SERVICE_MARKER) < 0 ||
+        !ensure_dir(staged) ||
+        !command_success_from_args([ "cp", "-p", "/usr/bin/sing-box", staged + "/sing-box" ]) ||
+        !command_success_from_args([ "cp", "-p", "/etc/init.d/sing-box", staged + "/sing-box.init" ]) ||
+        (file_exists("/usr/lib/libcronet.so") &&
+         !command_success_from_args([ "cp", "-p", "/usr/lib/libcronet.so", staged + "/libcronet.so" ])))
+        return false;
+
+    if (file_exists(COMPRESSED_UPGRADE_BACKUP) && !clear_compressed_upgrade_backup())
+        return false;
+    return fs.rename(staged, COMPRESSED_UPGRADE_BACKUP);
+}
+
+function prepare_forkop_runtime_for_package_upgrade(latest_version) {
+    // Older prerm hooks remove the unmanaged compressed binary. Prepare its
+    // complete backup while the old service can still be left running.
+    let compressed = sing_box_runtime_output("read-variant-marker", []) == "extended-compressed";
+    if (compressed && !stage_compressed_upgrade_backup())
+        action_fail("forkop", "install", "Failed to preserve compressed sing-box before upgrade", FORKOP_VERSION, latest_version);
+
+    // The new lifecycle only accepts the recorded PID/starttime for a bounded
+    // exit wait before it reruns the normal process ownership guard.
+    capture_managed_upgrade_sing_box_marker();
+    if (!stop_old_sing_box_before_forkop_upgrade()) {
+        if (compressed)
+            clear_compressed_upgrade_backup();
+        action_fail("forkop", "install", "Old sing-box processes have ambiguous ownership or did not stop", FORKOP_VERSION, latest_version);
+    }
+
+    let remaining_sing_box = upgrade_sing_box_processes();
+    if (remaining_sing_box == null || upgrade_sing_box_count(remaining_sing_box) != 0) {
+        if (compressed)
+            clear_compressed_upgrade_backup();
+        action_fail("forkop", "install", "Old sing-box processes appeared before package installation", FORKOP_VERSION, latest_version);
+    }
+}
+
 function install_forkop(requested_version) {
     requested_version = as_string(requested_version);
-    let selected = requested_version != "" ? selected_forkop_release(requested_version) : null;
+    let selected = requested_version != "" ? selected_forkop_release(requested_version) :
+        parse_json_object(latest_forkop_release_json());
     if (requested_version != "" && selected == null)
         action_fail("forkop", "install", "Selected release is unavailable or incompatible", FORKOP_VERSION, requested_version);
-    let latest_version = selected != null ? selected.tag_name : latest_forkop_version();
+    let latest_version = as_string(selected?.tag_name);
     if (latest_version == "")
-        latest_version = "unknown";
-    if (latest_version == "unknown")
-        action_fail("forkop", "install", "Failed to resolve Forkop release", FORKOP_VERSION, latest_version);
+        action_fail("forkop", "install", "Failed to resolve Forkop release", FORKOP_VERSION, "unknown");
+    let current_xrust = forkop_release_requires_xrust(latest_version) ?
+        check_forkop_xrust_requirement(latest_version) : "";
 
     if (requested_version == "") write_forkop_latest_version_cache(latest_version, now_seconds());
     init_tmp_dir() || action_fail("forkop", "install", "Failed to create temporary directory", FORKOP_VERSION, latest_version);
@@ -2682,10 +2729,13 @@ function install_forkop(requested_version) {
     let rollback_packages = stage_forkop_rollback_packages();
     if (rollback_packages == null)
         action_fail("forkop", "install", "Cannot cache the exact installed Forkop packages for rollback", FORKOP_VERSION, latest_version);
-    let preflight_error = forkop_package_preflight(backend_file, app_file, i18n_file, rollback_packages, latest_version);
+    let xrust = current_xrust != "" ? stage_forkop_xrust(release, current_xrust, latest_version) : null;
+    if (xrust != null)
+        unshift(rollback_packages, xrust.rollback);
+    let preflight_error = forkop_package_preflight(backend_file, app_file, i18n_file, rollback_packages, latest_version, xrust);
     if (preflight_error != "")
         action_fail("forkop", "install", preflight_error, FORKOP_VERSION, latest_version);
-    if (!preinstall_release_dependencies([ backend_file, app_file, i18n_file ]))
+    if (!preinstall_release_dependencies([ backend_file, app_file, i18n_file, xrust?.target.path || "" ]))
         action_fail("forkop", "install", "Failed to install new dependencies of the Forkop release", FORKOP_VERSION, latest_version);
 
     if (!module_success([ LIB_DIR + "/service/ui.uc", "begin-package-upgrade-quiesce", owner_pid() ]))
@@ -2699,32 +2749,18 @@ function install_forkop(requested_version) {
         action_fail("forkop", "install", "Failed to back up Forkop configuration", FORKOP_VERSION, latest_version);
     updates_log("Forkop configuration backup: " + forkop_configuration_backup);
 
-    // Capture before apk/opkg runs the currently installed package's prerm.
-    // The new lifecycle will accept only this exact PID/starttime for a short
-    // bounded exit wait, then re-run the normal ownership guard.
-    capture_managed_upgrade_sing_box_marker();
+    prepare_forkop_runtime_for_package_upgrade(latest_version);
 
-    if (!stop_old_sing_box_before_forkop_upgrade())
-        action_fail("forkop", "install", "Old sing-box processes have ambiguous ownership or did not stop", FORKOP_VERSION, latest_version);
-
-    // Releases before this fix remove the unmanaged compressed binary in
-    // their prerm. Save it before the package manager invokes that old hook.
-    if (sing_box_runtime_output("read-variant-marker", []) == "extended-compressed") {
-        for (let name in [ "sing-box", "sing-box.init", "libcronet.so" ])
-            remove_file(COMPRESSED_UPGRADE_BACKUP + "/" + name);
-        let service = read_file("/etc/init.d/sing-box");
-        if (!file_nonempty("/usr/bin/sing-box") || index(service, SB_MANAGED_SERVICE_MARKER) < 0 ||
-            !ensure_dir(COMPRESSED_UPGRADE_BACKUP) ||
-            !command_success_from_args([ "cp", "-p", "/usr/bin/sing-box", COMPRESSED_UPGRADE_BACKUP + "/sing-box" ]) ||
-            !command_success_from_args([ "cp", "-p", "/etc/init.d/sing-box", COMPRESSED_UPGRADE_BACKUP + "/sing-box.init" ]) ||
-            (file_exists("/usr/lib/libcronet.so") &&
-             !command_success_from_args([ "cp", "-p", "/usr/lib/libcronet.so", COMPRESSED_UPGRADE_BACKUP + "/libcronet.so" ])))
-            action_fail("forkop", "install", "Failed to preserve compressed sing-box before upgrade", FORKOP_VERSION, latest_version);
+    if (xrust != null) {
+        if (!run_logged("Installing pinned Xrust " + xrust.target.version, pkg_restore_file_command(xrust.target.path)))
+            fail_forkop_package_install(rollback_packages, "Failed to install pinned Xrust", latest_version);
+        let mismatch = forkop_installed_version_mismatch(xrust.target.version, [ "rust-x" ], forkop_package_version_reader);
+        let binary = read_sing_box_binary_version("/usr/bin/sing-box", "");
+        if (mismatch != "" || rust_x_build_version(binary) != release.xrust_version ||
+            !sing_box_runtime_success("write-version-state", [ binary ]))
+            fail_forkop_package_install(rollback_packages,
+                mismatch || "Installed Xrust does not match the Forkop release", latest_version);
     }
-
-    let remaining_sing_box = upgrade_sing_box_processes();
-    if (remaining_sing_box == null || upgrade_sing_box_count(remaining_sing_box) != 0)
-        action_fail("forkop", "install", "Old sing-box processes appeared before package installation", FORKOP_VERSION, latest_version);
 
     // apk refreshes repository indexes for every `add` invocation. Install the
     // release files in one transaction on APK systems to retain dependency
@@ -2787,7 +2823,7 @@ function install_forkop(requested_version) {
 }
 
 function dispatch_sing_box(action, version) {
-    if (action == "install_rust_x") {
+    if (action == "install_rust_x" || action == "update_rust_x") {
         install_package_sing_box(action, false, false, true, version);
         return;
     }
@@ -2951,10 +2987,12 @@ function component_action(component, action, version) {
 
     if (component == "forkop" && action == "check_update")
         check_forkop();
-    else if (component == "forkop" && action == "install")
+    else if (component == "forkop" && (action == "install" ||
+             (action == "install_pinned_xrust" && forkop_release_requires_xrust(version))))
         install_forkop(version);
     else if (component == "sing_box" && (action == "check_update" || action == "install" ||
-        action == "install_rust_x" || action == "install_x" || action == "install_tiny" || action == "install_stable"))
+        action == "install_rust_x" || action == "update_rust_x" || action == "install_x" ||
+        action == "install_tiny" || action == "install_stable"))
         dispatch_sing_box(action, version);
     else if (component == "zapret_manager" && (action == "install" || action == "migrate"))
         install_zapret_manager(action);

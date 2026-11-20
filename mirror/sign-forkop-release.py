@@ -22,6 +22,10 @@ def validate(directory, manifest, signed=False):
     version = manifest['version']
     if not re.fullmatch(r'\d+\.\d+\.\d+(-canary\.\d+)?', version):
         raise ValueError('Invalid Forkop version')
+    if int(version.split('.', 1)[0]) >= 3:
+        xrust_version = manifest.get('xrust_version')
+        if not isinstance(xrust_version, str) or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', xrust_version):
+            raise ValueError('Expected an exact Xrust version')
     if not re.fullmatch(r'[0-9a-f]{40}', manifest['source_commit']):
         raise ValueError('Invalid source commit')
     expected = {f'{p}_{version}.{ext}' for p in PACKAGES for ext in ('apk', 'ipk')}

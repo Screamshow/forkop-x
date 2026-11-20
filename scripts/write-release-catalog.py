@@ -25,6 +25,12 @@ def build_catalog(root):
             match = VERSION.fullmatch(version)
             if not match or manifest.parent.name != version:
                 continue
+            needs_xrust_pin = int(match[1]) >= 3
+            xrust_version = release.get("xrust_version")
+            if needs_xrust_pin and (
+                not isinstance(xrust_version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", xrust_version)
+            ):
+                raise ValueError("Expected an exact Xrust version")
             assets = []
             for ext in ("apk", "ipk"):
                 if not any(a.get("name", "").endswith("." + ext) for a in release["assets"]):
@@ -43,9 +49,12 @@ def build_catalog(root):
                 assets.extend(group)
             if not assets:
                 continue
-            releases.append({"tag_name": version, "channel": "canary" if match[4] else "stable",
+            entry = {"tag_name": version, "channel": "canary" if match[4] else "stable",
                 "html_url": "/forkop/updates/" + manifest.parent.relative_to(root).as_posix() + "/",
-                "assets": assets})
+                "assets": assets}
+            if needs_xrust_pin:
+                entry["xrust_version"] = xrust_version
+            releases.append(entry)
         except (OSError, ValueError, KeyError, StopIteration, TypeError) as error:
             print(f"Skipping {manifest}: {error}", file=sys.stderr)
     def version_key(release):

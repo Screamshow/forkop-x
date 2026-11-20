@@ -40,7 +40,7 @@ ucode -e 'let fs = require("fs"); let s = fs.readfile(ARGV[0]);
 let a = index(s, "function install_forkop(");
 let start = index(s, "    capture_forkop_running_state();", a);
 let backup = index(s, "    forkop_configuration_backup = save_forkop_configuration_backup", a);
-let mutation = index(s, "    if (!stop_old_sing_box_before_forkop_upgrade())", a);
+let mutation = index(s, "    prepare_forkop_runtime_for_package_upgrade(latest_version);", a);
 if (!(start > a && backup > start && mutation > backup)) exit(1);' \
   "$ROOT/forkop/files/usr/lib/components/action.uc" || fail 'common LuCI backup missing before mutation'
 

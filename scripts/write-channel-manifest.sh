@@ -29,6 +29,23 @@ if [[ "$channel" == stable && ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
 fi
 
 release_url="${release_url%/}"
+xrust_version=""
+major="${version%%.*}"
+if (( 10#$major >= 3 )); then
+  xrust_version="$(python3 - "$artifact_dir/forkop-manifest.json" "$version" <<'PY'
+import json
+from pathlib import Path
+import re
+import sys
+
+manifest = json.loads(Path(sys.argv[1]).read_text())
+pin = manifest.get('xrust_version')
+if manifest.get('version') != sys.argv[2] or not isinstance(pin, str) or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', pin):
+    sys.exit('Expected a matching Forkop manifest with an exact Xrust version')
+print(pin)
+PY
+)"
+fi
 mkdir -p "$output_dir"
 
 asset_json=()
@@ -44,7 +61,11 @@ done
 
 tmp="$output_dir/.${channel}.json.$$"
 {
-  printf '{\n  "channel": "%s",\n  "tag_name": "%s",\n  "html_url": "%s/",\n  "assets": [\n' "$channel" "$version" "$release_url"
+  printf '{\n  "channel": "%s",\n  "tag_name": "%s",\n  "html_url": "%s/",\n' "$channel" "$version" "$release_url"
+  if [[ -n "$xrust_version" ]]; then
+    printf '  "xrust_version": "%s",\n' "$xrust_version"
+  fi
+  printf '  "assets": [\n'
   for i in "${!asset_json[@]}"; do
     printf '%s' "${asset_json[$i]}"
     [[ "$i" -lt $((${#asset_json[@]} - 1)) ]] && printf ','

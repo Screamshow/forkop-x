@@ -31,6 +31,7 @@ CORE_PACKAGE_SPACE_KB=0
 
 FORKOP_RELEASE_JSON=""
 FORKOP_RELEASE_TAG=""
+FORKOP_XRUST_VERSION=""
 FORKOP_BACKEND_URL=""
 FORKOP_BACKEND_SHA256=""
 FORKOP_BACKEND_NAME=""
@@ -87,9 +88,10 @@ Installs or updates Forkop packages:
   - luci-i18n-forkop-ru (available when Russian is selected in LuCI)
 
 Proxy core policy:
-  - update an installed Xrust from the Forkop mirror after updating Forkop
-  - preserve other installed sing-box variants
-  - install Xrust from the Forkop mirror when no core is installed
+  - Forkop 3.x installs the Xrust version specified by its release
+  - an existing installation must already use Xrust before updating to 3.x
+  - Forkop 2.x preserves installed sing-box variants and updates installed Xrust
+  - Forkop 2.x installs Xrust when no proxy core is installed
   - run without interactive questions; stop if storage is insufficient
 
 Options:
@@ -1615,12 +1617,13 @@ function asset_matches(name, kind, ext, version) {
 }
 
 // Mirror catalog of a core package (rust-x or sing-box-x) -> download plan.
-function core_package_plan(name, arch, format, base) {
+function core_package_plan(name, arch, format, base, version) {
     if (name != "rust-x" && name != "sing-box-x")
         exit(1);
     let catalog = read_stdin_json();
     if (catalog?.schema != 1 || catalog?.name != name ||
-        match(as_string(catalog.version), /^[0-9]+[.][0-9]+[.][0-9]+$/) == null)
+        match(as_string(catalog.version), /^[0-9]+[.][0-9]+[.][0-9]+$/) == null ||
+        (version != null && version != "" && catalog.version !== version))
         exit(1);
     for (let asset in catalog.assets || []) {
         if (asset.package != name || asset.format != format ||
@@ -1631,6 +1634,12 @@ function core_package_plan(name, arch, format, base) {
             asset.url != base + "/forkop/" + name + "/releases/" + catalog.version + "/" + asset.name ||
             match(as_string(asset.sha256), /^[a-f0-9]{64}$/) == null || int(asset.installed_size) <= 0 || int(asset.size) <= 0)
             exit(1);
+        if (version != null && version != "") {
+            let expected = version + (format == "apk" ? "-r" : "-") + catalog.package_revision;
+            if (type(catalog.package_revision) != "int" || catalog.package_revision <= 0 ||
+                asset.version !== expected || asset.name !== name + "_" + expected + "_" + asset.architecture + "." + format)
+                exit(1);
+        }
         print(asset.url, "\t", asset.sha256, "\t", asset.size, "\t", asset.installed_size, "\n");
         return;
     }
@@ -1641,6 +1650,18 @@ function release_tag() {
     let release = read_stdin_json();
     if (type(release) == "object" && release.tag_name != null)
         print(as_string(release.tag_name), "\n");
+}
+
+function release_xrust_version() {
+    let release = read_stdin_json();
+    if (type(release?.tag_name) != "string" || !release_version_valid(release.tag_name))
+        exit(1);
+    if (int(split(release.tag_name, ".")[0]) < 3)
+        return;
+    if (type(release.xrust_version) != "string" ||
+        match(release.xrust_version, /^[0-9]+[.][0-9]+[.][0-9]+$/) == null)
+        exit(1);
+    print(release.xrust_version, "\n");
 }
 
 function release_asset_url(kind, ext) {
@@ -1679,6 +1700,8 @@ let mode = ARGV[0] || "";
 
 if (mode == "release-tag")
     release_tag();
+else if (mode == "release-xrust-version")
+    release_xrust_version();
 else if (mode == "release-asset-url")
     release_asset_url(ARGV[1], ARGV[2]);
 else if (mode == "release-asset-sha256")
@@ -1727,7 +1750,13 @@ else if (mode == "installer-stop-current")
 else if (mode == "managed-upgrade-sing-box-marker")
     managed_upgrade_sing_box_marker(ARGV[1]);
 else if (mode == "core-package-plan")
-    core_package_plan(ARGV[1], ARGV[2], ARGV[3], ARGV[4]);
+    core_package_plan(ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5]);
+else if (mode == "xrust-update-unsupported") {
+    let result = read_stdin_json();
+    exit(result?.success === false && result.kind == "component" &&
+        result.component == "sing_box" && result.action == "update_rust_x" &&
+        result.message == "Unknown component action" ? 0 : 1);
+}
 else if (mode == "sing-box-exe-path-fixture")
     exit(sing_box_exe_path(ARGV[1]) ? 0 : 1);
 else
@@ -2597,13 +2626,32 @@ update_existing_xrust() {
     # The backend validates the mirror package and stages exact core rollback.
     # Do not roll back Forkop after a successful core change or core recovery.
     msg "Updating installed Xrust through the Forkop backend"
-    if ! /usr/bin/forkop component_action sing_box install_rust_x >"$TMP_DIR/xrust-update.json" 2>&1; then
+    if ! /usr/bin/forkop component_action sing_box update_rust_x >"$TMP_DIR/xrust-update.json" 2>&1; then
+        # Older packages share this installer and may lack the guarded action.
+        if install_json_ucode xrust-update-unsupported <"$TMP_DIR/xrust-update.json"; then
+            msg "This Forkop release does not support automatic Xrust updates"
+            return 0
+        fi
         cat "$TMP_DIR/xrust-update.json" >&2 2>/dev/null || true
         warn "Forkop was installed, but Xrust update failed; review the component recovery result above"
         post_install
         exit 1
     fi
     cat "$TMP_DIR/xrust-update.json"
+}
+
+upgrade_forkop_with_pinned_xrust() {
+    [ "$INSTALL_MODE" = "update" ] && [ -x /usr/bin/forkop ] ||
+        fail "Install Forkop X 2.7.6 and switch to Xrust before updating to $FORKOP_RELEASE_TAG"
+
+    # Older backends reject the explicit action before changing packages.
+    msg "Updating Forkop $FORKOP_RELEASE_TAG with Xrust $FORKOP_XRUST_VERSION"
+    if ! FORKOP_MIRROR_BASE_URL="$MIRROR_BASE_URL" /usr/bin/forkop \
+        component_action forkop install_pinned_xrust "$FORKOP_RELEASE_TAG" >"$TMP_DIR/pinned-update.json" 2>&1; then
+        cat "$TMP_DIR/pinned-update.json" >&2
+        fail "Forkop update failed. This update requires Forkop X 2.7.6 or later with Xrust support."
+    fi
+    cat "$TMP_DIR/pinned-update.json"
 }
 
 # Check the mirror catalog of the core package the backend will install and
@@ -2617,9 +2665,14 @@ prepare_core_package_plan() {
     esac
     format=ipk
     [ "$PKG_IS_APK" -eq 0 ] || format=apk
-    http_get "$MIRROR_BASE_URL/forkop/$core_package/latest.json" > "$TMP_DIR/core-catalog.json" ||
+    core_catalog="latest.json"
+    if [ -n "$FORKOP_XRUST_VERSION" ]; then
+        core_catalog="releases/$FORKOP_XRUST_VERSION/manifest.json"
+    fi
+    http_get "$MIRROR_BASE_URL/forkop/$core_package/$core_catalog" > "$TMP_DIR/core-catalog.json" ||
         fail "Cannot read the $core_label mirror catalog"
     install_json_ucode core-package-plan "$core_package" "$(read_openwrt_release_value DISTRIB_ARCH)" "$format" "$MIRROR_BASE_URL" \
+        "$FORKOP_XRUST_VERSION" \
         < "$TMP_DIR/core-catalog.json" > "$TMP_DIR/core-plan.tsv" ||
         fail "$core_label is unavailable for this architecture in the Forkop mirror"
     IFS="$(printf '\t')" read -r core_url core_hash core_archive_bytes core_installed_bytes < "$TMP_DIR/core-plan.tsv"
@@ -2677,7 +2730,9 @@ install_selected_sing_box() {
 
     [ -x /usr/bin/forkop ] || fail "forkop backend must be installed before sing-box component action"
     msg "Installing the selected proxy core through the Forkop backend"
-    if ! /usr/bin/forkop component_action sing_box "$action" >"$output_file" 2>&1; then
+    set --
+    [ -z "$FORKOP_XRUST_VERSION" ] || set -- "$FORKOP_XRUST_VERSION"
+    if ! /usr/bin/forkop component_action sing_box "$action" "$@" >"$output_file" 2>&1; then
         cat "$output_file" >&2 2>/dev/null || true
         fail "Failed to install the selected proxy core"
     fi
@@ -2956,6 +3011,19 @@ main() {
     ensure_bootstrap_ucode_runtime
 
     resolve_forkop_release
+    FORKOP_XRUST_VERSION="$(printf '%s' "$FORKOP_RELEASE_JSON" | install_json_ucode release-xrust-version 2>/dev/null)" ||
+        fail "Missing or invalid Xrust version for Forkop $FORKOP_RELEASE_TAG"
+    if [ -n "$FORKOP_XRUST_VERSION" ]; then
+        if [ "$INSTALL_MODE" != "clean" ]; then
+            upgrade_forkop_with_pinned_xrust
+            return 0
+        fi
+        if sing_box_is_present && ! pkg_is_installed rust-x; then
+            fail "Forkop $FORKOP_RELEASE_TAG requires Xrust. Switch from the installed sing-box core first."
+        fi
+        SING_BOX_INSTALL_VARIANT="rust-x"
+        UPDATE_EXISTING_XRUST=0
+    fi
     select_sing_box_for_release
     msg "Downloading Forkop X packages before making system changes"
     download_forkop_packages

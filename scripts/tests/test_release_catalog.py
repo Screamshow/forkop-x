@@ -11,7 +11,7 @@ spec.loader.exec_module(catalog)
 
 
 class CatalogTests(unittest.TestCase):
-    def release(self, root, version):
+    def release(self, root, version, *, xrust_version=None):
         folder = root / ('canary/releases' if '-canary.' in version else 'releases') / version
         folder.mkdir(parents=True)
         assets = []
@@ -20,7 +20,10 @@ class CatalogTests(unittest.TestCase):
                 name = f'{package}_{version}.{ext}'
                 (folder / name).write_bytes(name.encode())
                 assets.append({'name': name, 'sha256': hashlib.sha256(name.encode()).hexdigest()})
-        (folder / 'release.json').write_text(json.dumps({'tag_name': version, 'assets': assets}))
+        manifest = {'tag_name': version, 'assets': assets}
+        if xrust_version is not None:
+            manifest['xrust_version'] = xrust_version
+        (folder / 'release.json').write_text(json.dumps(manifest))
         return folder
 
     def test_integrity_order_and_older_releases(self):
@@ -36,6 +39,20 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual([r['tag_name'] for r in releases], ['1.14.7', '1.14.7-canary.10', '1.14.7-canary.2', '1.3.19'])
             self.assertEqual(len(releases[0]['assets']), 6)
             self.assertEqual(releases[1]['assets'][0]['browser_download_url'], '/forkop/updates/canary/releases/1.14.7-canary.10/forkop_1.14.7-canary.10.apk')
+
+    def test_archived_releases_preserve_their_own_xrust_pin(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.release(root, '2.7.6')
+            self.release(root, '3.0.0', xrust_version='0.0.44')
+            self.release(root, '3.0.1-canary.1', xrust_version='0.0.45')
+            self.release(root, '3.0.1')
+            self.release(root, '3.0.2', xrust_version='latest')
+            self.release(root, '3.0.3', xrust_version=44)
+            releases = catalog.build_catalog(root)['releases']
+            self.assertEqual([r['tag_name'] for r in releases], ['3.0.1-canary.1', '3.0.0', '2.7.6'])
+            self.assertEqual([r.get('xrust_version') for r in releases], ['0.0.45', '0.0.44', None])
+            self.assertNotIn('xrust_version', releases[2])
 
     def test_missing_translation_excludes_release(self):
         with tempfile.TemporaryDirectory() as temp:

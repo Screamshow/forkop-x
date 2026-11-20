@@ -32,6 +32,22 @@ signing secret or self-hosted runner is required. Forkop releases include
 `forkop-manifest.json`, `forkop-apk.pem` and `SHA256SUMS`; Rust X retains its
 existing `openwrt-manifest.json` format.
 
+For Forkop 3.x, publish the required Xrust release first and pass its exact
+version with `--xrust-version`, for example `--forkop 3.0.0 --xrust-version 0.0.44`.
+Each release keeps that pin in `forkop-manifest.json`. A resumed public
+release uses its existing pin.
+
+Before the first 3.x publication, update the mirror's host-side
+`/usr/local/sbin/publish-forkop-feed` and `/usr/local/sbin/sync-forkop-canary`
+to include the validated `xrust_version` from that manifest in the staged
+`release.json` before moving the corresponding channel pointer. The canary
+sync needs to fetch `forkop-manifest.json` from the same GitHub release and
+verify its size and digest. The checked-in `scripts/write-channel-manifest.sh`
+supports generating the channel metadata from the staged packages and
+manifest. Deploy the updated `scripts/write-release-catalog.py` to preserve
+the pin for version selection. The operator command checks the public pin
+against the release and rejects a mismatch.
+
 After publication the command runs the existing canary mirror service,
 publishes the signed stable packages through the existing feed publisher,
 or publishes Rust X's signed directory. It downloads the public packages and

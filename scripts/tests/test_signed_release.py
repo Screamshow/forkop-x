@@ -39,8 +39,10 @@ class SignatureGateTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name)
-        version = '2.2.3'
-        self.manifest = dict(version=version, source_commit='a' * 40, apk_signed=False, assets=[])
+        self.manifest = self.make_manifest('2.2.3')
+
+    def make_manifest(self, version):
+        manifest = dict(version=version, source_commit='a' * 40, apk_signed=False, assets=[])
         for package in signer.PACKAGES:
             for ext in ('apk', 'ipk'):
                 name = f'{package}_{version}.{ext}'
@@ -49,12 +51,23 @@ class SignatureGateTests(unittest.TestCase):
                     control = f'Package: {package}\nVersion: {version}\nArchitecture: all\n'.encode()
                     data = archive('./control.tar.gz', archive('./control', control))
                 (self.directory / name).write_bytes(data)
-                self.manifest['assets'].append(dict(file=name, package=package, format=ext,
+                manifest['assets'].append(dict(file=name, package=package, format=ext,
                     architecture='noarch' if ext == 'apk' else 'all', version=signer.apk_version(version) if ext == 'apk' else version,
                     size=len(data), sha256=hashlib.sha256(data).hexdigest()))
+        return manifest
 
     def test_accepts_complete_release_with_correct_ipk_identity(self):
         signer.validate(self.directory, self.manifest)
+
+    def test_forkop_3_manifest_requires_an_exact_xrust_release(self):
+        manifest = self.make_manifest('3.0.0')
+        with self.assertRaisesRegex(ValueError, 'exact Xrust'):
+            signer.validate(self.directory, manifest)
+        manifest['xrust_version'] = 'latest'
+        with self.assertRaisesRegex(ValueError, 'exact Xrust'):
+            signer.validate(self.directory, manifest)
+        manifest['xrust_version'] = '0.0.44'
+        signer.validate(self.directory, manifest)
 
     def test_rejects_corruption(self):
         (self.directory / self.manifest['assets'][0]['file']).write_bytes(b'corrupted')
@@ -122,7 +135,7 @@ class SignatureGateTests(unittest.TestCase):
         self.assertEqual(release.release_source_ref({'draft': False, 'tag_name': '2.2.3-canary.1'}), '2.2.3-canary.1')
 
     def operation(self):
-        return release.Release(SimpleNamespace(output=self.directory, ssh_key=Path('test-key'), timeout=1, resume=True), 'forkop', '2.2.3-canary.1')
+        return release.Release(SimpleNamespace(output=self.directory, ssh_key=Path('test-key'), timeout=1, resume=True, xrust_version=None), 'forkop', '2.2.3-canary.1')
 
     def test_public_release_cannot_be_resigned(self):
         operation = self.operation()

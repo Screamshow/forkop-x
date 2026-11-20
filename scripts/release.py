@@ -112,6 +112,7 @@ def wait_mirror(url, expected, timeout):
 class Release:
     def __init__(self, args, project, version):
         self.args, self.project, self.version = args, project, version
+        self.xrust_version = args.xrust_version if project == 'forkop' else None
         self.repo = 'Screamshow/' + ('forkop-x' if project == 'forkop' else 'xrust')
         self.tag = version if project == 'forkop' else 'rust-x-v' + version
         self.directory = (args.output / project / self.tag).resolve()
@@ -127,6 +128,9 @@ class Release:
         self.existing = found[0] if found else None
         if self.existing and not self.args.resume:
             raise ValueError(f'{self.tag} already exists; use --resume to continue verification/sync')
+        if (self.project == 'forkop' and version_key(self.version)[0] >= 3 and
+                (not self.existing or self.existing['draft']) and self.xrust_version is None):
+            raise ValueError('A new Forkop 3.x release or draft requires --xrust-version')
         self.source = gh('api', f'repos/{self.repo}/commits/main')['sha']
         if self.existing:
             # A draft created by workflow_dispatch may not create its tag until
@@ -210,6 +214,8 @@ class Release:
                                    architecture='noarch' if ext == 'apk' else 'all', size=path.stat().st_size, sha256=digest(path)))
         verify_uploaded(release, self.directory, [a['file'] for a in assets])
         manifest = dict(version=self.version, source_commit=self.source, apk_signed=False, assets=assets)
+        if self.xrust_version is not None:
+            manifest['xrust_version'] = self.xrust_version
         signer.validate(self.directory, manifest)
         (self.directory / 'forkop-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
         remote = f'/srv/mirror/build/forkop-finalize/{self.tag}-{self.source[:12]}'
@@ -222,8 +228,9 @@ class Release:
             run(*self.scp, f'{HOST}:{remote}/{name}', self.directory / name)
         final = json.loads((self.directory / 'forkop-manifest.json').read_text())
         signer.validate(self.directory, final, signed=True)
-        if final['source_commit'] != self.source or final['version'] != self.version:
-            raise ValueError('Signing changed the source commit/version')
+        if (final['source_commit'] != self.source or final['version'] != self.version or
+                final.get('xrust_version') != self.xrust_version):
+            raise ValueError('Signing changed the source commit or release versions')
         if not self.current()['isDraft']:
             raise ValueError('Release became public during signing; refusing to replace assets')
         run('gh', 'release', 'upload', self.tag, '-R', self.repo, '--clobber', *[self.directory / n for n in names])
@@ -253,6 +260,8 @@ class Release:
                 load(ROOT / 'mirror/sign-forkop-release.py').validate(self.directory, manifest, signed=True)
                 if manifest['source_commit'] != self.source or manifest['version'] != self.version:
                     raise ValueError('Public source/version mismatch')
+                if self.xrust_version is not None and manifest.get('xrust_version') != self.xrust_version:
+                    raise ValueError('Published Forkop release has a different Xrust pin')
             else:
                 manifest = load(XRUST_FINALIZE).validate(self.directory, self.version, signed=True)
                 if manifest['binary_source_commit'] != self.source:
@@ -299,10 +308,10 @@ class Release:
         else:
             canary = '-canary.' in self.version
             service = 'forkop-canary-mirror.service' if canary else 'forkop-mirror.service'
+            manifest = json.loads((self.directory / 'forkop-manifest.json').read_text())
             if not canary:
                 remote = f'/srv/mirror/build/forkop-stable/{self.tag}-{self.source[:12]}'
                 self.remote(f'umask 077; mkdir -p {remote}')
-                manifest = json.loads((self.directory / 'forkop-manifest.json').read_text())
                 names = [a['file'] for a in manifest['assets']] + ['forkop-manifest.json', 'forkop-apk.pem', 'SHA256SUMS']
                 run(*self.scp, ROOT / 'mirror/sign-forkop-release.py', ROOT / 'mirror/publish-forkop-stable.py',
                     *[self.directory / n for n in names], f'{HOST}:{remote}/')
@@ -325,6 +334,8 @@ class Release:
             entry = next(r for r in catalog['releases'] if r['tag_name'] == self.tag)
             if latest != archived or len(latest['assets']) != 6:
                 raise ValueError('Forkop mirror manifest mismatch')
+            if any(item.get('xrust_version') != manifest.get('xrust_version') for item in (latest, entry)):
+                raise ValueError('Forkop mirror Xrust version differs from the published release')
             for asset in latest['assets']:
                 data = fetch(BASE + asset['browser_download_url'])
                 if hashlib.sha256(data).hexdigest() != asset['sha256'] or asset['sha256'] != digest(self.directory / asset['name']):
@@ -338,6 +349,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--forkop', metavar='VERSION')
     parser.add_argument('--rust', metavar='VERSION')
+    parser.add_argument('--xrust-version', metavar='VERSION', help='Exact Xrust release for Forkop 3.x')
     parser.add_argument('--ssh-key', type=Path, default=DEFAULT_SSH)
     parser.add_argument('--output', type=Path, default=ROOT / 'artifacts/signed-releases')
     parser.add_argument('--timeout', type=int, default=1800)
@@ -354,6 +366,9 @@ def main():
             if not re.fullmatch(pattern, version):
                 parser.error(f'Invalid {project} version')
             releases.append(Release(args, project, version))
+    if args.xrust_version is not None and (not args.forkop or version_key(args.forkop)[0] < 3 or
+            not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', args.xrust_version)):
+        parser.error('--xrust-version requires Forkop 3.x and an exact x.y.z Xrust release')
     if args.rust and not XRUST_FINALIZE.is_file():
         parser.error('Xrust main checkout required at artifacts/xrust')
     for release in releases:

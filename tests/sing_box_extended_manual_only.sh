@@ -122,4 +122,61 @@ grep -Fq 'if (previous_variant == "extended")
         return restore_sing_box_backup(backup_binary) && restore_extended_package_files();' "$ACTION" ||
   fail 'a failed change does not restore the sing-box-extended files'
 
+UPGRADE_STUBS='
+const COMPRESSED_UPGRADE_BACKUP = "/handoff";
+const SB_MANAGED_SERVICE_MARKER = "managed init";
+const FORKOP_VERSION = "2.7.5";
+let tmp_dir = "/owned", events = [], fail_copy = "", stopped = false;
+let variant = "extended-compressed", cronet = true, error = "";
+let fs = {
+    rename: function(src, dst) {
+        assert(src == "/owned/compressed-upgrade" && dst == "/handoff", "invalid package hook handoff");
+        push(events, "publish");
+        return true;
+    }
+};
+function command_success_from_args(args) {
+    assert(args[0] == "cp" && !stopped, "backup attempted after the service stopped");
+    push(events, args[2]);
+    return args[2] != fail_copy;
+}
+function file_nonempty(path) { return path == "/usr/bin/sing-box"; }
+function read_file(path) { return SB_MANAGED_SERVICE_MARKER; }
+function ensure_dir(path) { return path == "/owned/compressed-upgrade"; }
+function file_exists(path) { return path == "/usr/lib/libcronet.so" && cronet; }
+function sing_box_runtime_output() { return variant; }
+function capture_managed_upgrade_sing_box_marker() { push(events, "marker"); }
+function stop_old_sing_box_before_forkop_upgrade() { stopped = true; push(events, "stop"); return true; }
+function upgrade_sing_box_processes() { return {}; }
+function upgrade_sing_box_count() { return 0; }
+function action_fail(component, action, message) { error = message; die(message); }
+'
+run_case "$ACTION" "$UPGRADE_STUBS" 'clear_compressed_upgrade_backup stage_compressed_upgrade_backup prepare_forkop_runtime_for_package_upgrade' '
+for (let path in [ "/usr/bin/sing-box", "/etc/init.d/sing-box", "/usr/lib/libcronet.so" ]) {
+    fail_copy = path;
+    error = "";
+    events = [];
+    try { prepare_forkop_runtime_for_package_upgrade("2.7.6"); }
+    catch (e) { assert(error == "Failed to preserve compressed sing-box before upgrade", e.message); }
+    assert(error != "" && !stopped && index(events, "publish") < 0 && index(events, "marker") < 0,
+        "incomplete compressed backup was published or interrupted the service");
+}
+fail_copy = "";
+events = [];
+prepare_forkop_runtime_for_package_upgrade("2.7.6");
+assert(join(" ", events) == "/usr/bin/sing-box /etc/init.d/sing-box /usr/lib/libcronet.so publish marker stop",
+    "complete backup did not precede service stop");
+events = [];
+stopped = false;
+cronet = false;
+prepare_forkop_runtime_for_package_upgrade("2.7.6");
+assert(join(" ", events) == "/usr/bin/sing-box /etc/init.d/sing-box publish marker stop",
+    "Cronet is optional");
+events = [];
+stopped = false;
+variant = "extended";
+prepare_forkop_runtime_for_package_upgrade("2.7.6");
+assert(join(" ", events) == "marker stop", "non-compressed core unnecessarily staged binary files");
+' || fail 'compressed upgrade preparation ordering'
+
 echo 'sing-box-extended is supported only as a manual installation: OK'

@@ -90,6 +90,7 @@ ops/deployed-nginx/
 !/tests/support_ssh_vm.sh
 !/tests/vm_support_report_http.sh
 !/tests/forkop_release_plan.sh
+!/tests/forkop_xrust_upgrade.sh
 !/tests/repository_package_stage_vm.sh
 !/tests/install_i18n_default.sh
 !/tests/installer_configuration_backup.sh

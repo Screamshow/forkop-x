@@ -78,3 +78,88 @@ for arch in aarch64_generic mipsel_24kc; do
     grep -q "$arch" "$work/platform-plan"
   done
 done
+
+# Pinning uses the release version and requires an immutable matching archive.
+pin() { printf '%s\n' "$1" | ucode "$helper" release-xrust-version; }
+[ -z "$(pin '{"tag_name":"2.7.6-canary.1"}')" ]
+[ "$(pin '{"tag_name":"3.0.0","xrust_version":"0.0.26"}')" = 0.0.26 ]
+for release in '{"tag_name":"3.0.0"}' \
+    '{"tag_name":"3.0.0","xrust_version":26}' \
+    '{"tag_name":"3.0.0","xrust_version":"latest"}' \
+    '{"tag_name":"3.0.0","xrust_version":"0.0.26-r1"}'; do
+  if pin "$release" > /dev/null; then
+    fail "Unexpectedly accepted pin in $release"
+  fi
+done
+
+sed 's/"assets":\[{/"assets":[{"version":"0.0.26-r1",/' "$work/rust-x.json" > "$work/pinned.json"
+sed -e 's/0.0.26-r1/0.0.26-1/g' -e 's/"apk"/"ipk"/g' -e 's/[.]apk/.ipk/g' "$work/pinned.json" > "$work/pinned-ipk.json"
+ucode "$helper" core-package-plan rust-x aarch64_cortex-a53 ipk https://mirror.51343.ru 0.0.26 < "$work/pinned-ipk.json" > /dev/null
+if ucode "$helper" core-package-plan rust-x aarch64 apk https://mirror.51343.ru 0.0.44 < "$work/pinned.json"; then
+  fail 'Accepted an archive for a different Xrust release'
+fi
+
+sed -e '/^main "\$@"$/d' -e "s@/usr/bin/forkop@$work/forkop@g" "$ROOT/install.sh" > "$work/installer.sh"
+. "$work/installer.sh"
+TMP_DIR="$work"
+MIRROR_BASE_URL=https://mirror.51343.ru
+FORKOP_XRUST_VERSION=0.0.26
+SING_BOX_INSTALL_VARIANT=rust-x
+PKG_IS_APK=1
+read_openwrt_release_value() { printf '%s\n' aarch64; }
+temporary_available_space_kb() { printf '%s\n' 65536; }
+http_get() {
+  [ "$1" = "$MIRROR_BASE_URL/forkop/rust-x/releases/0.0.26/manifest.json" ] ||
+    fail "Unexpected Xrust metadata URL $1"
+  cat "$work/pinned.json"
+}
+prepare_core_package_plan
+[ "$core_url" = "$MIRROR_BASE_URL/forkop/rust-x/releases/0.0.26/rust-x_0.0.26-r1_aarch64_cortex-a53.apk" ]
+
+cat > "$work/forkop" <<'SH'
+#!/bin/sh
+printf '%s\n' "$*" >> "$BACKEND_LOG"
+if [ "${OLD_BACKEND:-0}" -eq 1 ]; then
+    printf '%s\n' '{"success":false,"message":"Unknown component action"}'
+    exit 1
+fi
+printf '%s\n' '{"success":true}'
+SH
+chmod +x "$work/forkop"
+export BACKEND_LOG="$work/backend.log"
+install_selected_sing_box > /dev/null
+grep -Fxq 'component_action sing_box install_rust_x 0.0.26' "$BACKEND_LOG"
+
+# Use the actual main dispatch. Stub setup and reject a fallback into the old
+# standalone upgrade path when the installed backend lacks the pinned action.
+main_update() (
+  check_root() { :; }
+  init_tmp_dir() { :; }
+  cleanup() { :; }
+  detect_fetcher() { :; }
+  sync_time() { :; }
+  check_system() { :; }
+  configure_package_mirror() { :; }
+  detect_legacy_installation() { :; }
+  detect_install_mode() { INSTALL_MODE=update; }
+  decide_i18n_installation() { :; }
+  select_sing_box_installation() { :; }
+  pkg_list_update() { :; }
+  ensure_bootstrap_ucode_runtime() { :; }
+  resolve_forkop_release() {
+    FORKOP_RELEASE_TAG=3.0.0
+    FORKOP_RELEASE_JSON='{"tag_name":"3.0.0","xrust_version":"0.0.26"}'
+  }
+  download_forkop_packages() { fail 'Unexpected standalone package installation'; }
+  main
+)
+main_update > /dev/null
+grep -Fxq 'component_action forkop install_pinned_xrust 3.0.0' "$BACKEND_LOG"
+if OLD_BACKEND=1 main_update > "$work/older-backend" 2>&1; then
+  fail 'An older backend accepted a pinned Forkop upgrade'
+fi
+grep -Fq 'Unknown component action' "$work/older-backend"
+grep -Fq 'requires Forkop X 2.7.6 or later' "$work/older-backend"
+! grep -Fq 'Unexpected standalone package installation' "$work/older-backend"
+
+echo 'Installer pinned Xrust selection and upgrade dispatch: OK'
