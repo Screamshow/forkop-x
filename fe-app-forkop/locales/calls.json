@@ -708,13 +708,6 @@
     ]
   },
   {
-    "call": "Configure User-Agent in the item settings",
-    "key": "Configure User-Agent in the item settings",
-    "places": [
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3750"
-    ]
-  },
-  {
     "call": "Confirm version change",
     "key": "Confirm version change",
     "places": [
@@ -2518,6 +2511,7 @@
     "call": "Invalid URL format",
     "key": "Invalid URL format",
     "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3990",
       "src/validators/validateUrl.ts:9",
       "src/validators/validateUrl.ts:35",
       "src/validators/validateUrl.ts:38"

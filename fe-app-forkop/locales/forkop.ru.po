@@ -302,9 +302,6 @@ msgstr "Условия"
 msgid "Config File Path"
 msgstr "Путь к файлу конфигурации"
 
-msgid "Configure User-Agent in the item settings"
-msgstr "Настройте User-Agent в настройках элемента"
-
 msgid "Confirm version change"
 msgstr "Подтверждение смены версии"
 

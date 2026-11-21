@@ -13,6 +13,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 ROOT = Path(__file__).resolve().parents[1]
 LIB = ROOT / "forkop/files/usr/lib"
 requests = []
+FALLBACK_USER_AGENT = "sing-box/1.14.2"
+runtime_rejected = False
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -22,13 +24,28 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         requests.append((self.path, dict(self.headers)))
+        fallback = self.headers.get("User-Agent") == FALLBACK_USER_AGENT
+        if "/rate-limit" in self.path:
+            self.send_error(429)
+            return
         if "/fail" in self.path:
             self.send_error(503)
             return
-        if "/invalid" in self.path:
-            self.send_response(200)
+        if "/fallback-rejected" in self.path and not fallback:
+            self.send_error(403)
+            return
+        if "/fallback-empty" in self.path and not fallback:
+            self.send_response(204)
             self.end_headers()
-            self.wfile.write(b"invalid provider response")
+            return
+        if "/invalid" in self.path or ("/fallback-invalid" in self.path and not fallback) or (
+                "/fallback-runtime" in self.path and (not fallback or runtime_rejected)):
+            body = b"invalid provider response"
+            self.send_response(200)
+            self.send_header("profile-title", "Rejected profile")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
         if "/too-large" in self.path:
             self.send_response(200)
@@ -45,6 +62,8 @@ class Handler(BaseHTTPRequestHandler):
         if "/gzip" in self.path:
             body = gzip.compress(body)
         self.send_response(200)
+        if fallback:
+            self.send_header("profile-title", "Fallback profile")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -124,6 +143,7 @@ with tempfile.TemporaryDirectory(prefix="forkop-preview-test-") as temp:
 
         prefix, profile = download("proxy", "http://preview.invalid/feed?token=secret", "proxy")
         assert "error" not in profile, profile
+        assert len(requests) == 1, requests
         assert requests[-1][0] == "http://preview.invalid/feed?token=secret"
         assert requests[-1][1]["User-Agent"].startswith("INCY/")
         assert requests[-1][1]["X-HWID"] == profile["hwid"]
@@ -134,7 +154,7 @@ with tempfile.TemporaryDirectory(prefix="forkop-preview-test-") as temp:
         preview_root.mkdir()
         preview_id = "editor-integration-test"
         (preview_root / (preview_id + ".json")).write_text(json.dumps({"section": "draft", "sources": [{
-            "url": "http://preview.invalid/feed?token=secret", "download_via_proxy_enabled": "1",
+            "url": "http://preview.invalid/fallback-invalid?token=secret", "download_via_proxy_enabled": "1",
             "download_via_proxy_section": "proxy"}]}))
         version = work / "version"
         version.write_text("1.14.2-rust-x.0.0.40")
@@ -152,6 +172,7 @@ with tempfile.TemporaryDirectory(prefix="forkop-preview-test-") as temp:
         assert "error" not in compressed, compressed
         _, too_large = download("too-large", f"http://127.0.0.1:{port}/too-large")
         assert "error" in too_large
+        assert requests[-1][1]["User-Agent"] == direct["user_agent"]
         lock = work / "reload.lock"
         lock.mkdir()
         (lock / "pid").write_text(f"{os.getpid()}\n")
@@ -163,9 +184,25 @@ with tempfile.TemporaryDirectory(prefix="forkop-preview-test-") as temp:
         before = len(requests)
         _, invalid = download("invalid", f"http://127.0.0.1:{port}/invalid")
         assert "error" in invalid, invalid
-        attempts = requests[before:]
-        assert len(attempts) == 1, attempts
-        assert attempts[0][1]["User-Agent"] == direct["user_agent"]
+
+        def assert_fallback_attempts(attempts, url):
+            assert [path for path, _ in attempts] == [url, url], attempts
+            assert [headers["User-Agent"] for _, headers in attempts] == [
+                direct["user_agent"], FALLBACK_USER_AGENT]
+            assert attempts[0][1]["X-HWID"] == attempts[1][1]["X-HWID"]
+
+        assert_fallback_attempts(requests[before:], "/invalid")
+        for path in ["fallback-invalid", "fallback-empty", "fallback-rejected"]:
+            before = len(requests)
+            url = f"http://preview.invalid/{path}?token=secret"
+            prefix, fallback_profile = download(path, url, "proxy")
+            assert_fallback_attempts(requests[before:], url)
+            assert fallback_profile == {"user_agent": FALLBACK_USER_AGENT, "hwid": direct["hwid"]}
+            assert "Working server" in Path(str(prefix) + ".json").read_text()
+        before = len(requests)
+        _, rejected = download("rate-limit", f"http://127.0.0.1:{port}/rate-limit")
+        assert "error" in rejected and len(requests) == before + 1
+        assert requests[-1][1]["User-Agent"] == direct["user_agent"]
         before = len(requests)
         for name, target, stopped in [("missing", "missing", False), ("stopped", "proxy", True),
                                        ("empty", "", False)]:
@@ -173,8 +210,7 @@ with tempfile.TemporaryDirectory(prefix="forkop-preview-test-") as temp:
             assert "error" in failed, failed
             assert len(requests) == before, "unavailable proxy silently downloaded directly"
         _, failed = download("http-fail", f"http://127.0.0.1:{port}/fail", "proxy")
-        assert "error" in failed
-        assert len(requests) > before
+        assert "error" in failed and len(requests) == before + 1
         assert all(path.startswith("http://") for path, _ in requests[before:]), "failed request bypassed the selected HTTP proxy"
         active["route"]["rules"][0]["outbound"] = "wrong-out"
         config.write_text(json.dumps(active))
@@ -223,6 +259,31 @@ with tempfile.TemporaryDirectory(prefix="forkop-preview-test-") as temp:
         try:
             env["CURL_CA_BUNDLE"] = str(cert)
             base = f"https://127.0.0.1:{tls_server.server_port}"
+            state.write_text(common_uci + "forkop.feed=subscription_url\nforkop.feed.section=rule\n"
+                             f"forkop.feed.url={base}/fallback-runtime\n")
+            before = len(requests)
+            result = update_runtime()
+            assert result == "1\t0\t0\t0", (result, requests[before:])
+            assert_fallback_attempts(requests[before:], "/fallback-runtime")
+            persistent = work / "persistent" / "rule-subscription-1.json"
+            runtime = work / "xrust" / "subscriptions" / "rule-subscription-1.json"
+            cached = persistent.read_bytes()
+            assert runtime.read_bytes() == cached
+            profile = json.loads(cached)["__forkop_source_cache"]
+            assert profile["user_agent"] == FALLBACK_USER_AGENT
+            assert profile["hwid"] == direct["hwid"]
+            assert "Fallback profile" in json.dumps(profile["metadata"])
+            assert "Rejected profile" not in json.dumps(profile["metadata"])
+            runtime.unlink()
+            runtime_rejected = True
+            before = len(requests)
+            assert update_runtime() == "0\t1\t0\t0"
+            assert_fallback_attempts(requests[before:], "/fallback-runtime")
+            assert persistent.read_bytes() == runtime.read_bytes() == cached
+            persistent.unlink()
+            runtime.unlink()
+            print("PASS: INCY stays first, sing-box fallback uses the same route and HWID, and an invalid update retains the last working cache")
+
             old = f"forkop.old=subscription_url\nforkop.old.section=rule\nforkop.old.url={base}/superseded\n"
             new = f"forkop.new=subscription_url\nforkop.new.section=rule\nforkop.new.url={base}/new\n"
             reordered_sources = common_uci + new + old

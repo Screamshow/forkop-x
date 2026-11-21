@@ -439,10 +439,6 @@ msgstr ""
 msgid "Config File Path"
 msgstr ""
 
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3750
-msgid "Configure User-Agent in the item settings"
-msgstr ""
-
 #: src/forkop/tabs/updates/releaseSelector.ts:72
 msgid "Confirm version change"
 msgstr ""
@@ -1507,6 +1503,7 @@ msgstr ""
 msgid "Invalid Trojan URL: parsing failed"
 msgstr ""
 
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3990
 #: src/validators/validateUrl.ts:9
 #: src/validators/validateUrl.ts:35
 #: src/validators/validateUrl.ts:38

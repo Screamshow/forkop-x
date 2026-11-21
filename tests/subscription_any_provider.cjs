@@ -44,7 +44,7 @@ for (const url of [
 
 assert.equal(validate('s', ''), true);
 assert.match(validate('s', 'http://feed.example/sub'), /^URL must use one of the following protocols: https:$/);
-assert.equal(validate('s', 'https://feed.example/sub|Happ'), 'Configure User-Agent in the item settings');
+assert.equal(validate('s', 'https://feed.example/sub|Happ'), 'Invalid URL format');
 assert.equal(validate('s', 'https://bad host/sub'), 'Invalid URL format');
 assert.ok(!section.includes('This subscription provider is not supported'), 'no provider allowlist message left');
 console.log('PASS: LuCI accepts subscription URLs from any HTTPS host and still refuses HTTP and malformed URLs');

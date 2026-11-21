@@ -41,6 +41,7 @@ const SUBSCRIPTION_DOWNLOAD_MAX_BYTES = 16 * 1024 * 1024;
 const SUBSCRIPTION_PREVIEW_MAX_BYTES = 4 * 1024 * 1024;
 const SUBSCRIPTION_ATTEMPT_SECONDS = 20;
 const SUBSCRIPTION_DOWNLOAD_SECONDS = 60;
+const SUBSCRIPTION_UNUSABLE_RESPONSE = 2;
 
 function as_string(value) {
     return value == null ? "" : "" + value;
@@ -377,13 +378,15 @@ function uci_sections() {
 let forkop_version = as_string(constants.FORKOP_VERSION);
 let incy_version = match(forkop_version, /^([0-9]+[.][0-9]+[.][0-9]+)(-canary[.][0-9]+)?$/);
 const SUBSCRIPTION_USER_AGENT = "INCY/" + (incy_version != null ? incy_version[1] : forkop_version);
+// The 2.7.6 compatibility version without the Xrust build suffix.
+const SUBSCRIPTION_FALLBACK_USER_AGENT = "sing-box/1.14.2";
 
 function user_agent_supported(user_agent, default_user_agent) {
     user_agent = as_string(user_agent);
     if (user_agent == "")
         return false;
-    // A last working 2.x response is still usable during a provider outage.
-    // Its metadata never controls the User-Agent sent by a new request.
+    // Keep working automatic caches across upgrades. New downloads always
+    // start with the current INCY profile, regardless of the cached profile.
     return user_agent == default_user_agent ||
         match(user_agent, /^INCY\/[0-9][A-Za-z0-9._+-]*$/) != null ||
         match(user_agent, /^sing-box\/[A-Za-z0-9][A-Za-z0-9._+-]*$/) != null;
@@ -1335,7 +1338,7 @@ function subscription_curl_args(url, filepath, http_proxy_address, headers_filep
     push(args, "-o");
     push(args, filepath);
     let headers = [
-        "User-Agent: " + SUBSCRIPTION_USER_AGENT,
+        "User-Agent: " + (options.user_agent || SUBSCRIPTION_USER_AGENT),
         "X-HWID: " + get_subscription_hwid(effective_hwid),
         "X-Device-OS: OpenWrt Linux",
         "X-Device-Model: " + get_device_model(),
@@ -1373,12 +1376,29 @@ function run_subscription_curl(args, max_bytes) {
     return status > 255 ? int(status / 256) : status;
 }
 
+function subscription_http_allows_profile_retry(headers_path) {
+    let headers = fs.open(headers_path, "r");
+    if (headers == null)
+        return false;
+    let status = 0;
+    let line;
+    while ((line = headers.read("line")) != null) {
+        let parsed = match(line, /^HTTP\/[^ ]+ ([0-9]{3})[[:space:]]/);
+        if (parsed != null)
+            status = int(parsed[1]);
+    }
+    headers.close();
+    // A proxy authentication challenge, timeout or rate limit is handled by
+    // the normal download retry policy.
+    return status >= 400 && status < 500 && status != 407 && status != 408 && status != 429;
+}
+
 function download_subscription(url, filepath, http_proxy_address, headers_filepath, effective_hwid, options) {
     options = object_or_empty(options);
     options.max_bytes = options.preview ? SUBSCRIPTION_PREVIEW_MAX_BYTES : SUBSCRIPTION_DOWNLOAD_MAX_BYTES;
     // The retries, pauses and bootstrap fallback share this per-source budget.
-    let deadline = int(clock(true)[0]) + (options.preview ? SUBSCRIPTION_ATTEMPT_SECONDS : SUBSCRIPTION_DOWNLOAD_SECONDS);
-    let retries = options.preview ? 1 : 3;
+    let deadline = options.deadline || int(clock(true)[0]) + SUBSCRIPTION_DOWNLOAD_SECONDS;
+    let retries = options.preview || options.user_agent == SUBSCRIPTION_FALLBACK_USER_AGENT ? 1 : 3;
     let wait_seconds = 2;
     let stamp = clock();
     let suffix = sprintf(".part.%d.%d", stamp[0], stamp[1]);
@@ -1422,8 +1442,13 @@ function download_subscription(url, filepath, http_proxy_address, headers_filepa
             return 0;
         }
 
+        let unusable_response = status == 0 || (status == 22 && headers_tmpfile != "" &&
+            subscription_http_allows_profile_retry(headers_tmpfile));
         unlink_path(tmpfile);
         unlink_path(headers_tmpfile);
+
+        if (unusable_response)
+            return SUBSCRIPTION_UNUSABLE_RESPONSE;
 
         if (status == 5 || status == 6) {
             resolution_failed = true;
@@ -1437,6 +1462,32 @@ function download_subscription(url, filepath, http_proxy_address, headers_filepa
     unlink_path(tmpfile);
     unlink_path(headers_tmpfile);
     return resolution_failed ? 6 : 1;
+}
+
+function download_normalized_subscription(url, proxy, hwid, files, preview) {
+    let options = {
+        preview,
+        config_path: files.curl,
+        deadline: int(clock(true)[0]) + (preview ? SUBSCRIPTION_ATTEMPT_SECONDS : SUBSCRIPTION_DOWNLOAD_SECONDS)
+    };
+    let parser = subscription_parser();
+    let status;
+    for (let user_agent in [ SUBSCRIPTION_USER_AGENT, SUBSCRIPTION_FALLBACK_USER_AGENT ]) {
+        options.user_agent = user_agent;
+        status = download_subscription(url, files.raw, proxy, files.headers, hwid, options);
+        if (status == 0) {
+            let decoded_gzip = parser.try_decode_gzip_content_file(files.raw);
+            if (parser.normalize_content_validated(files.raw, files.normalized))
+                return { status, user_agent, decoded_gzip };
+            status = SUBSCRIPTION_UNUSABLE_RESPONSE;
+            unlink_path(files.raw);
+            unlink_path(files.headers);
+            unlink_path(files.normalized);
+        }
+        if (status != SUBSCRIPTION_UNUSABLE_RESPONSE)
+            break;
+    }
+    return { status };
 }
 
 function write_source_metadata_output(metadata, metadata_output_path) {
@@ -1505,7 +1556,7 @@ function editor_download_source(request_path, prefix) {
     let download_section = source.download_via_proxy_enabled == "1" ? as_string(source.download_via_proxy_section) : "";
     if (source.download_via_proxy_enabled == "1" && download_section == "")
         return { error: "Select a subscription download proxy section" };
-    // Keep the selected listener's routing stable until curl is finished.
+    // Keep the selected listener's routing stable across both request profiles.
     // Plain direct previews do not need an Xrust runtime lock.
     let proxy_requested = download_section != "";
     let pid = split(fs.readfile("/proc/self/stat") || "", " ")[0];
@@ -1513,8 +1564,9 @@ function editor_download_source(request_path, prefix) {
         return { error: "Forkop is applying settings; retry the proxy preview after it finishes" };
     let proxy = get_subscription_download_proxy_address(as_string(input.section), { download_section }, "preview");
     let hwid = get_subscription_hwid("");
-    let downloaded = proxy != null && download_subscription(url, prefix + ".body", proxy, prefix + ".headers", hwid,
-        { config_path: prefix + ".curl", preview: true }) == 0;
+    let result = proxy == null ? null : download_normalized_subscription(url, proxy, hwid, {
+        raw: prefix + ".body", headers: prefix + ".headers", normalized: prefix + ".json", curl: prefix + ".curl"
+    }, true);
     if (proxy_requested) {
         locks.release(RELOAD_LOCK_DIR);
         if (fs.stat(FORKOP_PENDING_RELOAD_FILE) != null)
@@ -1523,12 +1575,8 @@ function editor_download_source(request_path, prefix) {
     }
     if (proxy == null)
         return { error: "Selected proxy section is unavailable in the running configuration; direct download was not attempted" };
-    if (downloaded) {
-        let parser = subscription_parser();
-        parser.try_decode_gzip_content_file(prefix + ".body");
-        if (parser.normalize_content_validated(prefix + ".body", prefix + ".json"))
-            return { user_agent: SUBSCRIPTION_USER_AGENT, hwid };
-    }
+    if (result.status == 0)
+        return { user_agent: result.user_agent, hwid };
     return { error: "Subscription download failed or returned an invalid response" };
 }
 
@@ -1547,27 +1595,24 @@ function download_subscription_into_cache(section_name_value, parsed, proxy, sou
     let parser = subscription_parser();
     let effective_hwid = get_subscription_hwid(parsed.hwid);
     let curl_config = raw_tmpfile + ".curl";
-    let download_status = download_subscription(parsed.url, raw_tmpfile, proxy, headers_tmpfile, effective_hwid,
-        { config_path: curl_config });
+    let result = download_normalized_subscription(parsed.url, proxy, effective_hwid, {
+        raw: raw_tmpfile, headers: headers_tmpfile, normalized: normalized_tmpfile, curl: curl_config
+    }, false);
     unlink_path(curl_config);
-    if (download_status == 0) {
-        if (parser.try_decode_gzip_content_file(raw_tmpfile))
-            log_message("Decoded gzip-compressed subscription body for rule '" + section_name_value + "'", "info");
-        parser.extract_ui_metadata_file(headers_tmpfile, raw_tmpfile, metadata_tmpfile) || unlink_path(metadata_tmpfile);
-    }
 
-    if (download_status != 0 || !parser.normalize_content_validated(raw_tmpfile, normalized_tmpfile)) {
+    if (result.status != 0) {
         if (metadata_output_path != "")
             unlink_path(metadata_output_path);
-        unlink_path(raw_tmpfile);
-        unlink_path(headers_tmpfile);
-        unlink_path(normalized_tmpfile);
-        unlink_path(metadata_tmpfile);
-        let reason = download_status == 6 ? "subscription host could not be resolved" :
-            download_status != 0 ? "download failed" : "response did not contain valid proxy entries";
-        log_message("INCY subscription for rule '" + section_name_value + "': " + reason, "warn");
+        let reason = result.status == 6 ? "subscription host could not be resolved" :
+            result.status == SUBSCRIPTION_UNUSABLE_RESPONSE ?
+                "provider rejected the request or returned no valid proxy entries" : "download failed";
+        log_message("Subscription for rule '" + section_name_value + "': " + reason, "warn");
         return 1;
     }
+
+    if (result.decoded_gzip)
+        log_message("Decoded gzip-compressed subscription body for rule '" + section_name_value + "'", "info");
+    parser.extract_ui_metadata_file(headers_tmpfile, raw_tmpfile, metadata_tmpfile) || unlink_path(metadata_tmpfile);
 
     if (!subscription_share_link.populate_subscription_file(normalized_tmpfile))
         log_message("Failed to cache direct proxy links for subscription rule '" + section_name_value + "'", "warn");
@@ -1585,7 +1630,7 @@ function download_subscription_into_cache(section_name_value, parsed, proxy, sou
     // Preserve the applied order if only provider metadata or order changed.
     let unchanged = previous.payload != null && parser.runtime_outbounds_equal(normalized_tmpfile, subscription_json_path);
     let payload = unchanged ? previous.payload : read_json(normalized_tmpfile);
-    let profile = { url: parsed.url, user_agent: SUBSCRIPTION_USER_AGENT, hwid: effective_hwid, metadata: null };
+    let profile = { url: parsed.url, user_agent: result.user_agent, hwid: effective_hwid, metadata: null };
     let metadata = read_json(metadata_tmpfile);
     if (valid_metadata_object(metadata))
         profile.metadata = metadata;

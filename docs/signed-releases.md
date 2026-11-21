@@ -1,7 +1,8 @@
 # Signed releases in one command
 
-Run on the operator computer from the Forkop main checkout with Python 3,
-authenticated `gh`, OpenSSH and access to the existing mirror. The SSH key
+Run on the operator computer from the Forkop checkout with the reviewed
+release tooling. It requires Python 3, authenticated `gh`, OpenSSH and access
+to the existing mirror. The SSH key
 defaults to `~/.ssh/codex_forkop_mt6000`. The private APK signing key stays on
 the mirror; neither private key is uploaded to GitHub Actions.
 
@@ -11,11 +12,23 @@ python scripts/release.py --rust 0.0.8
 python scripts/release.py --forkop 2.2.3-canary.1 --rust 0.0.8
 ```
 
-These are example **new** versions. For Rust X first prepare and push the
-workspace version, Cargo.lock and release notes on its existing main branch.
-Keep its checkout at `artifacts/xrust`. The command checks the GitHub
-main version before it creates a tag. Forkop accepts `x.y.z` and
-`x.y.z-canary.N`; its package version is set by the build workflow.
+These are examples of **new** versions. Prepare versions and release notes
+on the existing dev branches and verify the exact source to be released.
+For an authorized stable release, integrate that source into main before
+running the command. In the operator workspace, use the 3.x Forkop worktree
+at `tmp/beam-dev` and the Xrust worktree at `tmp/xrust-independent-review`.
+The release script loads the Xrust finalizer through `artifacts/xrust`
+relative to the Forkop checkout. Verify that the checkout or junction there
+contains the finalizer for the intended Xrust source. The script reads the
+GitHub main version before creating a tag. Forkop accepts `x.y.z` and
+`x.y.z-canary.N`, and the build workflow sets its package version.
+
+Build each release description from the exact public-tag-to-candidate diff.
+Compare code in both projects and check UI optimizations separately from
+core API response times. Record measured performance only for the build and
+scenario that were tested. Put the user's approved text into
+`docs/releases/VERSION.md` as supplied and preserve any pending wording approval
+before publication.
 
 The command checks prerequisites, starts a release workflow, waits for the
 exact source commit to build successfully and signs APK on the existing
@@ -86,6 +99,27 @@ The combined `mirror/current` APK feed keeps its last compatible 2.x release
 because a system-wide APK upgrade cannot coordinate Forkop's exact Xrust pin.
 Both 3.x channel publishers verify the six Forkop packages and the referenced
 native Xrust archive before activating their pointers.
+
+### Verify an upgrade from the previous stable release
+
+For the first stable 3.x release, start from the signed Forkop 2.7.6 and
+Xrust 0.0.44 pair on each existing OpenWrt VM. Restore that exact pair before
+each trial so the package manager must replace the core. Use the public
+installer for one trial and the RPC and arguments used by LuCI for another.
+Test the Update button and the version picker separately when they use different
+actions. Use the public stable manifests and packages for these trials.
+
+Compare the Forkop pin across the GitHub manifest, the public stable pointer,
+the archived release and the selector catalog. Check the installed package
+revision and native version, and match the running procd executable to the
+binary from the signed core package. Verify the generated configuration, UCI
+migration, DNS, nftables, LuCI and proxied HTTPS against a working baseline.
+Confirm that 2.x still sees its standalone Xrust catalog and that the combined
+APK feed still points to the compatible 2.x release. Keep private configuration
+on the VM and record the exact commands, versions and outcomes in the release
+verification report.
+
+### Verify publication and mirror synchronization
 
 After publication the command runs the existing canary mirror service,
 publishes the signed stable packages through the existing feed publisher,

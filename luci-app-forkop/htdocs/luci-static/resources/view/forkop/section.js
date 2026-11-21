@@ -3987,7 +3987,7 @@ function parseSubscriptionUrlEntry(value) {
   if (normalized.includes("|")) {
     return {
       valid: false,
-      message: _("Configure User-Agent in the item settings"),
+      message: _("Invalid URL format"),
     };
   }
 
