@@ -35,7 +35,6 @@ FORKOP_BRIDGE_VERSION=2.7.6
 FORKOP_XRUST_VERSION=""
 FRESH_PINNED_PACKAGES=""
 XRUST_PACKAGE_FILE=""
-LEGACY_UPGRADE_RECOVERY_HOOK=""
 FORKOP_BACKEND_URL=""
 FORKOP_BACKEND_SHA256=""
 FORKOP_BACKEND_NAME=""
@@ -1027,6 +1026,13 @@ function installer_recover_interrupted_cleanup(init_scripts) {
     }
 }
 
+function installer_unknown_service_state(action, result) {
+    let reason = result.timed_out
+        ? "timed out after " + INSTALLER_SERVICE_PROBE_TIMEOUT + " seconds"
+        : "did not report an exit status (probe helper exit " + result.status + ")";
+    return { known: false, value: false, reason: action + " " + reason };
+}
+
 function installer_service_enabled_state(init_script) {
     if (!path_executable(init_script))
         return { known: true, value: false };
@@ -1039,7 +1045,7 @@ function installer_service_enabled_state(init_script) {
     if (service_name != "" && length(fs.glob(INSTALLER_RC_DIR + "/S??" + service_name)) > 0)
         return { known: true, value: true };
 
-    return { known: false, value: false };
+    return installer_unknown_service_state("enabled", result);
 }
 
 function installer_service_running_state(init_script) {
@@ -1054,7 +1060,7 @@ function installer_service_running_state(init_script) {
     if (running.complete && !running.timed_out)
         return { known: true, value: running.status == 0 };
 
-    return { known: false, value: false };
+    return installer_unknown_service_state("running", running);
 }
 
 function installer_backend_status_running_state(bin_path) {
@@ -1747,6 +1753,10 @@ else if (mode == "release-catalog-entry") {
 else if (mode == "installer-capture-service") {
     let enabled = installer_service_enabled_state(INSTALLER_FORKOP_INIT);
     let running = installer_service_running_state(INSTALLER_FORKOP_INIT);
+    if (!enabled.known)
+        warn("Cannot determine whether Forkop starts at boot: " + enabled.reason + ".\n");
+    if (!running.known)
+        warn("Cannot determine whether Forkop is running: " + running.reason + ".\n");
     if (!enabled.known || !running.known) exit(1);
     print("FORKOP_WAS_ENABLED=", enabled.value ? "1" : "0", "\n",
         "FORKOP_WAS_RUNNING=", running.value ? "1" : "0", "\n");
@@ -1785,6 +1795,12 @@ else if (mode == "xrust-update-unsupported") {
     exit(result?.success === false && result.kind == "component" &&
         result.component == "sing_box" && result.action == "update_rust_x" &&
         result.message == "Unknown component action" ? 0 : 1);
+}
+else if (mode == "pinned-xrust-update-busy") {
+    let result = read_stdin_json();
+    exit(result?.success === false && result.kind == "component" &&
+        result.component == "forkop" && result.action == "install_pinned_xrust" &&
+        result.changed === 0 && result.message == "Another component action is already running" ? 0 : 1);
 }
 else if (mode == "sing-box-exe-path-fixture")
     exit(sing_box_exe_path(ARGV[1]) ? 0 : 1);
@@ -2394,8 +2410,12 @@ prepare_current_update_rollback() {
     done
     cp "${FORKOP_INSTALLER_BACKUP_DIR:-/etc/forkop-backups}/configuration.tar.gz" "$TMP_DIR/rollback/configuration.tar.gz" ||
         fail "Cannot preserve configuration for update rollback"
-    install_json_ucode installer-capture-service > "$TMP_DIR/rollback/service.env" ||
-        fail "Cannot capture service state for update rollback"
+    if ! install_json_ucode installer-capture-service > "$TMP_DIR/rollback/service.env"; then
+        warn "Cannot capture service state for update rollback; retrying in 1 second"
+        sleep 1
+        install_json_ucode installer-capture-service > "$TMP_DIR/rollback/service.env" ||
+            fail "Cannot capture service state for update rollback after retry"
+    fi
     # shellcheck disable=SC1091
     . "$TMP_DIR/rollback/service.env"
     prepare_package_init_adapter || fail "Cannot prepare package lifecycle adapter"
@@ -2676,42 +2696,69 @@ update_existing_xrust() {
     cat "$TMP_DIR/xrust-update.json"
 }
 
+forkop_component_action_in_progress() {
+    local lock_dir owner
+    lock_dir="${UPDATES_LOCK_DIR:-${FORKOP_RUNTIME_STATE_DIR:-/var/run/forkop}/component-action.lock}"
+    IFS= read -r owner 2>/dev/null < "$lock_dir/pid" || return 1
+    case "$owner" in ''|0*|*[!0-9]*) return 1 ;; esac
+    kill -0 "$owner" 2>/dev/null
+}
+
 upgrade_forkop_with_pinned_xrust() {
     [ "$INSTALL_MODE" = "update" ] && [ -x /usr/bin/forkop ] ||
         fail "Install Forkop X 2.7.6 and switch to Xrust before updating to $FORKOP_RELEASE_TAG"
 
-    installed_release="$(installed_forkop_package_version forkop 2>/dev/null)" ||
-        fail "Cannot determine the installed Forkop release for recovery"
-    case "$installed_release" in
-        2.7.6|2.7.6_rc*|2.7.6-canary.*)
-            LEGACY_UPGRADE_RECOVERY_HOOK="/etc/rc.d/S98forkop-upgrade-recovery"
-            [ ! -L "$LEGACY_UPGRADE_RECOVERY_HOOK" ] ||
-                fail "An interrupted Forkop update has recovery packages ready for the next boot"
-            if ! pkg_is_installed rust-x; then
-                fail "Forkop X 2.7.6 is ready. Switch to Xrust in LuCI, verify that it starts, then rerun the installer."
-            fi
-            prepare_legacy_upgrade_recovery || fail "Cannot prepare recovery for the Forkop X 2.7.6 upgrade"
-            ;;
-    esac
-    # Older backends reject the explicit action before changing packages.
+    local installed_release recovery_hook output_file waits=0
+    output_file="$TMP_DIR/pinned-update.json"
     msg "Updating Forkop $FORKOP_RELEASE_TAG with Xrust $FORKOP_XRUST_VERSION"
-    if ! FORKOP_MIRROR_BASE_URL="$MIRROR_BASE_URL" /usr/bin/forkop \
-        component_action forkop install_pinned_xrust "$FORKOP_RELEASE_TAG" >"$TMP_DIR/pinned-update.json" 2>&1; then
-        cat "$TMP_DIR/pinned-update.json" >&2
-        if [ -n "$LEGACY_UPGRADE_RECOVERY_HOOK" ]; then
-            if "$LEGACY_UPGRADE_RECOVERY_HOOK" commit-restored; then
-                msg "Previous Forkop packages, configuration and service verified; boot recovery cleared"
-            else
-                warn "The exact previous package set remains available for boot recovery"
+    while :; do
+        if ! forkop_component_action_in_progress; then
+            installed_release="$(installed_forkop_package_version forkop 2>/dev/null)" ||
+                fail "Cannot determine the installed Forkop release for recovery"
+            recovery_hook=""
+            case "$installed_release" in
+                2.7.6|2.7.6_rc*|2.7.6-canary.*)
+                    recovery_hook="/etc/rc.d/S98forkop-upgrade-recovery"
+                    [ ! -L "$recovery_hook" ] ||
+                        fail "An interrupted Forkop update has recovery packages ready for the next boot"
+                    pkg_is_installed rust-x ||
+                        fail "Forkop X 2.7.6 is ready. Switch to Xrust in LuCI, verify that it starts, then rerun the installer."
+                    prepare_legacy_upgrade_recovery || fail "Cannot prepare recovery for the Forkop X 2.7.6 upgrade"
+                    ;;
+            esac
+
+            if FORKOP_MIRROR_BASE_URL="$MIRROR_BASE_URL" FORKOP_COMPONENT_BACKGROUND=0 /usr/bin/forkop \
+                component_action forkop install_pinned_xrust "$FORKOP_RELEASE_TAG" >"$output_file" 2>&1; then
+                break
+            fi
+            if ! install_json_ucode pinned-xrust-update-busy < "$output_file"; then
+                cat "$output_file" >&2
+                if [ -n "$recovery_hook" ]; then
+                    if "$recovery_hook" commit-restored; then
+                        msg "Previous Forkop packages, configuration and service verified; boot recovery cleared"
+                    else
+                        warn "The exact previous package set remains available for boot recovery"
+                    fi
+                fi
+                fail "Forkop update failed. This update requires Forkop X 2.7.6 or later with Xrust support."
+            fi
+
+            # The backend rejected this attempt before changing packages. Disarm
+            # only the recovery journal prepared by this attempt before retrying.
+            if [ -n "$recovery_hook" ]; then
+                "$recovery_hook" commit || fail "Cannot clear boot recovery for an upgrade that did not start"
             fi
         fi
-        fail "Forkop update failed. This update requires Forkop X 2.7.6 or later with Xrust support."
-    fi
-    if [ -n "$LEGACY_UPGRADE_RECOVERY_HOOK" ]; then
-        "$LEGACY_UPGRADE_RECOVERY_HOOK" commit ||
+        [ "$waits" -lt 15 ] || fail "Another Forkop component action is still running. Retry after it finishes."
+        [ "$waits" -ne 0 ] || msg "Waiting for another Forkop component action to finish"
+        waits=$((waits + 1))
+        sleep 2
+    done
+    if [ -n "$recovery_hook" ]; then
+        "$recovery_hook" commit ||
             fail "Forkop was updated but its boot recovery journal could not be cleared"
     fi
-    cat "$TMP_DIR/pinned-update.json"
+    cat "$output_file"
 }
 
 prepare_legacy_upgrade_recovery() (

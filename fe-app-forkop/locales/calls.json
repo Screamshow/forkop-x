@@ -2928,6 +2928,14 @@
     ]
   },
   {
+    "call": "No online WAN supplies usable DNS",
+    "key": "No online WAN supplies usable DNS",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:262",
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:283"
+    ]
+  },
+  {
     "call": "No other marking rules found",
     "key": "No other marking rules found",
     "places": [
@@ -4340,6 +4348,13 @@
     ]
   },
   {
+    "call": "Unable to read provider DNS",
+    "key": "Unable to read provider DNS",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:284"
+    ]
+  },
+  {
     "call": "Unable to read remote support status",
     "key": "Unable to read remote support status",
     "places": [
@@ -4528,6 +4543,20 @@
     "key": "Use another section as an intermediate hop to connect to servers in this section. Does not apply to network interfaces or JSON outbounds.",
     "places": [
       "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:5127"
+    ]
+  },
+  {
+    "call": "Use DNS supplied by online WAN interfaces for main and Bootstrap DNS. With mwan3, each DNS uses its own WAN.",
+    "key": "Use DNS supplied by online WAN interfaces for main and Bootstrap DNS. With mwan3, each DNS uses its own WAN.",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:236"
+    ]
+  },
+  {
+    "call": "Use provider DNS",
+    "key": "Use provider DNS",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:235"
     ]
   },
   {
@@ -4852,13 +4881,6 @@
       "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:692",
       "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:708",
       "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:736"
-    ]
-  },
-  {
-    "call": "Settings saved to UCI. See Diagnostics for the Forkop runtime result.",
-    "key": "Settings saved to UCI. See Diagnostics for the Forkop runtime result.",
-    "places": [
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/forkop.js:55"
     ]
   },
   {

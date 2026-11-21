@@ -56,8 +56,12 @@ if (nativeSource) assert.ok(nativeHandler, 'find the VM native LuCI handler');
   const changes = {
     apply() {},
     displayStatus,
-    confirm() {
+    confirm(success) {
       this.displayStatus('notice spinning', 'applying');
+      if (!success) {
+        this.displayStatus('warning', 'native rollback');
+        return;
+      }
       listeners['uci-applied']();
       this.displayStatus('notice', 'native UCI confirmation');
     },
@@ -69,24 +73,24 @@ if (nativeSource) assert.ok(nativeHandler, 'find the VM native LuCI handler');
     uci: { changes: () => Promise.resolve(pending) },
     L: { env: { apply_holdoff: 4 } },
     main: { FORKOP_UCI_PACKAGE: 'forkop', translateForkop: text => text },
-    E: (_tag, _attributes, content) => content,
   };
   vm.runInNewContext(
     `(function () { ${source.replace('return view.extend(EntryPoint);', 'configureForkopApplyHoldoff();')} })()`,
     context,
   );
-  for (const [packages, message] of [
-    [{ forkop: [['set']] }, 'Settings saved to UCI. See Diagnostics for the Forkop runtime result.'],
-    [{ forkop: [['set']], network: [['set']] }, 'Settings saved to UCI. See Diagnostics for the Forkop runtime result.'],
-    [{ network: [['set']] }, 'native UCI confirmation'],
+  for (const [packages, success, finalStatus] of [
+    [{ forkop: [['set']] }, true, [null, undefined]],
+    [{ forkop: [['set']], network: [['set']] }, true, [null, undefined]],
+    [{ forkop: [['set']] }, false, ['warning', 'native rollback']],
+    [{ network: [['set']] }, true, ['notice', 'native UCI confirmation']],
   ]) {
     pending = packages;
     await changes.apply();
-    changes.confirm();
-    assert.deepEqual(events.splice(0), [['notice spinning', 'applying'], ['notice', message]]);
+    changes.confirm(success);
+    assert.deepEqual(events.splice(0), [['notice spinning', 'applying'], finalStatus]);
     assert.equal(changes.displayStatus, displayStatus);
     assert.equal(context.L.env.apply_holdoff, 4);
   }
   console.log('PASS: native prototype dispatch, save before apply, checked/unchecked modes and validation failure');
-  console.log('PASS: Forkop UCI confirmation is distinct from runtime apply');
+  console.log('PASS: Forkop success modal dismissed, progress and rollback unchanged');
 })().catch(error => { console.error(error); process.exitCode = 1; });

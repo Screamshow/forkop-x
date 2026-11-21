@@ -44,17 +44,13 @@ function configureForkopApplyHoldoff() {
     if (!confirmingForkop) return;
     confirmingForkop = false;
 
-    // LuCI displays its success notice immediately after this event. It has
-    // confirmed UCI, while Forkop's procd reload reports its own result.
+    // LuCI shows a UCI-only success notice immediately after this event.
+    // Dismiss the progress modal through LuCI so it also resumes polling.
     const displayStatus = changes.displayStatus;
     const displayCommitted = function (status, content) {
+      if (status !== "notice") return displayStatus.call(this, status, content);
       changes.displayStatus = displayStatus;
-      return displayStatus.call(
-        this, status,
-        status === "notice"
-          ? E("p", {}, _("Settings saved to UCI. See Diagnostics for the Forkop runtime result."))
-          : content,
-      );
+      return displayStatus.call(this, null);
     };
     changes.displayStatus = displayCommitted;
     Promise.resolve().then(() => {

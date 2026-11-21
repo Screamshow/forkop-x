@@ -208,6 +208,7 @@ ops/deployed-nginx/
 !/tests/bittorrent_settings.mjs
 !/docs/releases/next.md
 !/docs/releases/2.6.4.md
+!/docs/releases/3.0.1.md
 !/tests/restart_transition_recovery.sh
 
 !/tests/native_tailscale_marks.uc
