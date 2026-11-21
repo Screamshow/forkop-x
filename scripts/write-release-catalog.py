@@ -65,19 +65,27 @@ def build_catalog(root):
 
 
 def main():
+    import fcntl
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     args = parser.parse_args()
-    catalog = build_catalog(args.root)
+    with (args.root / ".release-catalog.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        write_catalog(args.root, parser)
+
+
+def write_catalog(root, parser):
+    catalog = build_catalog(root)
     if not catalog["releases"]:
         parser.error("No complete, verified releases; existing catalog was preserved")
-    fd, temporary = tempfile.mkstemp(prefix=".releases-", suffix=".json", dir=args.root)
+    fd, temporary = tempfile.mkstemp(prefix=".releases-", suffix=".json", dir=root)
     try:
         with os.fdopen(fd, "w") as output:
             json.dump(catalog, output, indent=2)
             output.write("\n")
         os.chmod(temporary, 0o644)
-        os.replace(temporary, args.root / "releases.json")
+        os.replace(temporary, root / "releases.json")
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)

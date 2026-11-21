@@ -31,7 +31,6 @@ import {
 import { fetchServicesInfo } from '../../fetchers/fetchServicesInfo';
 import { getClashApiSecret } from '../../methods/custom/getClashApiSecret';
 import { Forkop } from '../../types';
-import { getSingBoxName } from '../../helpers/singBoxVariant';
 import { ensureSystemInfo } from '../../services/systemInfo.service';
 import {
   getCachedRuntimeUiState,
@@ -1943,9 +1942,9 @@ async function renderServicesInfoWidget() {
         _('Its own worker; part of the Forkop X total above.'),
       ),
       serviceRow(
-        getSingBoxName(store.get().diagnosticsSystemInfo),
-        Boolean(servicesInfoWidget.data.singbox),
-        servicesInfoWidget.data.singboxMemoryBytes,
+        'Xrust',
+        Boolean(servicesInfoWidget.data.xrust),
+        servicesInfoWidget.data.xrustMemoryBytes,
         {
           title: _(
             'Resident memory (RSS) of every service running the core binary.',

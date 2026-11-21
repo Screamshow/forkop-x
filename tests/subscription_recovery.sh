@@ -20,20 +20,20 @@ printf '' > "$W/subs/probe-subscription-1.hwid"
 cat > "$W/fixture.json" <<'JSON'
 { "settings": { ".name": "settings", ".type": "settings", "dns_server": "1.1.1.1" }, "section": [ { ".name": "probe", ".type": "section", "enabled": "1", "action": "connection", "subscription_urls": [ "https://feed.example/test" ], "subscription_url_settings": "{\"https://feed.example/test\":{\"user_agent\":\"Happ\"}}" } ] }
 JSON
-ucode -L "$FORKOP_LIB" "$FORKOP_LIB/singbox/generator.uc" generate-config-fixture "$W/fixture.json" "$W/candidate.json" 127.0.0.1 0 1 '' 1.14.2-rust-x.0.0.32
+ucode -L "$FORKOP_LIB" "$FORKOP_LIB/xrust/generator.uc" generate-config-fixture "$W/fixture.json" "$W/candidate.json" 127.0.0.1 0 1 '' 1.14.2-rust-x.0.0.32
 if sing-box check -c "$W/candidate.json"; then echo 'expected invalid input' >&2; exit 1; fi
 # The same rejected outbound without subscription provenance must not be dropped.
 cp "$W/candidate.json" "$W/manual.json"
 mkdir -p "$W/manual.json.section-cache"
 printf '{}' > "$W/manual.json.section-cache/probe.json"
 sha256sum "$W/manual.json" > "$W/manual.before"
-if ucode -L "$FORKOP_LIB" "$FORKOP_LIB/singbox/runtime.uc" validate-config-stage "$W/manual.json"; then
+if ucode -L "$FORKOP_LIB" "$FORKOP_LIB/xrust/runtime.uc" validate-config-stage "$W/manual.json"; then
     echo 'manual node silently removed' >&2; exit 1
 fi
 sha256sum "$W/manual.json" > "$W/manual.after"
 cmp "$W/manual.before" "$W/manual.after"
 sha256sum "$W/subs/probe-subscription-1.json" > "$W/source.before"
-ucode -L "$FORKOP_LIB" "$FORKOP_LIB/singbox/runtime.uc" validate-config-stage "$W/candidate.json"
+ucode -L "$FORKOP_LIB" "$FORKOP_LIB/xrust/runtime.uc" validate-config-stage "$W/candidate.json"
 sing-box check -c "$W/candidate.json"
 sha256sum "$W/subs/probe-subscription-1.json" > "$W/source.after"
 cmp "$W/source.before" "$W/source.after"

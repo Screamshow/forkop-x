@@ -5,8 +5,11 @@ type NotificationEmitter = (notification: ForkopLogNotification) => void;
 export function isRecoverableStartFailureLog(line: string) {
   const lower = line.toLowerCase();
   return (
-    lower.includes('controlled sing-box transition refused:') ||
-    lower.includes('sing-box did not reach a stable running state after start')
+    lower.includes('xrust did not reach a stable running state after start') ||
+    (lower.includes('controlled xrust transition refused:') &&
+      /before start|start command failed|appeared after start|new managed runtime/.test(
+        lower,
+      ))
   );
 }
 
@@ -30,29 +33,43 @@ function isRecoveryFailedLog(line: string) {
 // recovery (show a warning instead) or leaves the original fatal visible.
 export class StartRecoveryNotificationController {
   private pendingFailure?: ForkopLogNotification;
+  private pendingTimer?: ReturnType<typeof setTimeout>;
 
   constructor(private readonly emit: NotificationEmitter) {}
 
+  private clearPending() {
+    if (this.pendingTimer !== undefined) clearTimeout(this.pendingTimer);
+    this.pendingTimer = undefined;
+    this.pendingFailure = undefined;
+  }
+
   handle(line: string) {
     if (isRecoverableStartFailureLog(line)) {
-      this.pendingFailure ||= { kind: 'error', line };
+      if (!this.pendingFailure) {
+        this.pendingFailure = { kind: 'error', line };
+        this.pendingTimer = setTimeout(() => {
+          const notification = this.pendingFailure;
+          this.clearPending();
+          if (notification) this.emit(notification);
+        }, 1000);
+      }
       return true;
     }
 
     if (isRetryScheduledLog(line)) {
-      this.pendingFailure = undefined;
+      this.clearPending();
       this.emit({ kind: 'start-recovery-pending', line });
       return true;
     }
 
     if (isRecoverySucceededLog(line)) {
-      this.pendingFailure = undefined;
+      this.clearPending();
       this.emit({ kind: 'start-recovery-succeeded', line });
       return true;
     }
 
     if (isRecoveryFailedLog(line)) {
-      this.pendingFailure = undefined;
+      this.clearPending();
       return false;
     }
 

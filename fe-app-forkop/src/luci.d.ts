@@ -53,6 +53,7 @@ declare global {
 
   const L: {
     url: (...parts: string[]) => string;
+    hasViewPermission: () => boolean | null;
     env: { token: string };
   };
 

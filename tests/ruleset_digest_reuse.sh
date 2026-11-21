@@ -19,7 +19,7 @@ function quote(v) {return "'"+replace(as_string(v),/'/g,"'\\''")+"'";}
 function command_success(args) {return system(join(" ",map(args,quote))+" >/dev/null 2>&1")==0;}
 function command_output(args) {let p=fs.popen(join(" ",map(args,quote)),"r");let data=p.read("all");return p.close()==0?data:"";}
 UC
-sed -n '/^function binary_validation_path(path) {/,/^}/p; /^function binary_stat_signature(path) {/,/^}/p; /^function binary_digest(path) {/,/^}/p; /^function mark_binary_valid(path) {/,/^}/p; /^function trusted_binary_digest(path) {/,/^}/p; /^function reuse_binary_validation(source, target) {/,/^}/p; /^function valid_binary(path) {/,/^}/p' "$ROOT/forkop/files/usr/lib/singbox/ruleset_cache.uc"
+sed -n '/^function binary_validation_path(path) {/,/^}/p; /^function binary_stat_signature(path) {/,/^}/p; /^function binary_digest(path) {/,/^}/p; /^function mark_binary_valid(path) {/,/^}/p; /^function trusted_binary_digest(path) {/,/^}/p; /^function reuse_binary_validation(source, target) {/,/^}/p; /^function valid_binary(path) {/,/^}/p' "$ROOT/forkop/files/usr/lib/xrust/ruleset_cache.uc"
 cat <<'UC'
 let root=ARGV[0]; let source=root+"/source"; let target=root+"/target";
 function count() {return length(split(trim(as_string(fs.readfile(getenv("PARSER_LOG")))),"\n"));}

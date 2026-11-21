@@ -36,7 +36,7 @@ const DISABLED_UPDATE_INTERVAL = "876000h";
 const URLTEST_DEFAULT_IDLE_TIMEOUT = "30m";
 const CHECK_PROXY_IP_DOMAIN = "ip.podkop.fyi";
 const FAKEIP_TEST_DOMAIN = "fakeip.podkop.fyi";
-const TMP_SING_BOX_FOLDER = "/tmp/sing-box";
+const TMP_SING_BOX_FOLDER = "/tmp/xrust";
 const TMP_RULESET_FOLDER = TMP_SING_BOX_FOLDER + "/rulesets";
 
 const RESERVED_TAGS = {

@@ -55,7 +55,7 @@ if (update_existing_xrust > "$work/failure" 2>&1); then
 fi
 [ -f "$work/post-install" ]
 # The final service start must follow the core transaction.
-sed -n '/^main() {/,/^}/p' "$ROOT/install.sh" > "$work/main"
+sed -n '/^install_resolved_forkop_release() {/,/^}/p' "$ROOT/install.sh" > "$work/main"
 core_line=$(grep -n '^        update_existing_xrust$' "$work/main" | cut -d: -f1)
 start_line=$(grep -n '^    post_install$' "$work/main" | cut -d: -f1)
 [ "$core_line" -lt "$start_line" ]

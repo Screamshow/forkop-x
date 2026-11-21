@@ -12,7 +12,7 @@ for mode in 00 01 11 10 00 10 11 01 00; do
 {".name":"direct",".type":"section","enabled":"1","action":"bypass","domain_suffix":"direct.example"},
 {".name":"vpn",".type":"section","enabled":"1","action":"connection","outbound_jsons":"{\"type\":\"vless\",\"server\":\"127.0.0.1\",\"server_port\":443,\"uuid\":\"00000000-0000-0000-0000-000000000001\"}","domain_suffix":"vpn.example","excluded_source_ip_cidr":"192.168.1.10/32","fully_routed_ips":"192.168.1.20/32"}]}
 EOF
-    ucode -L "$LIB" "$LIB/singbox/generator.uc" generate-config-fixture \
+    ucode -L "$LIB" "$LIB/xrust/generator.uc" generate-config-fixture \
         "$WORK/fixture.json" "$WORK/config.json" 127.0.0.1 0 '' '' 1.14.2
     ucode -L "$LIB" -e '
 let fs=require("fs"), c=json(fs.readfile(ARGV[0])), mode=ARGV[1];

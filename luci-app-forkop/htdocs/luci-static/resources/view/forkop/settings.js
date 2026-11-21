@@ -9,7 +9,7 @@ const _ = main.translateForkop;
 
 const UCI_PACKAGE = main.FORKOP_UCI_PACKAGE;
 
-function isSingBoxDuration(value) {
+function isXrustDuration(value) {
   return /^(?=.*[1-9])([0-9]+(?:\.[0-9]+)?(?:ns|us|ms|s|m|h|d))+$/.test(value);
 }
 
@@ -177,8 +177,8 @@ function configureDnsDuration(
   option.rmempty = false;
   option.validate = function (_section_id, value) {
     const normalized = `${value || ""}`.trim();
-    if (!normalized || !isSingBoxDuration(normalized)) {
-      return _("Use sing-box duration format like 10s, 1m or 2m30s");
+    if (!normalized || !isXrustDuration(normalized)) {
+      return _("Use Xrust duration format like 10s, 1m or 2m30s");
     }
     return true;
   };
@@ -603,7 +603,7 @@ function createSettingsContent(section) {
   const writeBitTorrent = o.write;
   const removeBitTorrent = o.remove;
   // An unavailable checkbox must not turn an absent setting into explicit OFF
-  // when the user saves unrelated settings before upgrading Xrust.
+  // when the user saves unrelated settings before upgrading Forkop X.
   o.write = function (section_id, value) {
     if (!this.readonly) return writeBitTorrent.call(this, section_id, value);
   };
@@ -612,18 +612,16 @@ function createSettingsContent(section) {
   };
   o.load = async function (section_id) {
     let supported = false;
-    let rustX = false;
     try {
-      const result = await fs.exec("/usr/bin/forkop", ["get_system_info"]);
+      const result = await fs.exec("/usr/bin/forkop", ["get_ui_capabilities"]);
       const info = JSON.parse(result.stdout || "{}");
-      rustX = /-rust-x\./.test(info.sing_box_version || "");
-      supported = rustX && info.sing_box_bittorrent_direct === 1;
+      supported = info.xrust_bittorrent_direct === 1;
     } catch (_error) { /* Keep unavailable when capability detection fails. */ }
     this.readonly = !supported;
     this.default = supported ? "1" : "0";
     this.description = supported
       ? _("Recognized torrent connections bypass proxy and VPN.")
-      : rustX ? _("Update Xrust to enable this setting") : _("Available only for Xrust");
+      : _("Update Forkop X to enable this setting");
     return loadBitTorrent.call(this, section_id);
   };
 
@@ -662,7 +660,7 @@ function createSettingsContent(section) {
     form.Value,
     "update_interval",
     _("List Update Frequency"),
-    _("Use sing-box duration format like 1d, 12h or 30m"),
+    _("Use Xrust duration format like 1d, 12h or 30m"),
   );
   o.depends("list_update_enabled", "1");
   o.placeholder = "1d";
@@ -684,14 +682,14 @@ function createSettingsContent(section) {
     const normalized = value ? `${value}`.trim() : "";
 
     if (!normalized.length) {
-      return _("Use sing-box duration format like 1d, 12h or 30m");
+      return _("Use Xrust duration format like 1d, 12h or 30m");
     }
 
-    if (isSingBoxDuration(normalized)) {
+    if (isXrustDuration(normalized)) {
       return true;
     }
 
-    return _("Use sing-box duration format like 1d, 12h or 30m");
+    return _("Use Xrust duration format like 1d, 12h or 30m");
   };
 
   o = section.option(
@@ -707,7 +705,7 @@ function createSettingsContent(section) {
     form.Value,
     "component_update_check_interval",
     _("Component update check interval"),
-    _("Use sing-box duration format like 1d, 12h or 30m"),
+    _("Use Xrust duration format like 1d, 12h or 30m"),
   );
   o.depends("component_update_check_enabled", "1");
   o.placeholder = "1d";
@@ -731,11 +729,11 @@ function createSettingsContent(section) {
   o.validate = function (_section_id, value) {
     const normalized = value ? `${value}`.trim() : "";
 
-    if (normalized.length && isSingBoxDuration(normalized)) {
+    if (normalized.length && isXrustDuration(normalized)) {
       return true;
     }
 
-    return _("Use sing-box duration format like 1d, 12h or 30m");
+    return _("Use Xrust duration format like 1d, 12h or 30m");
   };
 
   o = section.option(
@@ -759,7 +757,7 @@ function createSettingsContent(section) {
     "subscription_exclude_regex",
     _("Globally exclude subscription nodes by regular expression"),
     _(
-      "Remove matching nodes from every current and future subscription before sing-box, URLTest, Priority, and the dashboard are generated.",
+      "Remove matching nodes from every current and future subscription before Xrust, URLTest, Priority, and the dashboard are generated.",
     ),
   );
   o.rmempty = true;
@@ -811,28 +809,37 @@ function createSettingsContent(section) {
     "config_path",
     _("Config File Path"),
     _(
-      "Select path for sing-box config file. Change this ONLY if you know what you are doing",
+      "Select path for Xrust config file. Change this ONLY if you know what you are doing",
     ),
   );
-  o.value("/etc/sing-box/config.json", "Flash (/etc/sing-box/config.json)");
-  o.value("/tmp/sing-box/config.json", "RAM (/tmp/sing-box/config.json)");
-  o.default = "/etc/sing-box/config.json";
+  o.value("/etc/xrust/config.json", "Flash (/etc/xrust/config.json)");
+  o.value("/tmp/xrust/config.json", "RAM (/tmp/xrust/config.json)");
+  o.default = "/etc/xrust/config.json";
   o.rmempty = false;
+
+  const loadConfigPath = o.load;
+  o.load = function (section_id) {
+    const path = this.cfgvalue(section_id);
+    if (path && !this.keylist.includes(path)) {
+      this.value(path, path);
+    }
+    return loadConfigPath.call(this, section_id);
+  };
 
   o = section.option(
     form.Value,
     "cache_path",
     _("Cache File Path"),
     _(
-      "Select or enter path for sing-box cache file. Change this ONLY if you know what you are doing",
+      "Select or enter path for Xrust cache file. Change this ONLY if you know what you are doing",
     ),
   );
-  o.value("/tmp/sing-box/cache.db", "RAM (/tmp/sing-box/cache.db)");
+  o.value("/tmp/xrust/cache.db", "RAM (/tmp/xrust/cache.db)");
   o.value(
-    "/usr/share/sing-box/cache.db",
-    "Flash (/usr/share/sing-box/cache.db)",
+    "/usr/share/xrust/cache.db",
+    "Flash (/usr/share/xrust/cache.db)",
   );
-  o.default = "/tmp/sing-box/cache.db";
+  o.default = "/tmp/xrust/cache.db";
   o.rmempty = false;
   o.validate = function (section_id, value) {
     if (!value) {
@@ -859,7 +866,7 @@ function createSettingsContent(section) {
     form.ListValue,
     "log_level",
     _("Log Level"),
-    _("Select the log level for sing-box"),
+    _("Select the log level for Xrust"),
   );
   o.value("trace", "Trace");
   o.value("debug", "Debug");

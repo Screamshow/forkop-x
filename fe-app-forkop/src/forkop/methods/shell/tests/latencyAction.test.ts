@@ -69,6 +69,48 @@ describe('ForkopShellMethods.latencyAction', () => {
     });
   });
 
+  it.each([true, false])(
+    'waits for the terminal bulk test result after 30 seconds (success=%s)',
+    async (success) => {
+      const startedAt = Date.now();
+      const terminal = {
+        success,
+        running: false,
+        kind: 'latency',
+        latency_type: 'proxy_list',
+        section: 'main',
+        tag: '[]',
+        message: success ? 'Latency test completed' : 'Latency test failed',
+        exit_code: success ? 0 : 1,
+      };
+      mocks.executeShellCommand.mockImplementation(async () => {
+        const running = Date.now() - startedAt < 42000;
+        return {
+          stdout: JSON.stringify(
+            running ? { ...terminal, success: true, running } : terminal,
+          ),
+          stderr: '',
+          code: 0,
+        };
+      });
+      const settled = vi.fn();
+      const result =
+        ForkopShellMethods.waitLatencyTestJob('job-1').then(settled);
+
+      await vi.advanceTimersByTimeAsync(32000);
+      expect(settled).not.toHaveBeenCalled();
+      expect(mocks.executeShellCommand).toHaveBeenCalledWith({
+        command: '/usr/bin/forkop',
+        args: ['latency_test_status', 'job-1'],
+        timeout: 15000,
+      });
+
+      await vi.advanceTimersByTimeAsync(10000);
+      await result;
+      expect(settled).toHaveBeenCalledWith({ success: true, data: terminal });
+    },
+  );
+
   it('passes an optional timeout to latency jobs', async () => {
     mocks.executeShellCommand.mockResolvedValue({
       stdout: JSON.stringify({ success: true, job_id: 'latency-1' }),

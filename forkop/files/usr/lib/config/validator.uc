@@ -1,6 +1,7 @@
 #!/usr/bin/env ucode
 
 let fs = require("fs");
+let xrust = require("xrust.binary");
 let uci_core = require("core.uci");
 let fixture_uci_data = null;
 let subscription_parser_module = null;
@@ -199,23 +200,6 @@ function command_exists(name) {
     return system("command -v " + shell_quote(name) + " >/dev/null 2>&1") == 0;
 }
 
-function installed_sing_box_version() {
-    if (command_exists("apk")) {
-        let output = command_output_from_args([ "apk", "list", "--installed" ]);
-        for (let line in split(output, "\n")) {
-            let matched = match(line, /^sing-box-([^ \r\n]+)-r[0-9]+:/);
-            if (matched == null)
-                matched = match(line, /^sing-box-tiny-([^ \r\n]+)-r[0-9]+:/);
-            if (matched != null)
-                return replace(as_string(matched[1]), /_/, "-");
-        }
-    }
-
-    let output = command_output_from_args([ "opkg", "list-installed", "sing-box" ]);
-    let matched = match(output, /^sing-box[ \t]+-[ \t]+([^ \r\n]+)/);
-    return matched == null ? "" : as_string(matched[1]);
-}
-
 function log_message(message, level) {
     level = as_string(level || "info");
     run_args([ "logger", "-t", "forkop", "[" + level + "] " + as_string(message) ]);
@@ -224,73 +208,6 @@ function log_message(message, level) {
 function fail_requirement(message, level) {
     log_message(message, level || "error");
     exit(1);
-}
-
-function first_line_last_field(data) {
-    let newline = index(as_string(data), "\n");
-    let line = newline >= 0 ? substr(data, 0, newline) : data;
-    let fields = split(trim(as_string(line)), /[ \t\r\n]+/);
-    return length(fields) > 0 ? as_string(fields[length(fields) - 1]) : "";
-}
-
-function digit_char(value) {
-    return match(as_string(value), /^[0-9]$/) != null;
-}
-
-function strip_leading_zeroes(value) {
-    value = as_string(value);
-    let i = 0;
-    while (i < length(value) - 1 && substr(value, i, 1) == "0")
-        i++;
-    return substr(value, i);
-}
-
-function version_compare(lhs, rhs) {
-    lhs = as_string(lhs);
-    rhs = as_string(rhs);
-
-    let li = 0, ri = 0;
-    while (li < length(lhs) || ri < length(rhs)) {
-        if (li >= length(lhs))
-            return substr(rhs, ri, 1) == "~" ? 1 : -1;
-        if (ri >= length(rhs))
-            return substr(lhs, li, 1) == "~" ? -1 : 1;
-
-        let lc = substr(lhs, li, 1);
-        let rc = substr(rhs, ri, 1);
-        if (lc == rc) {
-            li++;
-            ri++;
-            continue;
-        }
-
-        if (lc == "~" || rc == "~")
-            return lc == "~" ? -1 : 1;
-
-        if (digit_char(lc) && digit_char(rc)) {
-            let ls = li, rs = ri;
-            while (li < length(lhs) && digit_char(substr(lhs, li, 1)))
-                li++;
-            while (ri < length(rhs) && digit_char(substr(rhs, ri, 1)))
-                ri++;
-
-            let lnum = strip_leading_zeroes(substr(lhs, ls, li - ls));
-            let rnum = strip_leading_zeroes(substr(rhs, rs, ri - rs));
-            if (length(lnum) != length(rnum))
-                return length(lnum) < length(rnum) ? -1 : 1;
-            if (lnum != rnum)
-                return lnum < rnum ? -1 : 1;
-            continue;
-        }
-
-        return lc < rc ? -1 : 1;
-    }
-
-    return 0;
-}
-
-function version_at_least(current, required) {
-    return version_compare(current, required) >= 0;
 }
 
 function constant_value(constants, name) {
@@ -690,12 +607,12 @@ function validate_duration_option(value, label) {
     if (duration_to_seconds_value(value) != null)
         return;
 
-    fail_validation("Invalid duration value for " + label + ": " + value + ". Use sing-box duration format like 1d, 12h or 30m. Aborted.");
+    fail_validation("Invalid duration value for " + label + ": " + value + ". Use a duration like 1d, 12h or 30m. Aborted.");
 }
 
 function validate_required_duration_option(value, label) {
     if (as_string(value) == "")
-        fail_validation("Missing duration value for " + label + ". Use sing-box duration format like 1d, 12h or 30m. Aborted.");
+        fail_validation("Missing duration value for " + label + ". Use a duration like 1d, 12h or 30m. Aborted.");
 
     validate_duration_option(value, label);
 }
@@ -1086,7 +1003,7 @@ function validate_outbound_json_rule(section) {
         fail_validation("JSON outbound rule '" + name + "' has empty outbound_json. Aborted.");
 
     if (!valid_outbound_json(outbound_json))
-        fail_validation("JSON outbound rule '" + name + "' must contain a valid sing-box outbound JSON object with a type field. Aborted.");
+        fail_validation("JSON outbound rule '" + name + "' must contain a valid Xrust outbound JSON object with a type field. Aborted.");
 }
 
 function validate_outbound_json_values(section) {
@@ -1100,7 +1017,7 @@ function validate_outbound_json_values(section) {
             fail_validation("Connection rule '" + name + "' has empty JSON outbound. Aborted.");
 
         if (!valid_outbound_json(value))
-            fail_validation("Connection rule '" + name + "' must contain valid sing-box outbound JSON objects with a type field. Aborted.");
+            fail_validation("Connection rule '" + name + "' must contain valid Xrust outbound JSON objects with a type field. Aborted.");
 
         let outbound = outbound_json_object(value);
         let tag_name = trim(as_string(outbound.tag || ""));
@@ -1437,126 +1354,8 @@ function context_from_runtime() {
         community_services: constant_value(constants, "COMMUNITY_SERVICES"),
         nft_fakeip_mark: constant_value(constants, "NFT_FAKEIP_MARK"),
         nft_outbound_mark: constant_value(constants, "NFT_OUTBOUND_MARK"),
-        nft_router_mark: constant_value(constants, "NFT_ROUTER_MARK"),
-        sing_box_required_version: constant_value(constants, "SB_REQUIRED_VERSION"),
-        sing_box_variant_state_file: constant_value(constants, "SB_VARIANT_STATE_FILE"),
-        sing_box_version_state_file: constant_value(constants, "SB_VERSION_STATE_FILE"),
-        sing_box_managed_service_marker: constant_value(constants, "SB_MANAGED_SERVICE_MARKER")
+        nft_router_mark: constant_value(constants, "NFT_ROUTER_MARK")
     };
-}
-
-function sing_box_variant_marker(ctx, value) {
-    let path = as_string(ctx.sing_box_variant_state_file);
-    if (path == "")
-        path = "/etc/forkop/sing-box-variant";
-
-    let data = fs.readfile(path);
-    return trim(as_string(data)) == as_string(value);
-}
-
-function sing_box_compressed_marker_set(ctx) {
-    return sing_box_variant_marker(ctx, "extended-compressed");
-}
-
-function sing_box_version_state(ctx) {
-    let path = as_string(ctx.sing_box_version_state_file);
-    if (path == "")
-        path = "/etc/forkop/sing-box-version";
-
-    let data = fs.readfile(path);
-    if (data == null)
-        return "";
-
-    let newline = index(data, "\n");
-    return newline >= 0 ? substr(data, 0, newline) : as_string(data);
-}
-
-function managed_sing_box_service_script(marker) {
-    marker = as_string(marker);
-    if (marker == "")
-        marker = "Forkop managed sing-box service for binary variants";
-
-    return "#!/bin/sh /etc/rc.common\n" +
-        "# " + marker + "\n" +
-        "\n" +
-        "USE_PROCD=1\n" +
-        "START=99\n" +
-        "PROG=\"/usr/bin/sing-box\"\n" +
-        "\n" +
-        "start_service() {\n" +
-        "    config_load \"sing-box\"\n" +
-        "    local enabled config_file working_directory\n" +
-        "    local log_stderr\n" +
-        "\n" +
-        "    config_get_bool enabled \"main\" \"enabled\" \"0\"\n" +
-        "    [ \"$enabled\" -eq \"1\" ] || return 0\n" +
-        "\n" +
-        "    config_get config_file \"main\" \"conffile\" \"/etc/sing-box/config.json\"\n" +
-        "    config_get working_directory \"main\" \"workdir\" \"/usr/share/sing-box\"\n" +
-        "    mkdir -p \"$working_directory\" || return 1\n" +
-        "    config_get_bool log_stderr \"main\" \"log_stderr\" \"1\"\n" +
-        "\n" +
-        "    procd_open_instance\n" +
-        "    procd_set_param command \"$PROG\" run -c \"$config_file\" -D \"$working_directory\"\n" +
-        "    procd_set_param stderr \"$log_stderr\"\n" +
-        "    procd_set_param limits core=\"unlimited\"\n" +
-        "    procd_set_param limits nofile=\"1000000 1000000\"\n" +
-        "    procd_set_param respawn\n" +
-        "    procd_close_instance\n" +
-        "}\n" +
-        "\n" +
-        "service_triggers() {\n" +
-        "    procd_add_reload_trigger \"sing-box\"\n" +
-        "}\n";
-}
-
-function install_managed_sing_box_service_script(ctx) {
-    let stamp = clock();
-    let tmp_file = sprintf("/etc/init.d/sing-box.forkop.%d.%d", stamp[0], stamp[1]);
-
-    if (!fs.writefile(tmp_file, managed_sing_box_service_script(ctx.sing_box_managed_service_marker)))
-        return false;
-
-    if (!run_args([ "chmod", "0755", tmp_file ]) || !run_args([ "mv", "-f", tmp_file, "/etc/init.d/sing-box" ])) {
-        fs.unlink(tmp_file);
-        return false;
-    }
-
-    return true;
-}
-
-function service_exists(service) {
-    return file_executable("/etc/init.d/" + as_string(service));
-}
-
-// Forkop no longer installs sing-box-extended. A build placed by hand in
-// /usr/bin/sing-box, or kept from a legacy installation, is the unpackaged
-// (compressed) variant: record it and give it Forkop's managed service when
-// it has none or only another tool's binary-variant service. A service the
-// user wrote is left as it is.
-function adopt_unpackaged_extended_sing_box(ctx, version) {
-    if (sing_box_compressed_marker_set(ctx) || !command_exists("sing-box") ||
-        index(as_string(version), "extended") < 0)
-        return;
-    let service = as_string(fs.readfile("/etc/init.d/sing-box") || "");
-    let foreign_managed = index(service, "managed sing-box service for binary variants") >= 0 &&
-        index(service, as_string(ctx.sing_box_managed_service_marker)) < 0;
-    if (service_exists("sing-box") && !foreign_managed)
-        return;
-    let lib = getenv("FORKOP_LIB") || "/usr/lib/forkop";
-    for (let name in [ "rust-x", "sing-box-x", "sing-box-extended", "sing-box-tiny", "sing-box" ])
-        if (run_args([ "ucode", "-L", lib, lib + "/core/packages.uc", "installed", name ]))
-            return;
-
-    let marker = as_string(ctx.sing_box_variant_state_file) || "/etc/forkop/sing-box-variant";
-    let version_file = as_string(ctx.sing_box_version_state_file) || "/etc/forkop/sing-box-version";
-    if (!run_args([ "mkdir", "-p", replace(marker, /\/[^\/]*$/, ""), replace(version_file, /\/[^\/]*$/, "") ]) ||
-        !fs.writefile(version_file, as_string(version) + "\n") ||
-        !fs.writefile(marker, "extended-compressed\n"))
-        return;
-    if (foreign_managed)
-        fs.unlink("/etc/init.d/sing-box");
-    log_message("Using the manually installed sing-box-extended binary " + as_string(version) + " with the Forkop managed service", "info");
 }
 
 function has_outbound_section(ctx) {
@@ -1603,26 +1402,12 @@ function check_runtime_requirements() {
     if (!command_exists("nft"))
         fail_requirement("Required nftables executable 'nft' is missing. Install package 'nftables-json' and start Forkop again. Aborted.", "error");
 
-    let sing_box_version_output = command_exists("sing-box") ? bounded_command_output_from_args([ "sing-box", "version" ], 5) : "";
-    let sing_box_version = sing_box_compressed_marker_set(ctx) ? sing_box_version_state(ctx) : first_line_last_field(sing_box_version_output);
-    if (sing_box_version == "")
-        sing_box_version = installed_sing_box_version();
+    if (!file_executable(xrust.PATH) ||
+        xrust.version_from_output(bounded_command_output_from_args([ xrust.PATH, "version" ], 5)) == "")
+        fail_requirement("A compatible Xrust client is required. Repair the Forkop installation before starting the service.", "error");
 
-    if (sing_box_version == "") {
-        if (!command_exists("sing-box") || !sing_box_compressed_marker_set(ctx))
-            fail_requirement("Package 'sing-box' is not installed. Aborted.", "error");
-    }
-    else if (!version_at_least(sing_box_version, ctx.sing_box_required_version)) {
-        fail_requirement("Package 'sing-box' version (" + sing_box_version + ") is lower than the required minimum (" + ctx.sing_box_required_version + "). Update sing-box: opkg update && opkg remove sing-box && opkg install sing-box. Aborted.", "error");
-    }
-
-    adopt_unpackaged_extended_sing_box(ctx, sing_box_version);
-    if (!service_exists("sing-box") && sing_box_compressed_marker_set(ctx))
-        install_managed_sing_box_service_script(ctx);
-
-    if (!service_exists("sing-box"))
-        fail_requirement("Service 'sing-box' is missing. Install a sing-box package or place a sing-box-extended binary in /usr/bin/sing-box. Aborted.", "error");
-
+    if (!file_executable(xrust.INIT))
+        fail_requirement("The Forkop Xrust service is missing. Repair the Forkop installation.", "error");
 
     if (dhcp_has_https_dns_proxy_options("/etc/config/dhcp") === true)
         log_message("https-dns-proxy is enabled in DHCP config. Disable it or edit /etc/config/dhcp before starting Forkop.", "error");

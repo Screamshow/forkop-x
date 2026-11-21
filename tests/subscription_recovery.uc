@@ -1,4 +1,4 @@
-let recovery = require("singbox.subscription_recovery");
+let recovery = require("xrust.subscription_recovery");
 let checks = 0;
 function expect(value, message) { if (!value) die("FAIL: " + message); checks++; }
 function fixture() {

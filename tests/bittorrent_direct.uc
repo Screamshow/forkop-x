@@ -1,6 +1,6 @@
 #!/usr/bin/ucode
 // ucode -L <Forkop library> tests/bittorrent_direct.uc
-let route = require("singbox.route");
+let route = require("xrust.route");
 for (let enabled in [false, true]) {
     for (let supported in [false, true]) {
         let config = route.config({ bittorrent_direct: enabled ? "1" : "0" },

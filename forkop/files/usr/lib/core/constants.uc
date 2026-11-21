@@ -45,7 +45,7 @@ function constants_map() {
     c.RESOLV_CONF = env("RESOLV_CONF", "/etc/resolv.conf");
     c.CHECK_PROXY_IP_DOMAIN = env("CHECK_PROXY_IP_DOMAIN", "ip.podkop.fyi");
     c.FAKEIP_TEST_DOMAIN = env("FAKEIP_TEST_DOMAIN", "fakeip.podkop.fyi");
-    c.TMP_SING_BOX_FOLDER = env("TMP_SING_BOX_FOLDER", "/tmp/sing-box");
+    c.TMP_SING_BOX_FOLDER = env("TMP_SING_BOX_FOLDER", "/tmp/xrust");
     c.TMP_RULESET_FOLDER = env("TMP_RULESET_FOLDER", c.TMP_SING_BOX_FOLDER + "/rulesets");
     c.TMP_SUBSCRIPTION_FOLDER = env("TMP_SUBSCRIPTION_FOLDER", c.TMP_SING_BOX_FOLDER + "/subscriptions");
     c.CLOUDFLARE_OCTETS = env("CLOUDFLARE_OCTETS", "8.47 162.159 188.114");
@@ -68,8 +68,6 @@ function constants_map() {
     // source-check rule at priority 103 away from its rerouting lookups.
     c.NFT_ROUTER_MARK = env("NFT_ROUTER_MARK", "0x10000000");
 
-    c.SB_REQUIRED_VERSION = env("SB_REQUIRED_VERSION", "1.12.0");
-    c.SB_MANAGED_SERVICE_MARKER = env("SB_MANAGED_SERVICE_MARKER", "Forkop managed sing-box service for binary variants");
     c.SB_DNS_SERVER_TAG = env("SB_DNS_SERVER_TAG", "dns-server");
     c.SB_FAKEIP_DNS_SERVER_TAG = env("SB_FAKEIP_DNS_SERVER_TAG", "fakeip-server");
     c.SB_FAKEIP_INET4_RANGE = env("SB_FAKEIP_INET4_RANGE", "198.18.0.0/15");
@@ -92,8 +90,6 @@ function constants_map() {
     c.SB_DIRECT_OUTBOUND_TAG = env("SB_DIRECT_OUTBOUND_TAG", "direct-out");
     c.SB_BYPASS_OUTBOUND_TAG = env("SB_BYPASS_OUTBOUND_TAG", "bypass-out");
     c.SB_CLASH_API_CONTROLLER_PORT = env("SB_CLASH_API_CONTROLLER_PORT", "9090");
-    c.SB_VARIANT_STATE_FILE = env("SB_VARIANT_STATE_FILE", "/etc/forkop/sing-box-variant");
-    c.SB_VERSION_STATE_FILE = env("SB_VERSION_STATE_FILE", "/etc/forkop/sing-box-version");
 
     c.FORKOP_MIRROR_BASE_URL = env("FORKOP_MIRROR_BASE_URL", configured_mirror_base_url());
     let mirror_lists = c.FORKOP_MIRROR_BASE_URL != "" ? c.FORKOP_MIRROR_BASE_URL + "/forkop/lists" : "";

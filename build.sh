@@ -63,8 +63,8 @@ SDK_DIR="${SDK_DIR:-$SDK_CACHE_DIR/extracted}"
 IPK_SDK_URL="${IPK_SDK_URL:-https://downloads.openwrt.org/releases/24.10.6/targets/x86/64/openwrt-sdk-24.10.6-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst}"
 APK_SDK_URL="${APK_SDK_URL:-https://downloads.openwrt.org/releases/25.12.3/targets/x86/64/openwrt-sdk-25.12.3-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst}"
 
-BACKEND_DESCRIPTION="Rule-based Forkop backend with sing-box orchestration"
-APP_DESCRIPTION="Rule-based Forkop LuCI app with sing-box orchestration"
+BACKEND_DESCRIPTION="Rule-based Forkop backend with Xrust orchestration"
+APP_DESCRIPTION="Rule-based Forkop LuCI app with Xrust orchestration"
 I18N_DESCRIPTION="Translation for luci-app-forkop - Русский (Russian)"
 MAINTAINER="Screamshow <235684779+Screamshow@users.noreply.github.com>"
 PROJECT_URL="https://github.com/Screamshow/forkop-x"
@@ -198,6 +198,7 @@ build_backend_root() {
   make_dir "$output_root/usr/share/forkop/defaults"
 
   install -m 0755 "$ROOT_DIR/forkop/files/etc/init.d/forkop" "$output_root/etc/init.d/forkop"
+  install -m 0755 "$ROOT_DIR/forkop/files/etc/init.d/forkop-xrust" "$output_root/etc/init.d/forkop-xrust"
   install -m 0755 "$ROOT_DIR/forkop/files/etc/init.d/forkop-support" "$output_root/etc/init.d/forkop-support"
   install -m 0755 "$ROOT_DIR/forkop/files/etc/init.d/forkop-tailscale" "$output_root/etc/init.d/forkop-tailscale"
   install -m 0755 "$ROOT_DIR/forkop/files/etc/init.d/forkop-torrserver-direct" "$output_root/etc/init.d/forkop-torrserver-direct"
@@ -207,6 +208,7 @@ build_backend_root() {
   install -m 0755 "$ROOT_DIR/forkop/files/usr/share/forkop/zapret-manager-migrate.sh" "$output_root/usr/share/forkop/zapret-manager-migrate.sh"
   install -m 0755 "$ROOT_DIR/forkop/files/usr/share/forkop/zapret-manager-upgrade.sh" "$output_root/usr/share/forkop/zapret-manager-upgrade.sh"
   install -m 0755 "$ROOT_DIR/forkop/files/usr/share/forkop/package-init" "$output_root/usr/share/forkop/package-init"
+  install -m 0755 "$ROOT_DIR/forkop/files/usr/share/forkop/upgrade-recovery" "$output_root/usr/share/forkop/upgrade-recovery"
   install -m 0755 "$ROOT_DIR/forkop/files/usr/bin/forkop" "$output_root/usr/bin/forkop"
   cp -a "$ROOT_DIR/forkop/files/usr/lib/." "$output_root/usr/lib/forkop/"
 
@@ -216,6 +218,7 @@ build_backend_root() {
   normalize_package_root_modes "$output_root"
   chmod 0755 \
     "$output_root/etc/init.d/forkop" \
+    "$output_root/etc/init.d/forkop-xrust" \
     "$output_root/etc/init.d/forkop-support" \
     "$output_root/etc/init.d/forkop-tailscale" \
     "$output_root/usr/lib/forkop/tailscale/lan.sh" \
@@ -226,7 +229,8 @@ build_backend_root() {
     "$output_root/usr/share/forkop/mirror-migration.sh" \
     "$output_root/usr/share/forkop/zapret-manager-migrate.sh" \
     "$output_root/usr/share/forkop/zapret-manager-upgrade.sh" \
-    "$output_root/usr/share/forkop/package-init"
+    "$output_root/usr/share/forkop/package-init" \
+    "$output_root/usr/share/forkop/upgrade-recovery"
 }
 
 build_app_root() {

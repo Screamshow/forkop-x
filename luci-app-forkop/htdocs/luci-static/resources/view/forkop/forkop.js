@@ -37,21 +37,49 @@ function configureForkopApplyHoldoff() {
   const originalApply = changes.apply;
   const originalConfirm = changes.confirm;
   let forkopOnly = false;
+  let includesForkop = false;
+  let confirmingForkop = false;
+
+  document.addEventListener("uci-applied", () => {
+    if (!confirmingForkop) return;
+    confirmingForkop = false;
+
+    // LuCI displays its success notice immediately after this event. It has
+    // confirmed UCI, while Forkop's procd reload reports its own result.
+    const displayStatus = changes.displayStatus;
+    const displayCommitted = function (status, content) {
+      changes.displayStatus = displayStatus;
+      return displayStatus.call(
+        this, status,
+        status === "notice"
+          ? E("p", {}, _("Settings saved to UCI. See Diagnostics for the Forkop runtime result."))
+          : content,
+      );
+    };
+    changes.displayStatus = displayCommitted;
+    Promise.resolve().then(() => {
+      if (changes.displayStatus === displayCommitted) changes.displayStatus = displayStatus;
+    });
+  });
 
   changes.apply = function () {
     const context = this;
     const args = arguments;
     forkopOnly = false;
+    includesForkop = false;
+    confirmingForkop = false;
     return uci
       .changes()
       .catch(() => null)
       .then((pending) => {
         const packages = Object.keys(pending || {});
+        includesForkop =
+          Array.isArray(pending?.[main.FORKOP_UCI_PACKAGE]) &&
+          pending[main.FORKOP_UCI_PACKAGE].length > 0;
         forkopOnly =
           packages.every((name) => Array.isArray(pending[name])) &&
           packages.filter((name) => pending[name].length > 0).length === 1 &&
-          Array.isArray(pending?.[main.FORKOP_UCI_PACKAGE]) &&
-          pending[main.FORKOP_UCI_PACKAGE].length > 0;
+          includesForkop;
         return originalApply.apply(context, args);
       });
   };
@@ -59,12 +87,17 @@ function configureForkopApplyHoldoff() {
   changes.confirm = function () {
     const skipHoldoff = forkopOnly;
     forkopOnly = false;
+    confirmingForkop = includesForkop;
+    includesForkop = false;
     const holdoff = L.env.apply_holdoff;
     try {
       // Native confirm schedules its first request synchronously. Restore the
       // shared setting immediately, including when native confirm throws.
       if (skipHoldoff) L.env.apply_holdoff = 0;
       return originalConfirm.apply(this, arguments);
+    } catch (error) {
+      confirmingForkop = false;
+      throw error;
     } finally {
       L.env.apply_holdoff = holdoff;
     }
@@ -157,19 +190,6 @@ const EntryPoint = {
         .catch(() => null);
     };
 
-    if (main.store && typeof main.store.set === "function") {
-      const servicesInfoWidget = main.store.get().servicesInfoWidget;
-      main.store.set({
-        servicesInfoWidget: {
-          ...servicesInfoWidget,
-          data: {
-            ...servicesInfoWidget.data,
-            forkopStatus: "reloading",
-          },
-        },
-      });
-    }
-
     return Promise.resolve()
       .then(() => view.prototype.handleSaveApply.call(this, ev, mode))
       .then((result) => {
@@ -189,9 +209,7 @@ const EntryPoint = {
     main.injectGlobalStyles();
     const uiCapabilities = {
       loaded: false,
-      singBoxExtended: false,
-      singBoxTiny: false,
-      singBoxTailscale: true,
+      xrustTailscale: false,
     };
     let uiCapabilitiesPromise = null;
 
@@ -202,9 +220,7 @@ const EntryPoint = {
           diagnosticsSystemInfo: {
             ...currentSystemInfo,
             providerInfoLoaded: true,
-            sing_box_extended: uiCapabilities.singBoxExtended ? 1 : 0,
-            sing_box_tiny: uiCapabilities.singBoxTiny ? 1 : 0,
-            sing_box_tailscale: uiCapabilities.singBoxTailscale ? 1 : 0,
+            xrust_tailscale: uiCapabilities.xrustTailscale ? 1 : 0,
           },
         });
       }
@@ -212,14 +228,7 @@ const EntryPoint = {
 
     const updateUiCapabilities = function (data) {
       uiCapabilities.loaded = true;
-      uiCapabilities.singBoxExtended = Boolean(
-        Number(data?.sing_box_extended) === 1,
-      );
-      uiCapabilities.singBoxTiny = Boolean(Number(data?.sing_box_tiny) === 1);
-      uiCapabilities.singBoxTailscale =
-        typeof data?.sing_box_tailscale === "undefined"
-          ? true
-          : Boolean(Number(data.sing_box_tailscale) === 1);
+      uiCapabilities.xrustTailscale = Number(data?.xrust_tailscale) === 1;
       applyUiCapabilities();
 
       return uiCapabilities;
@@ -240,7 +249,7 @@ const EntryPoint = {
             loading: false,
             failed: false,
             data: {
-              singbox: Number(data.service.sing_box?.running) || 0,
+              xrust: Number(data.service.xrust?.running) || 0,
               forkopRunning: Number(data.service.forkop?.running) || 0,
               forkopEnabled: Number(data.service.forkop?.enabled) || 0,
               forkopStatus: data.service.forkop?.status || "",

@@ -66,11 +66,11 @@ preinstall_release_dependencies
 
 # It runs after the storage preflight and before anything stops Forkop.
 awk '
-  /^main\(\) \{/ { in_main = 1 }
-  in_main && /^}/ { exit }
-  in_main && /ensure_flash_space/ && !flash { flash = NR }
-  in_main && /preinstall_release_dependencies/ && !pre { pre = NR }
-  in_main && /install_backend_package|cleanup_legacy_installation|begin_legacy_migration/ && !change { change = NR }
+  /^install_resolved_forkop_release\(\) \{/ { in_install = 1 }
+  in_install && /^}/ { exit }
+  in_install && /ensure_flash_space/ && !flash { flash = NR }
+  in_install && /preinstall_release_dependencies/ && !pre { pre = NR }
+  in_install && /install_backend_package|cleanup_legacy_installation|begin_legacy_migration/ && !change { change = NR }
   END { exit !(flash && pre > flash && change > pre) }
 ' "$INSTALLER" || fail 'installer does not install new dependencies between the preflight and the first service change'
 
@@ -114,14 +114,14 @@ fs.unlink(path);
 exit(status);
 ' "$ACTION" "$manager" "$APK_DRY_RUN" "$OPKG_DRY_RUN" || fail "$manager: LuCI update does not preinstall new dependencies"
 done
-grep -A3 'let preflight_error = forkop_package_preflight' "$ACTION" | grep -Fq 'preinstall_release_dependencies' ||
-  fail 'LuCI update does not install new dependencies right after its preflight'
 awk '
   /^function install_forkop\(/ { in_fn = 1 }
+  in_fn && /preflight_error = forkop_package_preflight/ && !flash { flash = NR; next }
+  in_fn && /preflight_error = forkop_package_preflight/ { recheck = NR }
   in_fn && /preinstall_release_dependencies/ && !pre { pre = NR }
-  in_fn && /begin-package-upgrade-quiesce|stop_old_sing_box_before_forkop_upgrade/ && !stop { stop = NR }
+  in_fn && /prepare_forkop_runtime_for_package_upgrade/ && !stop { stop = NR }
   in_fn && /^}/ { exit }
-  END { exit !(pre && stop > pre) }
-' "$ACTION" || fail 'LuCI update stops Forkop before installing new dependencies'
+  END { exit !(flash && pre > flash && recheck > pre && stop > recheck) }
+' "$ACTION" || fail 'LuCI update must check space before and after installing dependencies, while Forkop still runs'
 
 echo 'New release dependencies are installed before Forkop stops: OK'

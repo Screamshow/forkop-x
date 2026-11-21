@@ -32,6 +32,9 @@ def build_catalog(root):
     for manifest in root.glob('releases/*/manifest.json'):
         try:
             release = json.loads(manifest.read_text(encoding='utf-8'))
+            # 2.x uses this catalog to offer manually selectable core builds.
+            if release.get('minimum_forkop_major', 2) != 2:
+                continue
             version = release['version']
             if not isinstance(version, str) or not re.fullmatch(r'\d+\.\d+\.\d+', version):
                 raise ValueError('Invalid version')
@@ -76,6 +79,33 @@ def write_catalog(root):
     print(f'Published {len(catalog["releases"])} verified Rust X releases')
 
 
+def publish_native_archive(source, target, catalog):
+    names = [asset['name'] for asset in catalog['assets']]
+    names += ['openwrt-manifest.json', 'forkop-apk.pem', 'SHA256SUMS']
+
+    def verify_existing():
+        if (json.loads((target / 'manifest.json').read_text()) != catalog or
+                any((target / name).read_bytes() != (source / name).read_bytes() for name in names)):
+            raise ValueError('Refusing to replace an immutable native Xrust archive')
+
+    if target.exists():
+        verify_existing()
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='.xrust-', dir=target.parent) as temporary:
+        staged = Path(temporary) / target.name
+        staged.mkdir(mode=0o755)
+        for name in names:
+            shutil.copyfile(source / name, staged / name)
+        atomic_json(staged / 'manifest.json', catalog)
+        try:
+            staged.rename(target)
+        except OSError:
+            if not target.is_dir():
+                raise
+            verify_existing()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path)
@@ -88,6 +118,11 @@ def main():
         return
     source = args.source
     m = json.loads((source / 'openwrt-manifest.json').read_text())
+    minimum_forkop_major = m.get('minimum_forkop_major', 2)
+    if type(minimum_forkop_major) is not int or minimum_forkop_major not in (2, 3):
+        raise ValueError('Unsupported minimum Forkop major in Xrust manifest')
+    if minimum_forkop_major == 3 and args.latest:
+        raise ValueError('Xrust for Forkop 3.x cannot replace the standalone 2.x latest pointer')
     version = m['version']
     assert re.fullmatch(r'\d+\.\d+\.\d+', version)
     assert m['apk_signed'] is True
@@ -115,6 +150,10 @@ def main():
                        'url': f'https://mirror.51343.ru/forkop/rust-x/releases/{version}/{a["file"]}'})
     catalog = {**m, 'schema': 1, 'name': 'rust-x', 'package_revision': 1, 'assets': assets}
     target = args.destination / 'releases' / version
+    if minimum_forkop_major == 3:
+        publish_native_archive(source, target, catalog)
+        print(f'Verified Rust X {version}: {len(assets)} packages')
+        return
     target.mkdir(parents=True, exist_ok=True)
     for a in assets:
         p = target / a['name']

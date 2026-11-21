@@ -75,6 +75,7 @@ download '1.1.1.1 8.8.8.8' 0 'https://one.example/sub?token=secret' || fail 'boo
 grep -Fxq 'one.example 1.1.1.1' "$NSLOOKUP_LOG" || fail 'first Bootstrap DNS was not tried'
 grep -Fxq 'one.example 8.8.8.8' "$NSLOOKUP_LOG" || fail 'second Bootstrap DNS was not tried'
 grep -Fq -- '--resolve one.example:443:203.0.113.11' "$CURL_LOG" || fail 'curl did not retain hostname through --resolve'
+grep -Eq -- '--max-time ([1-9]|1[0-9]|20) --max-filesize 16777216' "$CURL_LOG" || fail 'runtime fetch size or time bound is missing'
 grep -Fq -- '-k' "$CURL_LOG" && fail 'bootstrap download must not disable TLS verification'
 grep -Fq 'secret' "$LOGGER_LOG" && fail 'subscription token leaked to logger'
 

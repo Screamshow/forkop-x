@@ -29,7 +29,7 @@ result="$(printf '%s' '{
   }
 }' | ucode -L "$ROOT/forkop/files/usr/lib" "$RUNTIME" automatic-latency-proxy-tags-fixture)"
 
-[ "$(printf '%s' "$result" | tr -d '[:space:]')" = '["standalone"]' ] ||
+ucode -e 'let tags = json(ARGV[0]); exit(type(tags) == "array" && length(tags) == 1 && tags[0] == "standalone" ? 0 : 1);' "$result" ||
   fail "automatic latency must exclude URLTest and Priority members: $result"
 
 grep -Fq 'automatic_latency_priority_groups()' "$RUNTIME" ||

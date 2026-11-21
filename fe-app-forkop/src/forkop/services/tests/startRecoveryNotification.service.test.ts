@@ -3,18 +3,39 @@ import { describe, expect, it, vi } from 'vitest';
 import { StartRecoveryNotificationController } from '../startRecoveryNotification.service';
 
 describe('StartRecoveryNotificationController', () => {
+  it('passes controlled stop failures through and emits a startup failure without a retry', () => {
+    vi.useFakeTimers();
+    try {
+      const emit = vi.fn();
+      const controller = new StartRecoveryNotificationController(emit);
+      expect(
+        controller.handle(
+          'forkop: [fatal] Controlled Xrust transition refused: ownership is ambiguous before stop',
+        ),
+      ).toBe(false);
+      const line =
+        'forkop: [fatal] Controlled Xrust transition refused: unexpected Xrust exists before start';
+      expect(controller.handle(line)).toBe(true);
+      expect(emit).not.toHaveBeenCalled();
+      vi.runAllTimers();
+      expect(emit).toHaveBeenCalledExactlyOnceWith({ kind: 'error', line });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('replaces the transient controlled-transition fatal with a recovery warning and success', () => {
     const emit = vi.fn();
     const controller = new StartRecoveryNotificationController(emit);
 
     expect(
       controller.handle(
-        'forkop: [fatal] Controlled sing-box transition refused: unexpected sing-box exists before start',
+        'forkop: [fatal] Controlled xrust transition refused: unexpected xrust exists before start',
       ),
     ).toBe(true);
     expect(
       controller.handle(
-        'forkop: [fatal] sing-box did not reach a stable running state after start. Aborted.',
+        'forkop: [fatal] xrust did not reach a stable running state after start. Aborted.',
       ),
     ).toBe(true);
     expect(
@@ -43,7 +64,7 @@ describe('StartRecoveryNotificationController', () => {
     const controller = new StartRecoveryNotificationController(emit);
 
     controller.handle(
-      'forkop: [fatal] Controlled sing-box transition refused: unexpected sing-box exists before start',
+      'forkop: [fatal] Controlled xrust transition refused: unexpected xrust exists before start',
     );
     expect(
       controller.handle(

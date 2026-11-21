@@ -269,9 +269,6 @@ msgstr "Выбор версии Forkop X"
 msgid "Choose version"
 msgstr "Выбрать версию"
 
-msgid "Choose Xrust version"
-msgstr "Выбор версии Xrust"
-
 msgid "CIDR must be between 0 and 32 for IPv4 or 0 and 128 for IPv6"
 msgstr "CIDR должен быть от 0 до 32 для IPv4 или от 0 до 128 для IPv6"
 
@@ -365,8 +362,8 @@ msgstr "Не удалось сравнить публичные IP FakeIP и к�
 msgid "Could not confirm completion. Check the removal log before retrying."
 msgstr "Не удалось подтвердить завершение. Перед повторной попыткой проверьте журнал удаления."
 
-msgid "Could not confirm the sing-box process state. Check the logs before trying again."
-msgstr "Не удалось подтвердить состояние процесса sing-box. Посмотрите журнал перед повторной попыткой."
+msgid "Could not confirm the Xrust process state. Check the logs before trying again."
+msgstr "Не удалось подтвердить состояние процесса Xrust. Посмотрите журнал перед повторной попыткой."
 
 msgid "Could not load available versions"
 msgstr "Не удалось загрузить доступные версии"
@@ -656,8 +653,8 @@ msgstr "Включить доступ YACD WAN"
 msgid "Enabled"
 msgstr "Включен"
 
-msgid "Enter a complete sing-box outbound object"
-msgstr "Введите полный объект outbound sing-box"
+msgid "Enter a complete Xrust outbound object"
+msgstr "Введите полный объект outbound Xrust"
 
 msgid "Enter a display name"
 msgstr "Введите отображаемое имя"
@@ -874,9 +871,6 @@ msgstr "Включить серверы"
 
 msgid "Install"
 msgstr "Установить"
-
-msgid "Install another build:"
-msgstr "Установить другую сборку:"
 
 msgid "Install selected version"
 msgstr "Установить выбранную версию"
@@ -1250,9 +1244,6 @@ msgstr ""
 msgid "Not enough storage for Forkop update and rollback. Required reserve: %s KiB; available: %s KiB."
 msgstr "Недостаточно места для обновления Forkop X и отката. Требуемый запас: %s КиБ; доступно: %s КиБ."
 
-msgid "Not enough storage for sing-box installation. Required reserve: %s KiB; available: %s KiB."
-msgstr "Недостаточно места для установки sing-box. Требуемый запас: %s КиБ; доступно: %s КиБ."
-
 msgid "Not enough temporary memory. Required: %s KiB; available: %s KiB."
 msgstr "Недостаточно временной памяти. Требуется: %s КиБ; доступно: %s КиБ."
 
@@ -1267,9 +1258,6 @@ msgstr "Не отвечает"
 
 msgid "Not running"
 msgstr "Не запущено"
-
-msgid "Older Xrust versions may not support all current settings. If the installation fails, the previous core is restored."
-msgstr "Старые версии Xrust могут не поддерживать все текущие настройки. Если установка не удастся, будет восстановлено прежнее ядро."
 
 msgid "One of"
 msgstr ""
@@ -1439,8 +1427,8 @@ msgstr "Удалить Forkop X вместе с настройками и кэш
 msgid "Remove Forkop X with its settings and restore the original device repositories."
 msgstr "Удалить Forkop X вместе с настройками и восстановить исходные репозитории устройства."
 
-msgid "Remove matching nodes from every current and future subscription before sing-box, URLTest, Priority, and the dashboard are generated."
-msgstr "Удалять совпадающие узлы из всех текущих и будущих подписок до формирования sing-box, URLTest, Priority и дашборда."
+msgid "Remove matching nodes from every current and future subscription before Xrust, URLTest, Priority, and the dashboard are generated."
+msgstr "Удалять совпадающие узлы из всех текущих и будущих подписок до формирования Xrust, URLTest, Priority и дашборда."
 
 msgid "Remove permanently"
 msgstr "Удалить безвозвратно"
@@ -1484,8 +1472,8 @@ msgstr ""
 msgid "Resident memory (RSS) of the Forkop service and its own workers."
 msgstr "Резидентная память (RSS) службы Forkop и её собственных воркеров."
 
-msgid "Resolve domain names before routing so sing-box can use real destination IPs."
-msgstr "Разрешать доменные имена перед маршрутизацией, чтобы sing-box использовал реальные IP-адреса назначения."
+msgid "Resolve domain names before routing so Xrust can use real destination IPs."
+msgstr "Разрешать доменные имена перед маршрутизацией, чтобы Xrust использовал реальные IP-адреса назначения."
 
 msgid "Resolve real IP for routing"
 msgstr "Разрешать реальный IP для маршрутизации"
@@ -1604,17 +1592,17 @@ msgstr "Выберите протокол DNS"
 msgid "Select network interface for VPN connection"
 msgstr "Выберите сетевой интерфейс для VPN-подключения"
 
-msgid "Select or enter path for sing-box cache file. Change this ONLY if you know what you are doing"
-msgstr "Выберите или введите путь к файлу кеша sing-box. Изменяйте это, ТОЛЬКО если вы знаете, что делаете"
+msgid "Select or enter path for Xrust cache file. Change this ONLY if you know what you are doing"
+msgstr "Выберите или введите путь к файлу кеша Xrust. Изменяйте это, ТОЛЬКО если вы знаете, что делаете"
 
-msgid "Select path for sing-box config file. Change this ONLY if you know what you are doing"
-msgstr "Выберите путь к файлу конфигурации sing-box. Изменяйте это, ТОЛЬКО если вы знаете, что делаете"
+msgid "Select path for Xrust config file. Change this ONLY if you know what you are doing"
+msgstr "Выберите путь к файлу конфигурации Xrust. Изменяйте это, ТОЛЬКО если вы знаете, что делаете"
 
 msgid "Select the fastest node"
 msgstr "Выбирать самый быстрый узел"
 
-msgid "Select the log level for sing-box"
-msgstr "Выберите уровень логов для sing-box"
+msgid "Select the log level for Xrust"
+msgstr "Выберите уровень логов для Xrust"
 
 msgid "Select the network interface from which the traffic will originate"
 msgstr "Выберите сетевой интерфейс, с которого будет исходить трафик"
@@ -1667,32 +1655,29 @@ msgstr "Информация о сервисах"
 msgid "Settings"
 msgstr "Настройки"
 
-msgid "Show sing-box config"
-msgstr "Показать sing-box конфигурацию"
+msgid "Show Xrust config"
+msgstr "Показать конфигурацию Xrust"
 
-msgid "Sing-box autostart disabled"
-msgstr "Автостарт sing-box отключен"
+msgid "Xrust autostart disabled"
+msgstr "Автостарт Xrust отключен"
 
-msgid "Sing-box FakeIP DNS does not work"
-msgstr "FakeIP DNS sing-box не работает"
+msgid "Xrust FakeIP DNS does not work"
+msgstr "FakeIP DNS Xrust не работает"
 
-msgid "Sing-box FakeIP DNS works"
-msgstr "FakeIP DNS sing-box работает"
+msgid "Xrust FakeIP DNS works"
+msgstr "FakeIP DNS Xrust работает"
 
-msgid "Sing-box installed"
-msgstr "Sing-box установлен"
+msgid "Xrust installed"
+msgstr "Xrust установлен"
 
-msgid "Sing-box listening ports"
-msgstr "Sing-box слушает порты"
+msgid "Xrust listening ports"
+msgstr "Xrust слушает порты"
 
-msgid "Sing-box process running"
-msgstr "Процесс sing-box запущен"
+msgid "Xrust process running"
+msgstr "Процесс Xrust запущен"
 
-msgid "Sing-box service exist"
-msgstr "Сервис sing-box существует"
-
-msgid "Sing-box version is compatible (newer than 1.12.4)"
-msgstr "Версия Sing-box совместима (новее 1.12.4)"
+msgid "Xrust service exists"
+msgstr "Сервис Xrust существует"
 
 msgid "Sort by latency"
 msgstr "Сортировать по задержке"
@@ -1712,8 +1697,8 @@ msgstr "Запустить Forkop X"
 msgid "Startup phase %s failed (exit code %s)."
 msgstr "Ошибка на этапе запуска %s (код завершения %s)."
 
-msgid "Stop checking when URLTest group is not used. Use sing-box duration format like 1d, 12h or 30m."
-msgstr "Останавливать проверку если URLTest группа не используется. Используйте формат длительности sing-box, например 1d, 12h или 30m."
+msgid "Stop checking when URLTest group is not used. Use Xrust duration format like 1d, 12h or 30m."
+msgstr "Останавливать проверку если URLTest группа не используется. Используйте формат длительности Xrust, например 1d, 12h или 30m."
 
 msgid "Stop Forkop X"
 msgstr "Остановить Forkop X"
@@ -1796,8 +1781,8 @@ msgstr "URL проверки"
 msgid "The core did not confirm the updated configuration."
 msgstr ""
 
-msgid "The generated sing-box configuration is invalid. See technical details for the validation error."
-msgstr "Сформированная конфигурация sing-box некорректна. Причина указана в технических деталях."
+msgid "The generated Xrust configuration is invalid. See technical details for the validation error."
+msgstr "Сформированная конфигурация Xrust некорректна. Причина указана в технических деталях."
 
 msgid "The previous working configuration could not be restored."
 msgstr ""
@@ -1946,11 +1931,11 @@ msgstr "Использовать другую секцию как промежу
 msgid "Use real IP addresses for WhatsApp"
 msgstr "Использовать реальные IP для WhatsApp"
 
-msgid "Use sing-box duration format like 10s, 1m or 2m30s"
-msgstr "Используйте формат длительности sing-box, например 10s, 1m или 2m30s"
+msgid "Use Xrust duration format like 10s, 1m or 2m30s"
+msgstr "Используйте формат длительности Xrust, например 10s, 1m или 2m30s"
 
-msgid "Use sing-box duration format like 1d, 12h or 30m"
-msgstr "Используйте формат длительности sing-box, например 1d, 12h или 30m"
+msgid "Use Xrust duration format like 1d, 12h or 30m"
+msgstr "Используйте формат длительности Xrust, например 1d, 12h или 30m"
 
 msgid "Use source values"
 msgstr "Использовать исходные значения"
@@ -1997,14 +1982,8 @@ msgstr "Для работы опции «Отключить fake-ip для Whats
 msgid "When switching to another level, test every server and select the fastest instead of the first working one."
 msgstr "При переходе на другой уровень тестировать все сервера и выбирать самый быстрый, а не первый работающий."
 
-msgid "Xrust (experimental)"
-msgstr "Xrust (экспериментальный)"
-
-msgid "Xrust configuration compatibility confirmed"
-msgstr "Совместимость конфигурации Xrust подтверждена"
-
-msgid "Xrust version"
-msgstr "Версия Xrust"
+msgid "Xrust version recognized"
+msgstr "Версия Xrust определена"
 
 msgid "YACD Secret Key"
 msgstr "Секретный ключ YACD"
@@ -2015,31 +1994,11 @@ msgstr "Да"
 msgid "You can select Output Network Interface, by default autodetect"
 msgstr "Вы можете выбрать выходной сетевой интерфейс, по умолчанию он определяется автоматически."
 
-
-msgid "Route detected BitTorrent directly"
-msgstr "Направлять BitTorrent напрямую"
+msgid "Closed Connections"
+msgstr "Закрытые соединения"
 
 msgid "Recognized torrent connections bypass proxy and VPN."
 msgstr "Распознанные торрент-соединения идут напрямую, минуя прокси и VPN."
-
-msgid "Available only for Xrust"
-msgstr "Доступно только для Xrust"
-
-msgid "Update Xrust to enable this setting"
-msgstr "Обновите Xrust, чтобы включить эту настройку"
-
-msgid "Incompatible subscription nodes were skipped"
-msgstr "Несовместимые узлы подписки пропущены"
-
-msgid "Required connection is unavailable"
-msgstr "Необходимое подключение недоступно"
-
-msgid "Rejected by the selected core"
-msgstr "Отклонён выбранным ядром"
-
-
-msgid "Closed Connections"
-msgstr "Закрытые соединения"
 
 msgid "Checking status…"
 msgstr "Проверка состояния…"
@@ -2077,17 +2036,8 @@ msgstr "Роутер подключён к Tailscale"
 msgid "Connection error"
 msgstr "Ошибка подключения"
 
-msgid "Update Xrust to use native Tailscale"
-msgstr "Обновите Xrust для нативного Tailscale"
-
 msgid "Unknown status"
 msgstr "Состояние неизвестно"
-
-msgid "Forkop 2.3.4 or later is required"
-msgstr "Требуется Forkop 2.3.4 или новее"
-
-msgid "Available only when Xrust is selected"
-msgstr "Доступно только при выбранном Xrust"
 
 msgid "Router Tailscale address: "
 msgstr "Адрес роутера в Tailscale: "
@@ -2146,9 +2096,6 @@ msgstr "Локальная сеть: ожидает одобрения ("
 msgid "). In the Tailscale admin console: this router → Edit route settings → approve the route."
 msgstr "). В панели Tailscale: этот роутер → Edit route settings → разрешить маршрут."
 
-msgid "Exit Node: update Xrust to continue."
-msgstr "Exit Node: требуется обновление Xrust."
-
 msgid "Exit Node: waiting for connection."
 msgstr "Exit Node: ожидает подключения."
 
@@ -2195,7 +2142,7 @@ msgid "Reconnecting"
 msgstr "Восстановление соединения"
 
 msgid "Native Tailscale is unavailable"
-msgstr "Нативный Tailscale недоступен"
+msgstr "Встроенный Tailscale недоступен"
 
 msgid "LAN access allowed"
 msgstr "Доступ к LAN разрешён"
@@ -2214,18 +2161,6 @@ msgstr "Не удалось передать ключ"
 
 msgid "Failed to determine the local IPv4 network"
 msgstr "Не удалось определить локальную IPv4-сеть"
-
-msgid "Use provider DNS"
-msgstr "Использовать DNS провайдера"
-
-msgid "Use DNS supplied by online WAN interfaces for main and Bootstrap DNS. With mwan3, each DNS uses its own WAN."
-msgstr "Основной и Bootstrap DNS берутся с доступных WAN. С mwan3 каждый DNS использует свой WAN."
-
-msgid "No online WAN supplies usable DNS"
-msgstr "Нет доступного WAN с подходящими DNS"
-
-msgid "Unable to read provider DNS"
-msgstr "Не удалось получить DNS провайдера"
 
 msgid "Tunnel profile"
 msgstr "Профиль туннеля"
@@ -2256,3 +2191,15 @@ msgstr "Импортировать профиль туннеля"
 
 msgid "Could not read tunnel profile"
 msgstr "Не удалось прочитать профиль туннеля"
+
+msgid "Update Forkop X to enable this setting"
+msgstr "Обновите Forkop X, чтобы использовать эту настройку"
+
+msgid "Exit Node is unavailable."
+msgstr "Выходной узел недоступен."
+
+msgid "Settings saved to UCI. See Diagnostics for the Forkop runtime result."
+msgstr "Настройки сохранены в UCI. Результат применения Forkop доступен во вкладке «Диагностика»."
+
+msgid "Forkop settings were not applied"
+msgstr "Настройки Forkop не применены"

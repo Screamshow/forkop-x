@@ -26,7 +26,7 @@ fs.writefile(work+"/cache/probe-subscription-1.json",sprintf("%J",{outbounds:[no
 let cached=fs.readfile(work+"/cache/probe-subscription-1.json");
 function generate(fixture,version){
  fs.writefile(work+"/fixture.json",sprintf("%J",fixture));
- let args=["env","TMP_SUBSCRIPTION_FOLDER="+work+"/cache","FORKOP_RUNTIME_STATE_DIR="+work+"/state","TMP_SING_BOX_FOLDER="+work+"/singbox","FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR="+work+"/persistent","FORKOP_LIB="+lib,"ucode","-L",lib,lib+"/singbox/generator.uc","generate-config-fixture",work+"/fixture.json",work+"/generated.json","127.0.0.1","0","1","",version];
+ let args=["env","TMP_SUBSCRIPTION_FOLDER="+work+"/cache","FORKOP_RUNTIME_STATE_DIR="+work+"/state","TMP_SING_BOX_FOLDER="+work+"/singbox","FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR="+work+"/persistent","FORKOP_LIB="+lib,"ucode","-L",lib,lib+"/xrust/generator.uc","generate-config-fixture",work+"/fixture.json",work+"/generated.json","127.0.0.1","0","1","",version];
  expect(system(join(" ",map(args,quote))+" >"+quote(work+"/generation.log")+" 2>&1")==0,version+": generation failed: "+log_text());
  let fps={};
  for(let o in json(fs.readfile(work+"/generated.json")).outbounds)
@@ -34,24 +34,20 @@ function generate(fixture,version){
  return fps;
 }
 let fixture={settings,section:[section]};
-for(let version in ["1.14.2-rust-x.0.0.26"]){
+for(let version in ["0.0.26"]){
  let fps=generate(fixture,version);
  expect(fps["Android Node"]=="firefox"&&fps["Q360 Node"]=="firefox"&&fps["QQ Node"]=="firefox",version+": unsupported fingerprint generated: "+sprintf("%J",fps));
  expect(fps["Safari Node"]=="safari",version+": supported fingerprint changed");
  expect(has_log("'Android Node' uses uTLS fingerprint android")&&has_log("'Q360 Node' uses uTLS fingerprint 360")&&has_log("'QQ Node' uses uTLS fingerprint qq"),version+": fingerprint substitution not reported: "+log_text());
  expect(fs.readfile(work+"/cache/probe-subscription-1.json")==cached,version+": subscription cache changed");
 }
-let go=generate(fixture,"1.14.2-x-1.0.4");
-expect(go["Android Node"]=="android"&&go["Q360 Node"]=="360"&&go["QQ Node"]=="qq","Go X lost the android, 360 or qq fingerprint");
-expect(!has_log("uses uTLS fingerprint"),"Go X reported a fingerprint substitution");
-
 let manual={settings,section:[{".name":"manual",".type":"section",enabled:"1",action:"connection",
  selector_proxy_links:["vless://"+uuid+"@127.0.0.1:443?security=tls&sni=localhost&fp=android#Manual%20Android"],
  outbound_jsons:[sprintf("%J",node("JSON 360","360"))]}]};
-let explicit=generate(manual,"1.14.2-rust-x.0.0.26");
+let explicit=generate(manual,"0.0.26");
 for(let tag in keys(explicit))expect(explicit[tag]=="firefox","explicit "+tag+" keeps an unsupported fingerprint: "+explicit[tag]);
 expect(length(keys(explicit))==2,"explicit outbounds missing: "+sprintf("%J",explicit));
 expect(has_log("manual outbound 'Manual Android' uses uTLS fingerprint android")&&has_log("JSON outbound 'JSON 360' uses uTLS fingerprint 360"),"explicit substitution not reported: "+log_text());
-print("Xrust unsupported fingerprints: subscription, manual and JSON nodes use firefox with a warning; cache and Go X keep android, 360 and qq\n");
+print("Xrust unsupported fingerprints: subscription, manual and JSON nodes use firefox with a warning; cached android, 360 and qq values are preserved\n");
 UC
 ucode -L "$LIB" "$WORK/check.uc" "$WORK" "$LIB"

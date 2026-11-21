@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FORKOP_LIB="$ROOT_DIR/forkop/files/usr/lib"
-GENERATOR="$FORKOP_LIB/singbox/generator.uc"
+GENERATOR="$FORKOP_LIB/xrust/generator.uc"
 WORK_DIR="${DNS114_WORK_DIR_OUTPUT:-}"
 if [ -n "$WORK_DIR" ]; then
   mkdir -p "$WORK_DIR"
@@ -22,7 +22,7 @@ cat >"$WORK_DIR/fixture.json" <<'JSON'
   "settings": {
     ".name": "settings",
     ".type": "settings",
-    "config_path": "/tmp/sing-box/config.json",
+    "config_path": "/tmp/xrust/config.json",
     "dns_server": "1.1.1.1",
     "service_listen_address": "127.0.0.1"
   },
@@ -58,17 +58,18 @@ generate() {
     "$WORK_DIR/fixture.json" "$output" "127.0.0.1" "0" "1" "" "$version"
 }
 
-generate 1.12.25
-generate 1.13.18
-generate 1.14.0
-generate 1.14.1
+generate 0.0.44
+if generate 1.14.2-x-1.0.4 > "$WORK_DIR/legacy.log" 2>&1; then
+  fail "a legacy core completed configuration generation"
+fi
+grep -q "the installed client must be Xrust" "$WORK_DIR/legacy.log" || fail "wrong legacy rejection"
 
 DNS114_WORK_DIR="$WORK_DIR" ucode -e '
 let fs = require("fs");
 
 function config(version) { return json(fs.readfile(getenv("DNS114_WORK_DIR") + "/config-" + version + ".json")); }
 function rules(value) { return value.dns.rules || []; }
-for (let version in ["1.12.25", "1.13.18", "1.14.0", "1.14.1"]) {
+for (let version in ["0.0.44"]) {
     let https = filter(rules(config(version)), function(rule) { return rule.query_type == "HTTPS"; });
     if (length(https) != 1 || https[0].action != "predefined" || https[0].rcode != "NOERROR")
         die("HTTPS suppression must return NODATA: " + version + "\n");
@@ -112,7 +113,7 @@ function index(value, predicate) {
 }
 function assert(ok, message) { if (!ok) { warn(message, "\n"); exit(1); } }
 
-for (let version in [ "1.12.25", "1.13.18", "1.14.0", "1.14.1" ]) {
+for (let version in [ "0.0.44" ]) {
     let count = 0;
     for (let rule in rules(config(version))) {
         if (rule.server != "fakeip-server") continue;
@@ -127,17 +128,7 @@ for (let version in [ "1.12.25", "1.13.18", "1.14.0", "1.14.1" ]) {
     assert(count > 0, version + " fixture must exercise FakeIP routes");
 }
 
-for (let version in [ "1.12.25", "1.13.18" ]) {
-    let value = config(version);
-    let probe = find(value, r => r.type == "logical" && r.action == "route" && r.server == "dnsmasq-server" && domain_rule(r));
-    let fallback = find(value, r => r.action == "route" && r.server == "dns-server" && domain_rule(r));
-    assert(probe != null && probe.rules[1].match_response == null, version + " must retain the legacy dnsmasq route filter");
-    assert(fallback != null, version + " must retain the normal resolver fallback");
-    assert(find(value, r => (r.action == "evaluate" || r.action == "respond") && domain_rule(r)) == null, version + " emitted unsupported 1.14 DNS actions");
-    assert(find(value, r => ruleset_rule(r, "vpn-discord-community-ruleset") && r.match_response == null) != null, version + " must retain legacy mixed rule-set matching");
-}
-
-for (let version in [ "1.14.0", "1.14.1" ]) {
+let version = "0.0.44";
 let value = config(version);
 for (let rule in rules(value)) no_empty_children(rule);
 let excluded_evaluate = find(value, r => r.action == "evaluate" && r.server == "dns-server");
@@ -161,7 +152,6 @@ assert(find(value, r => ruleset_rule(r, "vpn-discord-community-ruleset") && !res
     version + " must select Discord domains before resolution");
 assert(find(value, r => ruleset_rule(r, "vpn-discord-community-ruleset") && response_rule(r)) == null,
     version + " must not issue FakeIP by matching Discord shared edge addresses");
-}
-' || fail "DNS 1.12/1.13/1.14 semantic chain assertion failed"
+' || fail "Xrust DNS response-matching assertion failed"
 
-printf 'sing-box DNS 1.14 semantic generation checks passed\n'
+printf 'Xrust DNS response-matching and FakeIP generation checks passed\n'

@@ -6,7 +6,15 @@ FORKOP_LIB="${FORKOP_LIB:-$ROOT_DIR/forkop/files/usr/lib}"
 DIAGNOSTICS_UC="$FORKOP_LIB/diagnostics/runtime.uc"
 UPDATES_UC="$FORKOP_LIB/components/updates.uc"
 WORK_DIR="$(mktemp -d)"
-trap 'rm -rf "$WORK_DIR"' EXIT
+watchdog_pid=""
+cleanup() {
+  if [ -n "$watchdog_pid" ]; then
+    kill "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+  fi
+  rm -rf "$WORK_DIR"
+}
+trap cleanup EXIT
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -38,6 +46,7 @@ sig_changed="$(signature "$WORK_DIR/config-changed.json")"
 cat >"$WORK_DIR/uci.state" <<EOF_UCI
 forkop.settings=settings
 forkop.settings.config_path=$WORK_DIR/config-changed.json
+forkop.settings.shutdown_correctly=0
 EOF_UCI
 cat >"$WORK_DIR/state-stub.uc" <<'EOF_STATE'
 #!/usr/bin/env ucode
@@ -63,6 +72,8 @@ if (mode == "sing-box-service-runtime-pid") {
     print(fs.readfile(getenv("TEST_PID_FILE")) || "123\n");
     exit(0);
 }
+if (mode == "sing-box-owned-service-kind")
+    print("current\n");
 exit(0);
 EOF_STATE
 cat >"$WORK_DIR/bin/logger" <<'EOF_LOGGER'
@@ -73,7 +84,12 @@ cat >"$WORK_DIR/bin/curl" <<'EOF_CURL'
 #!/bin/sh
 case "$*" in
   */proxies)
-    case " $* " in *" --max-time 5 "*) ;; *) exit 1;; esac
+    case " $* " in
+      *" --max-time 5 "*) [ "${TEST_CLASH_LIST_SLOW:-0}" != 1 ] || exit 28 ;;
+      *" --max-time 10 "*) ;;
+      *) exit 1 ;;
+    esac
+    [ "${TEST_CLASH_LIST_TIMEOUT:-0}" != 1 ] || exit 28
     [ "${TEST_CLASH_UNREADY:-0}" = 1 ] && { printf 'not-json\n'; exit 0; }
     printf '%s\n' '{"proxies":{"proxy-a":{"type":"VLESS"},"proxy-b":{"type":"Trojan"},"proxy-c":{"type":"VLESS"},"proxy-d":{"type":"Trojan"},"proxy-e":{"type":"VLESS"},"proxy-f":{"type":"Trojan"},"proxy-g":{"type":"VLESS"},"proxy-h":{"type":"Trojan"},"proxy-i":{"type":"VLESS"},"DIRECT":{"type":"Direct"}}}'
     ;;
@@ -106,6 +122,12 @@ case "$*" in
       rmdir "$TEST_CURL_LOG.active.$$"
     fi
     [ "${TEST_CURL_FAIL:-0}" = 1 ] && { printf 'not-json\n'; exit 0; }
+    case "$*" in
+      *"/group/"*)
+        printf '%s\n' "${TEST_GROUP_BODY:-{\"proxy-a\":25\}}"
+        exit 0
+        ;;
+    esac
     printf '%s\n' '{"delay":25}'
     ;;
   *) printf '%s\n' '{}' ;;
@@ -182,6 +204,19 @@ ucode -e 'let fs = require("fs"); let paths = fs.glob(getenv("FORKOP_UI_STATE_DI
 [ "$(grep -Fc 'Automatic latency test progress:' "$TEST_LOG" || true)" -eq 0 ] ||
   fail "latency batching emitted intermediate syslog progress"
 
+# Manual batches can read a slow catalogue, and a timeout fails before sending probes.
+result="$(TEST_CLASH_LIST_SLOW=1 ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" \
+  clash-api get_proxy_latencies '["proxy-a"]')" || fail "manual sweep could not read a slow proxy catalogue"
+ucode -e 'let r = json(ARGV[0]); assert(r.success && r.count == 1 && !r.failed);' "$result"
+
+: >"$TEST_CURL_LOG"
+if result="$(TEST_CLASH_LIST_TIMEOUT=1 ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" \
+  clash-api get_proxy_latencies '["proxy-a"]')"; then
+  fail "manual sweep accepted a timed-out proxy catalogue"
+fi
+ucode -e 'assert(json(ARGV[0]).error == "Could not read proxy list from Clash API");' "$result"
+[ ! -s "$TEST_CURL_LOG" ] || fail "manual sweep sent probes without a proxy catalogue"
+
 # An HTTP error with a JSON body must count as a failed probe in a mixed batch.
 result="$(TEST_HTTP_ERROR_TAG=proxy-a ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" \
   clash-api get_proxy_latencies '["proxy-a","proxy-b"]')" || fail "partial manual sweep failed"
@@ -195,6 +230,11 @@ TEST_CURL_DEADLINE=5 ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" \
   clash-api get_proxy_latency proxy-a 2000 >/dev/null
 TEST_CURL_DEADLINE=13 ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" \
   clash-api get_group_latency group-a 10000 >/dev/null
+if result="$(TEST_GROUP_BODY='{}' ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" \
+  clash-api get_group_latency group-a 10000)"; then
+  fail "empty group latency map counted as success"
+fi
+ucode -e 'assert(json(ARGV[0]).error == "No group nodes returned latency");' "$result"
 if result="$(TEST_HTTP_ERROR_TAG=proxy-a ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" \
   clash-api get_proxy_latencies '["proxy-a"]')"; then
   fail "sweep with no successful probes passed"
@@ -274,7 +314,7 @@ retry_pid=$!
 retry_lock="$FORKOP_AUTOMATIC_LATENCY_TEST_LOCK_DIR.retry"
 for attempt in 1 2 3 4 5; do
   [ -d "$retry_lock" ] && break
-  sleep 0.1
+  sleep 1
 done
 [ -d "$retry_lock" ] || fail "retry worker did not enter its pause"
 [ ! -e "$FORKOP_AUTOMATIC_LATENCY_TEST_LOCK_DIR" ] ||
@@ -285,6 +325,34 @@ ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" automatic-latency-test resume
 wait "$retry_pid"
 [ ! -e "$retry_lock" ] || fail "completed retry left behind its lock"
 [ ! -e "$FORKOP_AUTOMATIC_LATENCY_PENDING_FILE" ] || fail "deferred retry did not continue automatically"
+
+# With just the normal watchdog running, the due retry is dispatched on its own.
+: >"$TEST_CURL_LOG"
+ucode -L "$FORKOP_LIB" "$UPDATES_UC" schedule-automatic-latency-test "$sig_changed"
+TEST_CLASH_UNREADY=1 FORKOP_AUTOMATIC_LATENCY_RETRY_BASE_SECONDS=2 \
+  ucode -L "$FORKOP_LIB" "$DIAGNOSTICS_UC" automatic-latency-test new &&
+  fail "unready Clash API unexpectedly succeeded before watchdog test"
+export FORKOP_WATCHDOG_READY_FILE="$WORK_DIR/watchdog.ready"
+export FORKOP_PENDING_RELOAD_FILE="$WORK_DIR/reload.pending"
+export FORKOP_POST_START_LATENCY_FILE="$WORK_DIR/post-start-latency.pending"
+: >"$FORKOP_WATCHDOG_READY_FILE"
+: >"$FORKOP_PENDING_RELOAD_FILE"
+: >"$FORKOP_POST_START_LATENCY_FILE"
+FORKOP_WATCHDOG_GRACE_SECONDS=0 FORKOP_WATCHDOG_INTERVAL_SECONDS=1 \
+  ucode -L "$FORKOP_LIB" "$FORKOP_LIB/service/watchdog.uc" &
+watchdog_pid=$!
+sleep 3
+[ ! -s "$TEST_CURL_LOG" ] || fail "watchdog bypassed pending reload"
+rm -f "$FORKOP_PENDING_RELOAD_FILE"
+sleep 2
+[ ! -s "$TEST_CURL_LOG" ] || fail "watchdog bypassed post-start latency barrier"
+rm -f "$FORKOP_POST_START_LATENCY_FILE"
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  [ ! -e "$FORKOP_AUTOMATIC_LATENCY_PENDING_FILE" ] && break
+  sleep 1
+done
+[ ! -e "$FORKOP_AUTOMATIC_LATENCY_PENDING_FILE" ] || fail "watchdog did not dispatch due latency retry"
+[ "$(wc -l <"$TEST_CURL_LOG")" -eq 9 ] || fail "watchdog retry lost or duplicated probes"
 
 grep -Fq 'Starting new automatic latency test' "$TEST_LOG" || fail "new-test log is missing"
 grep -Fq 'Resuming interrupted automatic latency test' "$TEST_LOG" || fail "resume log is missing"

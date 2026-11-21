@@ -1,0 +1,187 @@
+#!/bin/sh
+set -eu
+umask 077
+
+root=${FORKOP_PACKAGE_RECOVERY_ROOT:-}
+state="$root/etc/forkop/upgrade-recovery"
+boot_link="$root/etc/rc.d/S98forkop-upgrade-recovery"
+init="$root/etc/init.d/forkop"
+prepare_lock="$root/tmp/forkop-upgrade-recovery.lock"
+tab="$(printf '\t')"
+
+prepare() {
+    local manager="$1" enabled="$2" core_version="$3" config="$4" adapter="$5" archives="$6" core_mode="${7:-native}"
+    local running="${8:-}"
+    local name version archive extension
+    case "$manager:$enabled" in apk:0|apk:1|opkg:0|opkg:1) ;; *) return 1 ;; esac
+    case "$core_mode" in native|legacy) ;; *) return 1 ;; esac
+    case "$running" in ''|0|1) ;; *) return 1 ;; esac
+    mkdir -p "$root/etc/forkop" "$root/etc/rc.d" "$root/tmp" || return 1
+    mkdir "$prepare_lock" || return 1
+    # An unarmed directory can remain after interruption before any mutation or
+    # after the completed transaction was disarmed.
+    draft="$root/etc/forkop/.upgrade-recovery.staging"
+    trap 'rm -rf "$draft"; rmdir "$prepare_lock"' EXIT
+    [ ! -L "$boot_link" ] && [ ! -e "$boot_link" ] || return 1
+    rm -rf "$state" "$draft" || return 1
+    mkdir "$draft" || return 1
+    cp "$0" "$draft/recover"
+    cp "$config" "$draft/configuration.tar.gz"
+    cp "$adapter" "$draft/package-init"
+    chmod 700 "$draft/recover" "$draft/package-init"
+    printf '%s\n' "$manager" "$enabled" "$core_version" "$core_mode" "$running" > "$draft/state"
+    while IFS="$tab" read -r name version archive; do
+        case "$name" in forkop|luci-app-forkop|luci-i18n-forkop-ru|rust-x) ;; *) return 1 ;; esac
+        extension="${archive##*.}"
+        case "$manager:$extension" in apk:apk|opkg:ipk) ;; *) return 1 ;; esac
+        cp "$archive" "$draft/$name.$extension"
+        printf '%s\t%s\t%s\n' "$name" "$version" "$extension"
+    done < "$archives" > "$draft/plan"
+    (
+        cd "$draft"
+        sha256sum state plan configuration.tar.gz package-init ./*."$extension" > SHA256SUMS
+    )
+    mv "$draft" "$state"
+    ln -s "$state/recover" "$boot_link"
+    # Both the archive data and its startup entry must reach flash before the
+    # caller starts the package manager.
+    sync
+}
+
+commit() {
+    rm -f "$boot_link" && sync && rm -rf "$state"
+}
+
+restore_config() {
+    local temporary
+    temporary="$(mktemp "$root/etc/config/.forkop-recover.XXXXXX")" || return 1
+    if tar -xOzf "$state/configuration.tar.gz" forkop > "$temporary" &&
+        mv "$temporary" "$root/etc/config/forkop"; then
+        return 0
+    fi
+    rm -f "$temporary"
+    return 1
+}
+
+installed_version() {
+    local name="$1" rows
+    if [ "$manager" = apk ]; then
+        rows="$(apk list --installed --manifest "$name")" || return 1
+        printf '%s\n' "$rows" | awk -v name="$name" '$1 == name && NF == 2 { print $2 }'
+    else
+        rows="$(opkg list-installed "$name")" || return 1
+        printf '%s\n' "$rows" | awk -v name="$name" '$1 == name && $2 == "-" { print $3 }'
+    fi
+}
+
+package_set_matches() {
+    local name version extension translation
+    while IFS="$tab" read -r name version extension; do
+        [ "$(installed_version "$name")" = "$version" ] || return 1
+    done < "$state/plan"
+    translation="$(installed_version luci-i18n-forkop-ru)" || return 1
+    [ -z "$translation" ] || grep -q "^luci-i18n-forkop-ru$tab" "$state/plan"
+}
+
+restore_packages() {
+    local name version extension archive translation
+    translation="$(installed_version luci-i18n-forkop-ru)" || return 1
+    if [ -n "$translation" ] && ! grep -q "^luci-i18n-forkop-ru$tab" "$state/plan"; then
+        if [ "$manager" = apk ]; then
+            apk del --no-network luci-i18n-forkop-ru || return 1
+        else
+            opkg remove luci-i18n-forkop-ru || return 1
+        fi
+    fi
+
+    set --
+    while IFS="$tab" read -r name version extension; do
+        archive="$state/$name.$extension"
+        set -- "$@" "$archive"
+    done < "$state/plan"
+    [ "$#" -gt 0 ] || return 1
+    if [ "$manager" = apk ]; then
+        FORKOP_INIT="$state/package-init" apk --preserve-env add --no-network \
+            --allow-untrusted --force-reinstall "$@" || return 1
+    else
+        for archive do
+            FORKOP_INIT="$state/package-init" opkg install --force-overwrite \
+                --force-reinstall --force-downgrade "$archive" || return 1
+        done
+    fi
+    package_set_matches
+}
+
+core_matches() {
+    local banner version
+    [ "$(installed_version rust-x)" = "$core_version" ] || return 1
+    case "$core_mode" in
+        native)
+            banner="$("$root/usr/bin/xrust" version)" || return 1
+            version="$(printf '%s\n' "$banner" | sed -n '1s/^xrust version //p')"
+            ;;
+        legacy)
+            banner="$("$root/usr/lib/rust-x/sing-box" version)" || return 1
+            version="$(printf '%s\n' "$banner" | sed -n '1s/^sing-box version v\{0,1\}[0-9.]*-rust-x\.//p')"
+            ;;
+        *) return 1 ;;
+    esac
+    [ "$version" = "${core_version%-*}" ]
+}
+
+load_recovery_state() {
+    (cd "$state" && sha256sum -c SHA256SUMS >/dev/null) || return 1
+    {
+        read -r manager && read -r enabled && read -r core_version && read -r core_mode || return 1
+        read -r running || running=
+    } < "$state/state"
+    case "$manager:$enabled" in apk:0|apk:1|opkg:0|opkg:1) ;; *) return 1 ;; esac
+}
+
+commit_restored() {
+    local current_enabled=0 status
+    case "$running" in 0|1) ;; *) return 1 ;; esac
+    package_set_matches && core_matches || return 1
+    tar -xOzf "$state/configuration.tar.gz" forkop | cmp -s - "$root/etc/config/forkop" || return 1
+    "$init" enabled && current_enabled=1
+    [ "$current_enabled" = "$enabled" ] || return 1
+    status="$(FORKOP_LIB= "$root/usr/bin/forkop" get_status)" || return 1
+    [ "$(printf '%s' "$status" | jsonfilter -e '@.running')" = "$running" ] || return 1
+    if [ "$running" = 1 ]; then
+        [ "$(printf '%s' "$status" | jsonfilter -e '@.dns_configured')" = 1 ] || return 1
+    fi
+    commit
+}
+
+recover() {
+    local was_enabled=0
+    "$init" enabled && was_enabled=1
+    restore_config && restore_packages && restore_config && core_matches || return 1
+    case "$enabled" in
+        0) "$init" disable || return 1 ;;
+        1) "$init" enable || return 1 ;;
+        *) return 1 ;;
+    esac
+    # The boot queue may have been enumerated without Forkop after a failed
+    # recovery on an earlier boot. Start it once in that case.
+    if [ "$enabled" = 1 ] && [ "$was_enabled" = 0 ]; then
+        "$init" start || return 1
+    fi
+    commit
+}
+
+case "${1:-}" in
+    prepare) shift; prepare "$@" ;;
+    commit) commit ;;
+    commit-restored) load_recovery_state && commit_restored ;;
+    boot)
+        if load_recovery_state && recover; then
+            logger -t forkop "Recovered the previous Forkop package set after an interrupted update"
+        else
+            "$init" disable || true
+            logger -t forkop "Interrupted Forkop update recovery failed; recovery files retained at $state"
+            exit 1
+        fi
+        ;;
+    *) exit 2 ;;
+esac

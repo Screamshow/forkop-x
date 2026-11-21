@@ -6,7 +6,10 @@ const validUrls = [
   ['password basic', 'hysteria2://pass@example.com:443/#hy2-basic'],
   ['default port', 'hysteria2://pass@example.com/'],
   ['short scheme and IPv6 default port', 'hy2://pa+ss@[2001:db8::1]/'],
-  ['mport without an authority port', 'hy2://pass@example.com/?mport=5000-6000'],
+  [
+    'mport without an authority port',
+    'hy2://pass@example.com/?mport=5000-6000',
+  ],
 
   // insecure=1
   [

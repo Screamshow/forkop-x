@@ -48,7 +48,9 @@ export function validateHysteria2Url(url: string): ValidationResult {
     const hasPort = authority.startsWith('[')
       ? !authority.endsWith(']')
       : authority.includes(':');
-    const parsedHostPort = parseHostPort(hasPort ? authority : `${authority}:443`);
+    const parsedHostPort = parseHostPort(
+      hasPort ? authority : `${authority}:443`,
+    );
     if (!parsedHostPort) {
       return {
         valid: false,

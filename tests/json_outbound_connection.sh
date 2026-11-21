@@ -20,7 +20,7 @@ cat >"$work_dir/input.json" <<'JSON'
 JSON
 
 mkdir -p "$work_dir/output.json.section-cache" "$work_dir/output.json.rulesets"
-ucode -L "$FORKOP_LIB" "$FORKOP_LIB/singbox/generator.uc" generate-config-fixture \
+ucode -L "$FORKOP_LIB" "$FORKOP_LIB/xrust/generator.uc" generate-config-fixture \
   "$work_dir/input.json" "$work_dir/output.json" "127.0.0.1" "0"
 
 ucode -e '

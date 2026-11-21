@@ -1,5 +1,4 @@
 import { getComponentActionKey } from '../helpers/getComponentActionKey';
-import { normalizeSingBoxVariantFields } from '../helpers/singBoxVariant';
 import type { Forkop } from '../types';
 import { getLocalActionOverlay } from './localActionOverlay.service';
 import { store } from './store.service';
@@ -27,12 +26,6 @@ function getEmptyUpdatesActions(): StoreType['updatesActions'] {
   return {
     forkopCheck: { loading: false },
     forkopInstall: { loading: false },
-    singBoxCheck: { loading: false },
-    singBoxInstall: { loading: false },
-    singBoxInstallTiny: { loading: false },
-    singBoxInstallX: { loading: false },
-    singBoxInstallRustX: { loading: false },
-    singBoxInstallStable: { loading: false },
     zapretManagerInstall: { loading: false },
     zapretManagerRemove: { loading: false },
     packetSteeringEnable: { loading: false },
@@ -98,23 +91,16 @@ function applyServiceState(uiState: Forkop.UiState) {
   const nextSystemInfo = {
     ...currentSystemInfo,
     providerInfoLoaded: true,
+    xrust_tailscale: uiState.capabilities.xrust_tailscale,
   };
-
-  nextSystemInfo.sing_box_extended = uiState.capabilities.sing_box_extended;
-  nextSystemInfo.sing_box_xhttp =
-    uiState.capabilities.sing_box_xhttp ??
-    uiState.capabilities.sing_box_extended;
-  nextSystemInfo.sing_box_tiny = uiState.capabilities.sing_box_tiny;
-  nextSystemInfo.sing_box_compressed = uiState.capabilities.sing_box_compressed;
-  nextSystemInfo.sing_box_tailscale = uiState.capabilities.sing_box_tailscale;
 
   store.set({
     servicesInfoWidget: {
       loading: false,
       failed: false,
       data: {
-        singbox: uiState.service.sing_box.running,
-        singboxMemoryBytes: uiState.service.sing_box.memory_rss_bytes,
+        xrust: uiState.service.xrust.running,
+        xrustMemoryBytes: uiState.service.xrust.memory_rss_bytes,
         tailscale: serviceProcessState(uiState.service.tailscale),
         torrserverDirect: serviceProcessState(
           uiState.service.torrserver_direct,
@@ -131,8 +117,33 @@ function applyServiceState(uiState: Forkop.UiState) {
         forkopStatus: uiState.service.forkop.status,
       },
     },
-    diagnosticsSystemInfo: normalizeSingBoxVariantFields(nextSystemInfo),
+    diagnosticsSystemInfo: nextSystemInfo,
   });
+}
+
+function sameSectionMap<T>(
+  current: Record<string, T>,
+  next: Record<string, T>,
+  same: (a: T, b: T) => boolean,
+) {
+  const keys = Object.keys(current);
+  return (
+    keys.length === Object.keys(next).length &&
+    keys.every(
+      (key) =>
+        Object.prototype.hasOwnProperty.call(next, key) &&
+        same(current[key], next[key]),
+    )
+  );
+}
+
+function sameProgress(
+  a: Forkop.LatencyActionProgress,
+  b: Forkop.LatencyActionProgress,
+) {
+  return (
+    a.completed === b.completed && a.total === b.total && a.failed === b.failed
+  );
 }
 
 function applyActionState(actions: UiActionMap = {}) {
@@ -220,15 +231,36 @@ function applyActionState(actions: UiActionMap = {}) {
     diagnosticsActions[action] = { loading: true };
   }
 
-  store.set({
-    sectionsWidget: {
-      ...current.sectionsWidget,
+  const widget = current.sectionsWidget;
+  const changed =
+    !sameSectionMap(
+      widget.subscriptionUpdatingSections,
       subscriptionUpdatingSections,
+      (a, b) => a === b,
+    ) ||
+    !sameSectionMap(
+      widget.latencyFetchingSections,
       latencyFetchingSections,
+      (a, b) => a === b,
+    ) ||
+    !sameSectionMap(
+      widget.latencyProgressSections,
       latencyProgressSections,
-    },
+      sameProgress,
+    );
+  store.set({
     updatesActions,
     diagnosticsActions,
+    ...(changed
+      ? {
+          sectionsWidget: {
+            ...widget,
+            subscriptionUpdatingSections,
+            latencyFetchingSections,
+            latencyProgressSections,
+          },
+        }
+      : {}),
   });
 }
 

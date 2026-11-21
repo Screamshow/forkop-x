@@ -1,6 +1,7 @@
 #!/usr/bin/env ucode
 
 let fs = require("fs");
+let xrust = require("xrust.binary");
 let bytecode = require("core.bytecode");
 let uci_core = require("core.uci");
 
@@ -21,12 +22,8 @@ const RT_TABLES_PATH = env("FORKOP_RT_TABLES", "/etc/iproute2/rt_tables");
 const BIN_PATH = env("FORKOP_BIN", "/usr/bin/forkop");
 const INIT_PATH = env("FORKOP_INIT", "/etc/init.d/forkop");
 const UI_UC = env("FORKOP_UI_UC", LIB_DIR + "/service/ui.uc");
-const SING_BOX_INIT = env("FORKOP_SING_BOX_INIT", "/etc/init.d/sing-box");
-const SING_BOX_BIN = env("FORKOP_SING_BOX_BIN", "/usr/bin/sing-box");
-const SING_BOX_CRONET = env("FORKOP_SING_BOX_CRONET", "/usr/lib/libcronet.so");
-const SING_BOX_MANAGED_MARKER = env("SB_MANAGED_SERVICE_MARKER", "Forkop managed sing-box service for binary variants");
-const COMPRESSED_UPGRADE_BACKUP = "/tmp/forkop-compressed-upgrade";
 const PACKAGE_UPGRADE_STATE = env("FORKOP_PACKAGE_UPGRADE_STATE", "/tmp/forkop-package-was-running");
+const UPGRADE_RECOVERY_HOOK = "/etc/rc.d/S98forkop-upgrade-recovery";
 const PACKAGE_UPGRADE_QUIESCE_FILE = env("FORKOP_PACKAGE_UPGRADE_QUIESCE_FILE", "/var/run/forkop/package-upgrade.quiesce");
 const UPGRADE_SING_BOX_WAIT_SECONDS = int(env("FORKOP_UPGRADE_SING_BOX_WAIT_SECONDS", "15"));
 const UPGRADE_RESTORE_WAIT_SECONDS = int(env("FORKOP_UPGRADE_RESTORE_WAIT_SECONDS", "180"));
@@ -58,25 +55,15 @@ function path_exists(path) {
     return fs.stat(as_string(path)) != null;
 }
 
-function path_basename(path) {
-    path = as_string(path);
-    let slash = rindex(path, "/");
-    return slash >= 0 ? substr(path, slash + 1) : path;
-}
-
 function sing_box_exe_path(path) {
-    let basename = path_basename(path);
-    return basename == "sing-box" || basename == "sing-box (deleted)";
+    return xrust.exe_kind(path) != "other" || xrust.is_legacy_exe(path);
 }
 
 function sing_box_process_count() {
     let count = 0;
     for (let exe_path in fs.glob("/proc/[0-9]*/exe")) {
-        let parts = split(as_string(exe_path), "/");
-        let args = split(fs.readfile("/proc/" + parts[2] + "/cmdline") || "", chr(0));
-        if (args[1] == "tailscale-luci") continue;
-        if (length(parts) >= 4 &&
-            sing_box_exe_path(fs.readlink(exe_path)))
+        if (sing_box_exe_path(fs.readlink(exe_path)) &&
+            xrust.is_proxy_cmdline(fs.readfile(substr(exe_path, 0, -3) + "cmdline")))
             count++;
     }
     return count;
@@ -152,45 +139,6 @@ function restore_dnsmasq_if_needed() {
     // The backend owns the transaction marker and decides whether rollback is
     // safe. Do not invoke a second raw failsafe pass after it returns.
     command_success_from_args([ BIN_PATH, "restore_dnsmasq" ]);
-}
-
-function remove_managed_sing_box() {
-    let data = fs.readfile(SING_BOX_INIT);
-    if (data == null || index(data, SING_BOX_MANAGED_MARKER) < 0)
-        return;
-
-    command_success_from_args([ SING_BOX_INIT, "stop" ]);
-    command_success_from_args([ SING_BOX_INIT, "disable" ]);
-    unlink_if_exists(SING_BOX_INIT);
-    unlink_if_exists(SING_BOX_BIN);
-    unlink_if_exists(SING_BOX_CRONET);
-}
-
-function restore_compressed_upgrade_backup() {
-    let backup_bin = COMPRESSED_UPGRADE_BACKUP + "/sing-box";
-    let backup_init = COMPRESSED_UPGRADE_BACKUP + "/sing-box.init";
-    if (!path_exists(backup_bin) && !path_exists(backup_init))
-        return true;
-    if (trim(as_string(fs.readfile("/etc/forkop/sing-box-variant"))) != "extended-compressed" ||
-        !path_exists(backup_bin) ||
-        index(as_string(fs.readfile(backup_init)), SING_BOX_MANAGED_MARKER) < 0)
-        return false;
-    let init_was_missing = !path_exists(SING_BOX_INIT);
-    for (let pair in [ [ backup_bin, SING_BOX_BIN ], [ backup_init, SING_BOX_INIT ],
-                       [ COMPRESSED_UPGRADE_BACKUP + "/libcronet.so", SING_BOX_CRONET ] ]) {
-        if (path_exists(pair[0]) && !path_exists(pair[1]) &&
-            !command_success_from_args([ "cp", "-p", pair[0], pair[1] ]))
-            return false;
-    }
-    if (init_was_missing && !command_success_from_args([ SING_BOX_INIT, "enable" ]))
-        return false;
-    return true;
-}
-
-function clear_compressed_upgrade_backup() {
-    for (let name in [ "sing-box", "sing-box.init", "libcronet.so" ])
-        unlink_if_exists(COMPRESSED_UPGRADE_BACKUP + "/" + name);
-    command_success_from_args([ "rmdir", COMPRESSED_UPGRADE_BACKUP ]);
 }
 
 function remember_upgrade_state(action) {
@@ -324,14 +272,16 @@ function prerm_cleanup(action) {
             return false;
         }
         restore_dnsmasq_if_needed();
-        // The compressed variant is installed outside the package manager.
-        // Keep its binary and managed init script across a Forkop upgrade;
-        // postinst needs both to restore the previously running service.
-        if (as_string(action) == "remove")
-            remove_managed_sing_box();
     }
     if (!remove_rt_tables_entry()) {
         warn("Unable to remove Forkop routing table entry before package replacement.\n");
+        return false;
+    }
+    // Explicit package removal also cancels any outstanding boot recovery.
+    // A package replacement keeps it armed until the complete set verifies.
+    if (as_string(action) == "remove" && path_exists(UPGRADE_RECOVERY_HOOK) &&
+        !command_success_from_args([ UPGRADE_RECOVERY_HOOK, "commit" ])) {
+        warn("Unable to cancel Forkop package recovery before removal.\n");
         return false;
     }
     return true;
@@ -352,11 +302,6 @@ function postinst_restore() {
     bytecode.invalidate_validation_stamp();
     if (!PACKAGE_TEST_MODE && path_exists('/etc/forkop-tailscale/enabled') && path_exists('/etc/init.d/forkop-tailscale'))
         command_success_from_args([ '/etc/init.d/forkop-tailscale', 'start' ]);
-    if (!restore_compressed_upgrade_backup()) {
-        warn("Unable to restore compressed sing-box after package upgrade.\n");
-        return false;
-    }
-
     let config = fs.readfile(CONFIG_PATH);
     if (config == null || trim(as_string(config)) == "") {
         let defaults = fs.readfile(DEFAULT_CONFIG_PATH);
@@ -383,13 +328,13 @@ function postinst_restore() {
 
     if (!path_exists(PACKAGE_UPGRADE_STATE)) {
         clear_upgrade_quiesce();
-        clear_compressed_upgrade_backup();
+
         queue_zapret_manager_migration();
         return true;
     }
 
     if (!wait_for_upgrade_sing_box_exit()) {
-        warn("Timed out waiting for the previous Forkop sing-box runtime to exit; startup was not attempted.\n");
+        warn("Timed out waiting for the previous Forkop Xrust runtime to exit; startup was not attempted.\n");
         return false;
     }
 
@@ -404,7 +349,7 @@ function postinst_restore() {
 
     unlink_if_exists(PACKAGE_UPGRADE_STATE);
     clear_upgrade_quiesce();
-    clear_compressed_upgrade_backup();
+
     queue_zapret_manager_migration();
     return true;
 }

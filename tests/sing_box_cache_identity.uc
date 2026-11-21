@@ -1,6 +1,6 @@
 #!/usr/bin/env ucode
 let fs = require("fs");
-let identity = require("singbox.cache_identity");
+let identity = require("xrust.cache_identity");
 let work = ARGV[0];
 let lib = ARGV[1];
 function expect(value, message) {
@@ -27,7 +27,7 @@ let expected = [base, base, base + ".forkop-x", base + ".forkop-rust-x", base + 
 fs.writefile(base, "legacy upstream cache");
 for (let i = 0; i < length(versions); i++) {
     let output = work + "/config.json";
-    let args = ["ucode", "-L", lib, lib + "/singbox/generator.uc", "generate-config-fixture",
+    let args = ["ucode", "-L", lib, lib + "/xrust/generator.uc", "generate-config-fixture",
         fixture, output, "127.0.0.1", "0", "1", "", versions[i]];
     let command = [];
     for (let arg in args) push(command, quote(arg));

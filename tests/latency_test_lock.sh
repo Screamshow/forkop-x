@@ -10,6 +10,8 @@ let lock_present = true;
 let lock_held = true;
 let states = [];
 let worker_args = [];
+let worker_result = { status: 0, output: "" };
+let finished = null;
 const BIN_PATH = "/usr/bin/forkop";
 const STATE_UC = "service/state.uc";
 const LATENCY_TEST_LOCK_DIR = "/var/run/forkop/automatic-latency-test.lock";
@@ -33,9 +35,10 @@ function non_negative_number(value) {
 function current_pid() { return "42"; }
 function module_success(path, args) { return true; }
 function command_from_args(args) { worker_args = args; return ""; }
-function command_status(command) { return 0; }
+function command_capture(command) { return worker_result; }
+function parse_json_or_null(value) { return json(value); }
 function write_finished_action_state(path, success, message, status) {
-    assert(success && status == 0, message);
+    finished = { success, message, status };
 }
 UCODE
 sed -n '/^function running_latency_test_reason() {/,/^}/p;
@@ -70,6 +73,11 @@ assert(length(worker_args) == 5 && worker_args[2] == "get_proxy_latency",
 latency_worker("/tmp/job.json", "proxy_list", '["proxy-a"]', "5000");
 assert(worker_args[2] == "get_proxy_latencies" && worker_args[5] == "/tmp/job.json",
     "batch worker does not forward its progress path");
+assert(finished.success && finished.status == 0, "successful job did not finish");
+worker_result = { status: 1, output: '{"error":"Could not read proxy list from Clash API"}' };
+latency_worker("/tmp/job.json", "proxy_list", '["proxy-a"]', "5000");
+assert(!finished.success && finished.status == 1 &&
+    finished.message == "Could not read proxy list from Clash API", "batch error lost its cause");
 print("latency test lock tests passed\n");
 UCODE
 } | ucode -

@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
-  formatMaskedSingBoxConfig,
+  formatMaskedXrustConfig,
   maskGlobalCheckText,
-  maskSingBoxConfigValue,
+  maskXrustConfigValue,
   maskSupportReportText,
 } from '../helpers/maskDiagnostics';
 
 describe('diagnostic masking', () => {
-  it('masks sensitive sing-box keys without mutating the original config', () => {
+  it('masks sensitive Xrust keys without mutating the original config', () => {
     const config = {
       outbounds: [
         {
@@ -27,7 +27,7 @@ describe('diagnostic masking', () => {
       },
     };
 
-    expect(maskSingBoxConfigValue(config)).toEqual({
+    expect(maskXrustConfigValue(config)).toEqual({
       outbounds: [
         {
           type: 'vless',
@@ -48,13 +48,34 @@ describe('diagnostic masking', () => {
     expect(config.outbounds[0].server).toBe('example.com');
   });
 
-  it('formats masked sing-box config from a raw JSON string', () => {
-    const masked = formatMaskedSingBoxConfig(
+  it('formats masked Xrust config from a raw JSON string', () => {
+    const masked = formatMaskedXrustConfig(
       '{"inbounds":[{"listen":"127.0.0.1","listen_port":2080}]}',
     );
 
     expect(masked).toContain('"listen": "MASKED"');
     expect(masked).toContain('"listen_port": "MASKED"');
+  });
+
+  it('masks case-insensitive transport credentials and withholds unparseable configs', () => {
+    const masked = formatMaskedXrustConfig({
+      headers: {
+        Authorization: 'synthetic credentials',
+        'pRoXy-AuThOrIzAtIoN': ['synthetic credentials'],
+        COOKIE: 'synthetic cookie',
+        'Set-Cookie': 'synthetic cookie',
+        'Content-Type': 'application/json',
+      },
+    });
+    expect(JSON.parse(masked).headers).toEqual({
+      Authorization: 'MASKED',
+      'pRoXy-AuThOrIzAtIoN': 'MASKED',
+      COOKIE: 'MASKED',
+      'Set-Cookie': 'MASKED',
+      'Content-Type': 'application/json',
+    });
+    expect(formatMaskedXrustConfig('{"password":"secret"')).toBe('MASKED');
+    expect(formatMaskedXrustConfig('"secret"')).toBe('MASKED');
   });
 
   it('masks sensitive global check UCI values while keeping visible structure stable', () => {

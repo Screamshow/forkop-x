@@ -126,6 +126,38 @@ class RustCatalogTests(unittest.TestCase):
             publisher.write_catalog(self.root)
         self.assertEqual(previous.read_text(), 'previous')
 
+    def test_native_core_archive_is_hidden_from_2x_latest_and_selector(self):
+        source, assets = self.release('0.0.45')
+        public_key = b'public test key'
+        (source / 'forkop-apk.pem').write_bytes(public_key)
+        for asset in assets:
+            if asset['format'] == 'apk':
+                asset['signed'] = True
+        manifest = dict(version='0.0.45', assets=assets, apk_signed=True, minimum_forkop_major=3,
+                        signing_public_key_sha256=hashlib.sha256(public_key).hexdigest())
+        (source / 'openwrt-manifest.json').write_text(json.dumps(manifest))
+        (source / 'SHA256SUMS').write_text('')
+        destination = self.root / 'published'
+        destination.mkdir()
+        (destination / 'latest.json').write_text('legacy latest')
+        (destination / 'releases.json').write_text('legacy selector')
+        with patch('sys.argv', ['publish-rust-x.py', str(source), str(destination), '--latest']):
+            with self.assertRaisesRegex(ValueError, 'cannot replace'):
+                publisher.main()
+        with patch('sys.argv', ['publish-rust-x.py', str(source), str(destination)]):
+            publisher.main()
+        archived = json.loads((destination / 'releases/0.0.45/manifest.json').read_text())
+        self.assertEqual(archived['minimum_forkop_major'], 3)
+        self.assertEqual((destination / 'latest.json').read_text(), 'legacy latest')
+        self.assertEqual((destination / 'releases.json').read_text(), 'legacy selector')
+        self.assertEqual(publisher.build_catalog(destination)['releases'], [])
+        with patch('sys.argv', ['publish-rust-x.py', str(source), str(destination)]):
+            publisher.main()
+        (source / 'SHA256SUMS').write_text('changed')
+        with patch('sys.argv', ['publish-rust-x.py', str(source), str(destination)]):
+            with self.assertRaisesRegex(ValueError, 'immutable native Xrust archive'):
+                publisher.main()
+
     def test_atomic_failure_preserves_previous_and_cleans_temp(self):
         self.release('0.0.26')
         previous = self.root / 'releases.json'

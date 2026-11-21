@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FORKOP_LIB="$ROOT_DIR/forkop/files/usr/lib"
 export FORKOP_VERSION="${FORKOP_VERSION:-1.14.8-canary.2}"
 PARSER_UC="$FORKOP_LIB/subscription/parser.uc"
-GENERATOR_UC="$FORKOP_LIB/singbox/generator.uc"
+GENERATOR_UC="$FORKOP_LIB/xrust/generator.uc"
 CACHE_UC="$FORKOP_LIB/subscription/cache.uc"
 WORK_DIR="$(mktemp -d)"
 
@@ -20,7 +20,7 @@ fail() {
 }
 
 ucode -L "$FORKOP_LIB" -e '
-let urltest = require("singbox.urltest");
+let urltest = require("xrust.urltest");
 let members = [ "Amsterdam #1", "Amsterdam #2", "Helsinki #1", "Stockholm #1" ];
 let starts = {};
 for (let i = 0; i < 64; i++) {
@@ -42,7 +42,7 @@ if (urltest.rotate_start(members, "", "Automatic")[0] != members[0])
 ' || fail "provider URLTest startup distribution"
 
 ucode -L "$FORKOP_LIB" -e '
-let subscription = require("singbox.subscription");
+let subscription = require("xrust.subscription");
 let state = {
     servers: {
         proxy: "edge-7.example",

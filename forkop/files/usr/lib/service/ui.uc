@@ -1,6 +1,7 @@
 #!/usr/bin/env ucode
 
 let fs = require("fs");
+let xrust = require("xrust.binary");
 let locks = require("core.locks");
 let process_memory = require("core.process_memory");
 let uci_core = require("core.uci");
@@ -16,7 +17,7 @@ const SERVICE_NAME = getenv("FORKOP_SERVICE_NAME") || "forkop";
 // not installed and simply adds nothing.
 const TAILSCALE_SERVICE_NAME = "forkop-tailscale";
 const TORRSERVER_SERVICE_NAME = "forkop-torrserver-direct";
-const CORE_SERVICE_NAMES = [ "sing-box", TAILSCALE_SERVICE_NAME ];
+const CORE_SERVICE_NAMES = [ xrust.SERVICE_NAME, TAILSCALE_SERVICE_NAME ];
 // Forkop's own workers, each in a procd service of its own.
 const FORKOP_SERVICE_NAMES = [ SERVICE_NAME, TORRSERVER_SERVICE_NAME ];
 const STATE_UC = LIB_DIR + "/service/state.uc";
@@ -33,10 +34,8 @@ const LATENCY_ACTION_DIR = getenv("FORKOP_UI_LATENCY_ACTION_DIR") || STATE_DIR +
 const LATENCY_TEST_LOCK_DIR = getenv("FORKOP_LATENCY_TEST_LOCK_DIR") || "/var/run/forkop/automatic-latency-test.lock";
 const COMPONENT_ACTION_DIR = getenv("FORKOP_UI_COMPONENT_ACTION_DIR") || getenv("UPDATES_JOB_DIR") || "/var/run/forkop/component-actions";
 const SUBSCRIPTION_ACTION_DIR = getenv("FORKOP_UI_SUBSCRIPTION_ACTION_DIR") || getenv("FORKOP_SUBSCRIPTION_UPDATE_JOB_DIR") || "/var/run/forkop/subscription-update-jobs";
-const SING_BOX_VERSION_CACHE_FILE = getenv("FORKOP_UI_SING_BOX_VERSION_CACHE_FILE") || STATE_DIR + "/sing-box-version";
+const SING_BOX_VERSION_CACHE_FILE = getenv("FORKOP_UI_SING_BOX_VERSION_CACHE_FILE") || STATE_DIR + "/xrust-version";
 const SING_BOX_VERSION_CACHE_LOCK_DIR = getenv("FORKOP_UI_SING_BOX_VERSION_CACHE_LOCK_DIR") || SING_BOX_VERSION_CACHE_FILE + ".lock";
-const SING_BOX_VARIANT_STATE_FILE = getenv("FORKOP_UI_SING_BOX_VARIANT_STATE_FILE") || "/etc/forkop/sing-box-variant";
-const SING_BOX_BIN_PATH = getenv("FORKOP_UI_SING_BOX_BIN_PATH") || "/usr/bin/sing-box";
 const SING_BOX_VERSION_PROBE_TIMEOUT_SECONDS = getenv("FORKOP_UI_SING_BOX_VERSION_PROBE_TIMEOUT_SECONDS") || "1";
 const SING_BOX_VERSION_PROBE_FAILURE_TTL_SECONDS = getenv("FORKOP_UI_SING_BOX_VERSION_PROBE_FAILURE_TTL_SECONDS") || "30";
 const ACTION_FINISHED_TTL_MINUTES = getenv("FORKOP_UI_ACTION_FINISHED_TTL_MINUTES") || "60";
@@ -115,17 +114,21 @@ function command_env(assignments) {
     return join(" ", parts);
 }
 
-function command_output(command) {
+function command_capture(command) {
     let pipe = fs.popen(command, "r");
     if (!pipe)
-        return "";
+        return { status: 1, output: "" };
 
     let data = pipe.read("all");
-    let status = pipe.close();
-    if (status != 0 || data == null)
-        return "";
+    let status = int(pipe.close());
+    if (status > 255)
+        status = int(status / 256);
+    return { status, output: as_string(data) };
+}
 
-    return as_string(data);
+function command_output(command) {
+    let result = command_capture(command);
+    return result.status == 0 ? result.output : "";
 }
 
 function command_output_from_args(args) {
@@ -355,17 +358,14 @@ function ui_state_json() {
                 status: forkop_status,
                 dns_configured: forkop_dns_configured
             },
-            sing_box: {
+            xrust: {
                 running: sing_box_running,
                 enabled: sing_box_enabled,
                 status: sing_box_status
             }
         },
         capabilities: {
-            sing_box_extended: arg_number(ARGV[8]),
-            sing_box_tiny: arg_number(ARGV[9]),
-            sing_box_compressed: arg_number(ARGV[10]),
-            sing_box_tailscale: arg_number(ARGV[11])
+            xrust_tailscale: arg_number(ARGV[11])
         },
         actions: action_state
     });
@@ -505,15 +505,6 @@ function active_service_action_value() {
 function file_executable(path) {
     let stat = fs.stat(as_string(path));
     return stat != null && stat.mode != null && (int(stat.mode) & 73) != 0;
-}
-
-function first_line(path) {
-    let data = fs.readfile(as_string(path));
-    if (data == null)
-        return "";
-
-    let newline = index(data, "\n");
-    return trim(newline >= 0 ? substr(data, 0, newline) : data);
 }
 
 function valid_job_id(job_id) {
@@ -809,7 +800,7 @@ function service_enabled() {
 }
 
 function sing_box_enabled() {
-    return file_executable("/etc/rc.d/S99sing-box");
+    return file_executable("/etc/rc.d/S99" + xrust.SERVICE_NAME);
 }
 
 function sing_box_running() {
@@ -833,54 +824,6 @@ function dns_configured() {
     return index(uci_core.get("dhcp.@dnsmasq[0].server"), SB_DNS_INBOUND_ADDRESS) >= 0;
 }
 
-function marker_is(expected) {
-    return first_line(SING_BOX_VARIANT_STATE_FILE) == as_string(expected);
-}
-
-function apk_package_installed(package_name) {
-    if (!command_success_from_args([ "sh", "-c", "command -v apk" ]))
-        return false;
-    let installed = command_output_from_args([ "apk", "list", "--installed", "--manifest" ]);
-    for (let line in split(installed, "\n")) {
-        let fields = split(trim(as_string(line)), /[ \t]+/);
-        if (as_string(fields[0]) == as_string(package_name))
-            return true;
-    }
-    return false;
-}
-
-function installed_sing_box_package_name() {
-    let installed = command_success_from_args([ "sh", "-c", "command -v apk" ]) ?
-        command_output_from_args([ "apk", "list", "--installed", "--manifest" ]) : "";
-    for (let package_name in [ "rust-x", "sing-box-x", "sing-box-extended", "sing-box-tiny", "sing-box" ]) {
-        for (let line in split(installed, "\n"))
-            if (split(trim(as_string(line)), /[ \t]+/)[0] == package_name)
-                return package_name;
-    }
-
-    installed = command_success_from_args([ "sh", "-c", "command -v opkg" ]) ?
-        command_output_from_args([ "opkg", "list-installed" ]) : "";
-    for (let package_name in [ "rust-x", "sing-box-x", "sing-box-extended", "sing-box-tiny", "sing-box" ]) {
-        for (let line in split(installed, "\n"))
-            if (split(trim(as_string(line)), /[ \t]+/)[0] == package_name)
-                return package_name;
-    }
-
-    return "";
-}
-
-function tiny_package_installed() {
-    if (command_success_from_args([ "sh", "-c", "command -v apk" ]))
-        return apk_package_installed("sing-box-tiny");
-
-    let installed = command_output_from_args([ "opkg", "list-installed" ]);
-    for (let line in split(installed, "\n"))
-        if (split(trim(as_string(line)), /[ \t]+/)[0] == "sing-box-tiny")
-            return true;
-
-    return false;
-}
-
 function component_action_running_for(component) {
     component = as_string(component);
     for (let path in fs.glob(COMPONENT_ACTION_DIR + "/*.json")) {
@@ -893,7 +836,7 @@ function component_action_running_for(component) {
 }
 
 function sing_box_signature() {
-    let stat = fs.stat(SING_BOX_BIN_PATH);
+    let stat = fs.stat(xrust.PATH);
     if (stat == null)
         return "";
 
@@ -901,9 +844,7 @@ function sing_box_signature() {
 }
 
 function sing_box_version_info_from_output(output) {
-    let first = split(as_string(output), "\n")[0] || "";
-    let fields = split(trim(as_string(first)), /[ \t]+/);
-    let version = length(fields) > 0 ? fields[length(fields) - 1] : "";
+    let version = xrust.version_from_output(output);
     if (version == "")
         return null;
 
@@ -936,11 +877,6 @@ function sing_box_cached_version_info(signature) {
         }
     }
 
-    let legacy = split(as_string(fs.readfile(SING_BOX_VERSION_CACHE_FILE)), "\n");
-    let legacy_version = as_string(legacy[1] || "");
-    if (as_string(legacy[0] || "") == signature && index(legacy_version, "extended") >= 0)
-        return { hit: true, info: { version: legacy_version, tags: "" } };
-
     return null;
 }
 
@@ -966,7 +902,7 @@ function bounded_command_output_from_args(args, timeout_seconds) {
 }
 
 function sing_box_version_info() {
-    if (!file_executable(SING_BOX_BIN_PATH))
+    if (!file_executable(xrust.PATH))
         return null;
 
     let signature = sing_box_signature();
@@ -989,7 +925,7 @@ function sing_box_version_info() {
         return cached.info;
     }
 
-    let output = bounded_command_output_from_args([ SING_BOX_BIN_PATH, "version" ], SING_BOX_VERSION_PROBE_TIMEOUT_SECONDS);
+    let output = bounded_command_output_from_args([ xrust.PATH, "version" ], SING_BOX_VERSION_PROBE_TIMEOUT_SECONDS);
     let info = sing_box_version_info_from_output(output);
     write_state_file(SING_BOX_VERSION_CACHE_FILE, {
         signature,
@@ -1004,62 +940,12 @@ function sing_box_version_info() {
 }
 
 function capability_flags() {
-    let result = {
-        sing_box_extended: 0,
-        sing_box_tiny: 0,
-        sing_box_compressed: 0,
-        sing_box_tailscale: 0,
-        sing_box_xhttp: 0,
-        sing_box_package: ""
+    let info = sing_box_version_info();
+    return {
+        xrust_tailscale: info != null && match(info.tags, /(^|[,: \t])with_tailscale([, \t]|$)/) != null ? 1 : 0,
+        xrust_bittorrent_direct: info != null &&
+            match(info.features, /(^|[, \t])sniff[.]bittorrent-extended([, \t]|$)/) != null ? 1 : 0
     };
-
-    if (file_executable(SING_BOX_BIN_PATH)) {
-        result.sing_box_package = installed_sing_box_package_name();
-        // A manually installed regular package supersedes a persisted variant
-        // marker from a previous Forkop-managed Tiny/Extended installation.
-        // Package-manager state is authoritative for this case.
-        let regular_installed = result.sing_box_package == "rust-x" || result.sing_box_package == "sing-box" || result.sing_box_package == "sing-box-x";
-        if (result.sing_box_package == "sing-box-extended") {
-            result.sing_box_extended = 1;
-            result.sing_box_tailscale = 1;
-        }
-        else if (result.sing_box_package == "sing-box-tiny") {
-            result.sing_box_tiny = 1;
-        }
-        else if (!regular_installed && marker_is("extended-compressed")) {
-            result.sing_box_extended = 1;
-            result.sing_box_compressed = 1;
-            result.sing_box_tailscale = 1;
-        }
-        else if (!regular_installed && marker_is("extended")) {
-            result.sing_box_extended = 1;
-            result.sing_box_tailscale = 1;
-        }
-        else if (!regular_installed && (marker_is("tiny") || tiny_package_installed())) {
-            result.sing_box_tiny = 1;
-        }
-        else if (!regular_installed && component_action_running_for("sing_box")) {
-            result.sing_box_tailscale = 1;
-        }
-        else if (!regular_installed || result.sing_box_package == "rust-x") {
-            let info = sing_box_version_info();
-            if (info != null && index(info.version, "extended") >= 0) {
-                result.sing_box_extended = 1;
-                result.sing_box_tailscale = 1;
-            }
-            else if (info != null) {
-                if (match(info.tags, /(^|[,: \t])with_tailscale([, \t]|$)/) != null)
-                    result.sing_box_tailscale = 1;
-            }
-        }
-    }
-
-    if (file_executable(SING_BOX_BIN_PATH)) {
-        let info = sing_box_version_info();
-        result.sing_box_xhttp = result.sing_box_extended ||
-            (info != null && match(as_string(info.features), /(^|[, \t])transport[.]xhttp([, \t]|$)/) != null) ? 1 : 0;
-    }
-    return result;
 }
 
 function ui_capabilities_json() {
@@ -1072,7 +958,7 @@ function monitoring_runtime_config(procd_services) {
 
     let path = "";
     let pid = 0;
-    for (let _, instance in procd_services?.["sing-box"]?.instances || {}) {
+    for (let _, instance in procd_services?.[xrust.SERVICE_NAME]?.instances || {}) {
         if (instance.running !== true || int(instance.pid || 0) <= 0)
             continue;
         if (pid != 0 || type(instance.command) != "array")
@@ -1085,7 +971,7 @@ function monitoring_runtime_config(procd_services) {
     }
 
     // Only the two paths exposed by the LuCI settings and its file ACL.
-    if (path != "/etc/sing-box/config.json" && path != "/tmp/sing-box/config.json")
+    if (path != "/etc/xrust/config.json" && path != "/tmp/xrust/config.json")
         return null;
     let stat = fs.stat(path);
     if (stat == null || stat.type != "file" || locks.held(RELOAD_LOCK_DIR))
@@ -1142,7 +1028,7 @@ function current_ui_state_json() {
                 status: forkop_status,
                 dns_configured: dns_configured() ? 1 : 0
             },
-            sing_box: {
+            xrust: {
                 running: sing_box_is_running,
                 memory_rss_bytes: process_memory.services_group_rss_bytes(
                     procd_services, CORE_SERVICE_NAMES, "/proc"),
@@ -1316,8 +1202,7 @@ function launch_worker(args) {
         FORKOP_UI_SUBSCRIPTION_ACTION_DIR: SUBSCRIPTION_ACTION_DIR,
         FORKOP_UI_SING_BOX_VERSION_CACHE_FILE: SING_BOX_VERSION_CACHE_FILE,
         FORKOP_UI_SING_BOX_VERSION_CACHE_LOCK_DIR: SING_BOX_VERSION_CACHE_LOCK_DIR,
-        FORKOP_UI_SING_BOX_VARIANT_STATE_FILE: SING_BOX_VARIANT_STATE_FILE,
-        FORKOP_UI_SING_BOX_BIN_PATH: SING_BOX_BIN_PATH,
+        FORKOP_XRUST_BIN: xrust.PATH,
         FORKOP_UI_SING_BOX_VERSION_PROBE_TIMEOUT_SECONDS: SING_BOX_VERSION_PROBE_TIMEOUT_SECONDS,
         FORKOP_UI_SING_BOX_VERSION_PROBE_FAILURE_TTL_SECONDS: SING_BOX_VERSION_PROBE_FAILURE_TTL_SECONDS,
         FORKOP_UI_ACTION_FINISHED_TTL_MINUTES: ACTION_FINISHED_TTL_MINUTES,
@@ -1505,12 +1390,15 @@ function latency_worker(path, latency_type, tag, timeout) {
     // command uses this position for its optional test URL.
     if (latency_type == "proxy_list")
         push(args, path);
-    let status = command_status(command_from_args(args) + " >/dev/null 2>&1");
+    let result = command_capture(command_from_args(args) + " 2>/dev/null");
     module_success(STATE_UC, [ "release-runtime-dir-lock", LATENCY_TEST_LOCK_DIR ]);
-    if (status == 0)
-        write_finished_action_state(path, true, "Latency test completed", status);
-    else
-        write_finished_action_state(path, false, "Latency test failed", status);
+    if (result.status == 0)
+        write_finished_action_state(path, true, "Latency test completed", 0);
+    else {
+        let response = parse_json_or_null(result.output);
+        let message = type(response?.error) == "string" ? response.error : "Latency test failed";
+        write_finished_action_state(path, false, message, result.status);
+    }
 }
 
 function automatic_latency_start(pid, tags) {

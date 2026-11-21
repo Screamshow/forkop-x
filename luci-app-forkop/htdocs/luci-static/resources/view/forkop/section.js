@@ -334,15 +334,62 @@ function readOutboundMetadataFromSectionCache(section_id) {
 }
 
 const editorPreviewStates = new Map();
+function subscriptionCatalogueOption(option) {
+  return option !== "subscription_update_enabled" &&
+    option !== "subscription_update_interval";
+}
+
 function subscriptionSourceSignature(sources) {
   return JSON.stringify(sources.map(source => Object.fromEntries(
-    Object.keys(source).filter(key => !key.startsWith(".")).sort()
+    Object.keys(source)
+      .filter(key => !key.startsWith(".") && subscriptionCatalogueOption(key))
+      .sort()
       .map(key => [key, source[key]]),
   )));
 }
 function savedSubscriptionSources(section_id) {
   return getChildItemIds(section_id, "subscription_url")
     .map(id => Object.assign({}, uci.get(UCI_PACKAGE, id)));
+}
+
+async function subscriptionSourcesHavePendingChanges(section_id, sources) {
+  const ids = new Set(sources.map(source => source[".name"]));
+  const state = uci.state;
+  const loaded = state?.values?.[UCI_PACKAGE];
+  const isSource = id => ids.has(id) ||
+    (loaded?.[id]?.[".type"] === "subscription_url" && loaded[id].section === section_id);
+  if (Object.keys(state?.creates?.[UCI_PACKAGE] || {}).some(isSource)) return true;
+
+  const edits = [
+    ...Object.entries(state?.changes?.[UCI_PACKAGE] || {}),
+    ...Object.entries(state?.deletes?.[UCI_PACKAGE] || {}),
+  ];
+  if (edits.some(([id, edit]) => isSource(id) &&
+      (edit === true || Object.keys(edit).some(subscriptionCatalogueOption)))) return true;
+
+  // Save reloads UCI with the session's staged values before Apply.
+  const pending = (await uci.changes().catch(() => null))?.[UCI_PACKAGE];
+  if (!Array.isArray(pending)) return false;
+  if (pending.some(([operation, id, option]) =>
+      (ids.has(id) && (operation === "rename" || subscriptionCatalogueOption(option))) ||
+      (id === section_id && option === "subscription_urls"))) return true;
+
+  // A removed child no longer has an owner in LuCI's configuration.
+  const removed = pending.filter(([operation, , option]) => operation === "remove" && !option)
+    .map(([, id]) => id);
+  if (!removed.length) return false;
+  try {
+    const result = await fs.exec("/usr/bin/forkop", [
+      "editor_removed_subscription_sources", section_id, JSON.stringify(removed),
+    ]);
+    if (!result.code) {
+      const affected = JSON.parse(result.stdout).affected;
+      if (typeof affected === "boolean") return affected;
+    }
+  } catch (_error) {
+    // Keep the working catalogue when the saved subscription is still present.
+  }
+  return !sources.length;
 }
 function renderEditorPreviewStatus(section_id, state, element) {
   const status = element || document.getElementById(`forkop-editor-status-${section_id}`);
@@ -409,9 +456,11 @@ async function loadDraftSubscriptionChoices(section_id, sources) {
 
 async function loadOutboundNameChoices(section_id) {
   const sources = draftSubscriptionSources(section_id);
+  const saved = savedSubscriptionSources(section_id);
+  const signature = subscriptionSourceSignature(sources);
   if (sources.length) {
-    const signature = subscriptionSourceSignature(sources);
-    if (signature === subscriptionSourceSignature(savedSubscriptionSources(section_id))) {
+    if (signature === subscriptionSourceSignature(saved) &&
+        !(await subscriptionSourcesHavePendingChanges(section_id, saved))) {
       const metadata = await readOutboundMetadataFromSectionCache(section_id);
       // A delayed cache read must not repopulate a newly edited source list.
       if (signature !== subscriptionSourceSignature(draftSubscriptionSources(section_id))) return [];
@@ -420,16 +469,26 @@ async function loadOutboundNameChoices(section_id) {
         editorPreviewStates.delete(section_id);
         outboundNameChoicesCache.set(section_id, choices);
         renderEditorPreviewStatus(section_id, null);
+        refreshDashboardFilterChoiceWidgets(section_id);
         return choices;
       }
     }
+    if (signature !== subscriptionSourceSignature(draftSubscriptionSources(section_id))) return [];
     return loadDraftSubscriptionChoices(section_id, sources).catch(() => []);
   }
   if (editorPreviewStates.has(section_id)) {
     editorPreviewStates.delete(section_id);
     outboundNameChoicesCache.delete(section_id);
-    renderEditorPreviewStatus(section_id, null);
   }
+  renderEditorPreviewStatus(section_id, null);
+  if (saved.length || await subscriptionSourcesHavePendingChanges(section_id, saved)) {
+    if (draftSubscriptionSources(section_id).length) return [];
+    outboundNameChoicesInflight.delete(section_id);
+    outboundNameChoicesCache.set(section_id, []);
+    refreshDashboardFilterChoiceWidgets(section_id);
+    return [];
+  }
+  if (draftSubscriptionSources(section_id).length) return [];
   if (outboundNameChoicesCache.has(section_id)) {
     return Promise.resolve(outboundNameChoicesCache.get(section_id));
   }
@@ -440,6 +499,8 @@ async function loadOutboundNameChoices(section_id) {
 
   const task = readOutboundMetadataFromSectionCache(section_id)
     .then((metadata) => {
+      if (outboundNameChoicesInflight.get(section_id) !== task ||
+          draftSubscriptionSources(section_id).length) return [];
       const names = Object.values(plainObject(metadata.names));
 
       const choices = names
@@ -453,7 +514,9 @@ async function loadOutboundNameChoices(section_id) {
     })
     .catch(() => [])
     .finally(() => {
-      outboundNameChoicesInflight.delete(section_id);
+      if (outboundNameChoicesInflight.get(section_id) === task) {
+        outboundNameChoicesInflight.delete(section_id);
+      }
     });
 
   outboundNameChoicesInflight.set(section_id, task);
@@ -1833,26 +1896,6 @@ function defaultInterfaceSettings() {
   };
 }
 
-function subscriptionUserAgentChoices() {
-  return [
-    "sing-box",
-    "Happ",
-    "v2rayN",
-    "v2rayNG",
-    "v2RayTun",
-    "Incy",
-    "Hiddify",
-    "HiddifyNext",
-    "Clash",
-    "Clash.Meta",
-    "ClashMetaForAndroid",
-    "Mihomo",
-    "NekoBox",
-    "Karing",
-    "Husi",
-  ];
-}
-
 function urlTestSettingsKeys() {
   return [
     "name",
@@ -2020,14 +2063,14 @@ function addSubscriptionUrlItemOptions(itemSection, options = {}) {
     form.Value,
     "subscription_update_interval",
     _("Subscription update interval"),
-    _("Use sing-box duration format like 1d, 12h or 30m"),
+    _("Use Xrust duration format like 1d, 12h or 30m"),
   );
   o.depends("subscription_update_enabled", "1");
   o.placeholder = "4h";
   o.validate = function (itemId, value) {
     return optionMapValue(this, itemId, "subscription_update_enabled") === "1"
-      ? validateRequiredSingBoxDuration(value)
-      : validateOptionalSingBoxDuration(value);
+      ? validateRequiredXrustDuration(value)
+      : validateOptionalXrustDuration(value);
   };
 
   o = itemSection.option(
@@ -2154,12 +2197,12 @@ function addUrlTestItemOptions(itemSection, options = {}) {
     form.Value,
     "check_interval",
     _("Check interval"),
-    _("Use sing-box duration format like 1d, 12h or 30m"),
+    _("Use Xrust duration format like 1d, 12h or 30m"),
   );
   o.default = "3m";
   o.rmempty = false;
   o.validate = function (_itemId, value) {
-    return validateRequiredSingBoxDuration(value);
+    return validateRequiredXrustDuration(value);
   };
 
   o = itemSection.option(
@@ -2194,13 +2237,13 @@ function addUrlTestItemOptions(itemSection, options = {}) {
     "idle_timeout",
     _("Idle timeout"),
     _(
-      "Stop checking when URLTest group is not used. Use sing-box duration format like 1d, 12h or 30m.",
+      "Stop checking when URLTest group is not used. Use Xrust duration format like 1d, 12h or 30m.",
     ),
   );
   o.default = "30m";
   o.rmempty = false;
   o.validate = function (_itemId, value) {
-    return validateRequiredSingBoxDuration(value);
+    return validateRequiredXrustDuration(value);
   };
 
   o = itemSection.option(
@@ -2622,7 +2665,7 @@ function addPriorityGroupItemOptions(itemSection, options = {}) {
   o.default = "5s";
   o.rmempty = false;
   o.validate = function (_itemId, value) {
-    return validateRequiredSingBoxDuration(value);
+    return validateRequiredXrustDuration(value);
   };
 
   o = itemSection.option(
@@ -2634,7 +2677,7 @@ function addPriorityGroupItemOptions(itemSection, options = {}) {
   o.default = "2s";
   o.rmempty = false;
   o.validate = function (_itemId, value) {
-    return validateRequiredSingBoxDuration(value);
+    return validateRequiredXrustDuration(value);
   };
 
   o = itemSection.option(
@@ -2648,7 +2691,7 @@ function addPriorityGroupItemOptions(itemSection, options = {}) {
   o.default = "15s";
   o.rmempty = false;
   o.validate = function (_itemId, value) {
-    return validateRequiredSingBoxDuration(value);
+    return validateRequiredXrustDuration(value);
   };
 
   o = itemSection.option(
@@ -2677,7 +2720,7 @@ function addPriorityGroupItemOptions(itemSection, options = {}) {
     form.Value,
     "fastest_check_interval",
     _("Faster server search interval"),
-    _("Use sing-box duration format like 1d, 12h or 30m"),
+    _("Use Xrust duration format like 1d, 12h or 30m"),
   );
   o.depends("switch_to_faster_same_priority", "1");
   o.default = "3m";
@@ -2685,7 +2728,7 @@ function addPriorityGroupItemOptions(itemSection, options = {}) {
   o.validate = function (itemId, value) {
     return optionMapValue(this, itemId, "switch_to_faster_same_priority") ===
       "1"
-      ? validateRequiredSingBoxDuration(value)
+      ? validateRequiredXrustDuration(value)
       : true;
   };
 
@@ -3051,14 +3094,15 @@ function ruleSetIncludesSubnets(section_id, value) {
   );
 }
 
-function showSubscriptionUrlSettingsModal(_section_id, itemValue, option) {
-  return showChildItemSettingsModal(_section_id, itemValue, option, {
+function showSubscriptionUrlSettingsModal(section_id, itemValue, option) {
+  return showChildItemSettingsModal(section_id, itemValue, option, {
     typeName: "subscription_url",
     valueOption: "url",
     keys: subscriptionUrlSettingsKeys(),
     defaults: defaultSubscriptionUrlSettings(),
     addOptions: addSubscriptionUrlItemOptions,
     title: () => _("Subscription URL settings"),
+    afterSave: () => { void loadOutboundNameChoices(section_id); },
   });
 }
 
@@ -3279,7 +3323,7 @@ function showOutboundJsonSettingsModal(
     form.TextValue,
     "outbound_json",
     _("JSON outbound"),
-    _("Enter a complete sing-box outbound object"),
+    _("Enter a complete Xrust outbound object"),
   );
   jsonOption.rows = 12;
   jsonOption.wrap = "soft";
@@ -3888,7 +3932,7 @@ function validateKeyword(_section_id, value) {
   return true;
 }
 
-function isSingBoxDuration(value) {
+function isXrustDuration(value) {
   return /^(?=.*[1-9])([0-9]+(?:\.[0-9]+)?(?:ns|us|ms|s|m|h|d))+$/.test(value);
 }
 
@@ -3905,32 +3949,32 @@ function writeOptionalDurationOption(section_id, key, value) {
   }
 }
 
-function validateOptionalSingBoxDuration(value) {
+function validateOptionalXrustDuration(value) {
   const normalized = value ? `${value}`.trim() : "";
 
   if (!normalized.length) {
     return true;
   }
 
-  if (isSingBoxDuration(normalized)) {
+  if (isXrustDuration(normalized)) {
     return true;
   }
 
-  return _("Use sing-box duration format like 1d, 12h or 30m");
+  return _("Use Xrust duration format like 1d, 12h or 30m");
 }
 
-function validateRequiredSingBoxDuration(value) {
+function validateRequiredXrustDuration(value) {
   const normalized = value ? `${value}`.trim() : "";
 
   if (!normalized.length) {
-    return _("Use sing-box duration format like 1d, 12h or 30m");
+    return _("Use Xrust duration format like 1d, 12h or 30m");
   }
 
-  if (isSingBoxDuration(normalized)) {
+  if (isXrustDuration(normalized)) {
     return true;
   }
 
-  return _("Use sing-box duration format like 1d, 12h or 30m");
+  return _("Use Xrust duration format like 1d, 12h or 30m");
 }
 
 function parseSubscriptionUrlEntry(value) {
@@ -5668,7 +5712,7 @@ function createSectionContent(section) {
     "resolve_real_ip_for_routing",
     _("Resolve real IP for routing"),
     _(
-      "Resolve domain names before routing so sing-box can use real destination IPs.",
+      "Resolve domain names before routing so Xrust can use real destination IPs.",
     ),
   );
   o.default = "0";

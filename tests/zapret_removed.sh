@@ -24,7 +24,7 @@ if grep -rIin 'zapret\|nfqws\|nfqueue' \
     grep -Ev \
         -e '^'"$ROOT"'/forkop/files/usr/lib/(config/migration|service/proxy_transport)\.uc:' \
         -e '^'"$ROOT"'/forkop/files/usr/lib/service/lifecycle\.uc:[0-9]+:.*Cannot protect Connection transport from zapret' \
-        -e '^'"$ROOT"'/forkop/files/usr/lib/singbox/generator\.uc:[0-9]+:.*remain eligible for zapret' >"$WORK/hits"; then
+        -e '^'"$ROOT"'/forkop/files/usr/lib/xrust/generator\.uc:[0-9]+:.*remain eligible for zapret' >"$WORK/hits"; then
     cat "$WORK/hits" >&2
     fail "Zapret provider references remain"
 fi
@@ -114,7 +114,7 @@ cat >"$WORK/reenabled.json" <<'JSON'
   "domain_suffix":["zap.example"]}]}
 JSON
 mkdir -p "$WORK/reenabled-out.json.section-cache" "$WORK/reenabled-out.json.rulesets"
-ucode -L "$LIB" "$LIB/singbox/generator.uc" generate-config-fixture \
+ucode -L "$LIB" "$LIB/xrust/generator.uc" generate-config-fixture \
     "$WORK/reenabled.json" "$WORK/reenabled-out.json" 127.0.0.1 0 1 '' 1.14.2-x-1.0.4 \
     >"$WORK/reenabled.log" 2>&1 ||
   { cat "$WORK/reenabled.log" >&2; fail "a re-enabled rolled-back rule does not generate"; }
@@ -127,7 +127,7 @@ cat >"$WORK/mixed.json" <<'JSON'
   "selector_proxy_links":["socks5://127.0.0.1:1080#Manual%20SOCKS"],
   "mixed_proxy_enabled":"1","mixed_proxy_port":"4545"}]}
 JSON
-ucode -L "$LIB" "$LIB/singbox/generator.uc" generate-config-fixture \
+ucode -L "$LIB" "$LIB/xrust/generator.uc" generate-config-fixture \
     "$WORK/mixed.json" "$WORK/mixed-out.json" 127.0.0.1 0 1 '' 1.14.2-x-1.0.4 \
     >"$WORK/mixed.log" 2>&1 || { cat "$WORK/mixed.log" >&2; fail "mixed proxy generation failed"; }
 ucode -e '

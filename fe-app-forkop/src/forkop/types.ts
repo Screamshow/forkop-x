@@ -34,17 +34,17 @@ export namespace Forkop {
   // check_proxy             Check proxy connectivity
   // check_nft               Check NFT rules
   // check_nft_rules         Check NFT rules status
-  // check_sing_box          Check sing-box installation and status
+  // check_xrust          Check Xrust installation and status
   // check_logs              Show forkop logs from system journal
-  // check_sing_box_logs     Show sing-box logs
-  // check_fakeip            Test sing-box FakeIP DNS
+  // check_xrust_logs     Show Xrust logs
+  // check_fakeip            Test Xrust FakeIP DNS
   // clash_api               Clash API interface for managing proxies and groups
   // show_config             Display current forkop configuration
   // show_version            Show forkop version
-  // show_sing_box_config    Show sing-box configuration
-  // show_sing_box_version   Show sing-box version
+  // show_xrust_config    Show Xrust configuration
+  // show_xrust_version   Show Xrust version
   // get_status              Get forkop service status
-  // get_sing_box_status     Get sing-box service status
+  // get_xrust_status     Get Xrust service status
   // get_ui_capabilities     Get lightweight UI capabilities
   // check_dns_available     Check DNS server availability
   // global_check            Run global system check
@@ -56,15 +56,15 @@ export namespace Forkop {
     GET_STATUS = 'get_status',
     GET_OUTBOUND_METADATA = 'get_outbound_metadata',
     GET_SUBSCRIPTION_METADATA = 'get_subscription_metadata',
-    CHECK_SING_BOX = 'check_sing_box',
-    GET_SING_BOX_STATUS = 'get_sing_box_status',
+    CHECK_XRUST = 'check_xrust',
+    GET_XRUST_STATUS = 'get_xrust_status',
     CLASH_API = 'clash_api',
     ENABLE = 'enable',
     DISABLE = 'disable',
     GLOBAL_CHECK = 'global_check',
-    SHOW_SING_BOX_CONFIG = 'show_sing_box_config',
+    SHOW_XRUST_CONFIG = 'show_xrust_config',
     CHECK_LOGS = 'check_logs',
-    CHECK_SING_BOX_LOGS = 'check_sing_box_logs',
+    CHECK_XRUST_LOGS = 'check_xrust_logs',
     GET_SYSTEM_INFO = 'get_system_info',
     GET_UI_CAPABILITIES = 'get_ui_capabilities',
     GET_UI_STATE = 'get_ui_state',
@@ -358,13 +358,13 @@ export namespace Forkop {
     rules_other_mark_exist: 0 | 1;
   }
 
-  export interface SingBoxCheckResult {
-    sing_box_installed: 0 | 1;
-    sing_box_version_ok: 0 | 1;
-    sing_box_service_exist: 0 | 1;
-    sing_box_autostart_disabled: 0 | 1;
-    sing_box_process_running: 0 | 1;
-    sing_box_ports_listening: 0 | 1;
+  export interface XrustCheckResult {
+    xrust_installed: 0 | 1;
+    xrust_version_ok: 0 | 1;
+    xrust_service_exist: 0 | 1;
+    xrust_autostart_disabled: 0 | 1;
+    xrust_process_running: 0 | 1;
+    xrust_ports_listening: 0 | 1;
   }
 
   export interface FakeIPCheckResult {
@@ -396,7 +396,7 @@ export namespace Forkop {
     memory_rss_bytes?: number | null;
   }
 
-  export interface GetSingBoxStatus {
+  export interface GetXrustStatus {
     memory_rss_bytes?: number | null;
     running: number;
     enabled: number;
@@ -404,15 +404,12 @@ export namespace Forkop {
   }
 
   export interface GetSystemInfo {
-    sing_box_xhttp?: 0 | 1;
     forkop_version: string;
     forkop_latest_version: string;
     luci_app_version: string;
-    sing_box_version: string;
-    sing_box_extended: 0 | 1;
-    sing_box_tiny: 0 | 1;
-    sing_box_compressed: 0 | 1;
-    sing_box_tailscale: 0 | 1;
+    xrust_version: string;
+    xrust_bittorrent_direct: 0 | 1;
+    xrust_tailscale: 0 | 1;
     zapret_manager_installed: 0 | 1;
     packet_steering_mode: string;
     direct_proxy_enabled: 0 | 1;
@@ -428,11 +425,7 @@ export namespace Forkop {
   }
 
   export interface GetUiCapabilities {
-    sing_box_xhttp?: 0 | 1;
-    sing_box_extended: 0 | 1;
-    sing_box_tiny: 0 | 1;
-    sing_box_compressed: 0 | 1;
-    sing_box_tailscale: 0 | 1;
+    xrust_tailscale: 0 | 1;
   }
 
   export type ServiceAction = 'start' | 'stop' | 'restart' | 'reload';
@@ -476,6 +469,7 @@ export namespace Forkop {
 
   export interface UiState {
     runtime_config?: RuntimeConfigReference | null;
+    config_error?: string;
     subscription_error?: {
       state: 'previous' | 'recovery_failed' | 'applied' | 'unknown';
       reason: string;
@@ -483,7 +477,7 @@ export namespace Forkop {
     } | null;
     service: {
       forkop: GetStatus;
-      sing_box: GetSingBoxStatus;
+      xrust: GetXrustStatus;
       tailscale?: ServiceProcessState | null;
       torrserver_direct?: ServiceProcessState | null;
     };
@@ -498,7 +492,6 @@ export namespace Forkop {
 
   export type ComponentName =
     | 'forkop'
-    | 'sing_box'
     | 'zapret_manager'
     | 'packet_steering'
     | 'direct_proxy'
@@ -508,10 +501,6 @@ export namespace Forkop {
     | 'check_update'
     | 'install'
     | 'remove'
-    | 'install_tiny'
-    | 'install_x'
-    | 'install_rust_x'
-    | 'install_stable'
     | 'enable'
     | 'disable'
     | 'restore';

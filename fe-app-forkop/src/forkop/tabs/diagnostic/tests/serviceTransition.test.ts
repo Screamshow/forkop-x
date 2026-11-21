@@ -189,7 +189,7 @@ describe('diagnostic service transitions', () => {
     expect(
       hasComponentActionLoading({
         forkopCheck: { loading: false },
-        singBoxInstall: { loading: true },
+        forkopInstall: { loading: true },
       }),
     ).toBe(true);
   });
@@ -268,7 +268,7 @@ describe('diagnostic service transitions', () => {
     ).toBe(true);
   });
 
-  it('offers Stop for an unhealthy runtime with a remaining sing-box process', () => {
+  it('offers Stop for an unhealthy runtime with a remaining Xrust process', () => {
     const state = {
       forkopRunning: false,
       stopAvailable: true,

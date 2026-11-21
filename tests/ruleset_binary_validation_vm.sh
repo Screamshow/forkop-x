@@ -25,7 +25,7 @@ function file_nonempty(path) { let s = fs.stat(path); return s != null && s.size
 function remove_file(path) { fs.unlink(path); }
 function valid_list_ruleset_file(path) { let v = json(fs.readfile(path)); return type(v) == "object" && type(v.rules) == "array"; }
 UCODE
-sed -n '/^function binary_validation_path(path) {/,/^}/p; /^function binary_stat_signature(path) {/,/^}/p; /^function binary_digest(path) {/,/^}/p; /^function trusted_binary_digest(path) {/,/^}/p; /^function mark_binary_valid(path) {/,/^}/p; /^function valid_binary(path) {/,/^}/p' "$LIB/singbox/ruleset_cache.uc"
+sed -n '/^function binary_validation_path(path) {/,/^}/p; /^function binary_stat_signature(path) {/,/^}/p; /^function binary_digest(path) {/,/^}/p; /^function trusted_binary_digest(path) {/,/^}/p; /^function mark_binary_valid(path) {/,/^}/p; /^function valid_binary(path) {/,/^}/p' "$LIB/xrust/ruleset_cache.uc"
 sed -n '/^function validate_staged_list_download(path, format) {/,/^}/p' "$LIB/components/updates.uc"
 cat <<'UCODE'
 for (let path in [ ARGV[0], ARGV[1] ]) {
@@ -73,16 +73,16 @@ export FORKOP_PERSISTENT_LIST_CACHE_DIR="$work/list-cache"
 cat > "$work/config.json" <<'JSON'
 {"route":{"rule_set":[{"type":"remote","tag":"large","format":"binary","url":"https://fixture.invalid/large.srs"}]}}
 JSON
-ucode -L "$LIB" "$LIB/singbox/ruleset_cache.uc" materialize-config "$work/config.json"
+ucode -L "$LIB" "$LIB/xrust/ruleset_cache.uc" materialize-config "$work/config.json"
 cache_path=$(ucode -e 'let fs=require("fs"); print(json(fs.readfile(ARGV[0])).route.rule_set[0].path);' "$work/config.json")
 [ -f "$cache_path.validated" ]
 old_hash=$(md5sum "$cache_path")
 status=0
-ucode -L "$LIB" "$LIB/singbox/ruleset_cache.uc" refresh || status=$?
+ucode -L "$LIB" "$LIB/xrust/ruleset_cache.uc" refresh || status=$?
 [ "$status" = 1 ] || { echo 'unchanged large cache unexpectedly failed or changed'; exit 1; }
 RULESET_REAL_DOWNLOAD="$work/truncated.srs"
 export RULESET_REAL_DOWNLOAD
-if ucode -L "$LIB" "$LIB/singbox/ruleset_cache.uc" refresh 2> "$work/rejection.log"; then
+if ucode -L "$LIB" "$LIB/xrust/ruleset_cache.uc" refresh 2> "$work/rejection.log"; then
     echo 'corrupt download accepted'
     exit 1
 fi
@@ -95,14 +95,14 @@ echo 'Large cache publication, unchanged refresh and last-known-good preservatio
 sing-box rule-set compile "$work/probe.json" -o "$work/probe.srs"
 export RULESET_REAL_DOWNLOAD="$work/probe.srs"
 export FORKOP_PERSISTENT_LIST_CACHE_AVAILABLE_BYTES=8388608
-ucode -L "$LIB" "$LIB/singbox/ruleset_cache.uc" refresh
+ucode -L "$LIB" "$LIB/xrust/ruleset_cache.uc" refresh
 [ "$old_hash" = "$(md5sum "$cache_path")" ]
 runtime_path=$(ucode -e 'let fs=require("fs");let m=json(fs.readfile(ARGV[0]));for(let k,e in m)if(e.path)print(e.path);' "$FORKOP_RULESET_RUNTIME_MANIFEST")
 [ -f "$runtime_path" ] && [ -f "$runtime_path.validated" ]
 cmp "$RULESET_REAL_DOWNLOAD" "$runtime_path"
 export FORKOP_PERSISTENT_LIST_CACHE_AVAILABLE_BYTES=33554432
 status=0
-ucode -L "$LIB" "$LIB/singbox/ruleset_cache.uc" refresh || status=$?
+ucode -L "$LIB" "$LIB/xrust/ruleset_cache.uc" refresh || status=$?
 [ "$status" = 1 ]
 cmp "$RULESET_REAL_DOWNLOAD" "$cache_path"
 [ ! -e "$runtime_path" ]

@@ -49,5 +49,44 @@ if (nativeSource) assert.ok(nativeHandler, 'find the VM native LuCI handler');
       }
     }
   }
+  const events = [];
+  const listeners = {};
+  let pending;
+  function displayStatus(status, content) { events.push([status, content]); }
+  const changes = {
+    apply() {},
+    displayStatus,
+    confirm() {
+      this.displayStatus('notice spinning', 'applying');
+      listeners['uci-applied']();
+      this.displayStatus('notice', 'native UCI confirmation');
+    },
+  };
+  const context = {
+    document: { addEventListener(name, callback) { listeners[name] = callback; } },
+    view: { extend() {} },
+    ui: { changes },
+    uci: { changes: () => Promise.resolve(pending) },
+    L: { env: { apply_holdoff: 4 } },
+    main: { FORKOP_UCI_PACKAGE: 'forkop', translateForkop: text => text },
+    E: (_tag, _attributes, content) => content,
+  };
+  vm.runInNewContext(
+    `(function () { ${source.replace('return view.extend(EntryPoint);', 'configureForkopApplyHoldoff();')} })()`,
+    context,
+  );
+  for (const [packages, message] of [
+    [{ forkop: [['set']] }, 'Settings saved to UCI. See Diagnostics for the Forkop runtime result.'],
+    [{ forkop: [['set']], network: [['set']] }, 'Settings saved to UCI. See Diagnostics for the Forkop runtime result.'],
+    [{ network: [['set']] }, 'native UCI confirmation'],
+  ]) {
+    pending = packages;
+    await changes.apply();
+    changes.confirm();
+    assert.deepEqual(events.splice(0), [['notice spinning', 'applying'], ['notice', message]]);
+    assert.equal(changes.displayStatus, displayStatus);
+    assert.equal(context.L.env.apply_holdoff, 4);
+  }
   console.log('PASS: native prototype dispatch, save before apply, checked/unchecked modes and validation failure');
+  console.log('PASS: Forkop UCI confirmation is distinct from runtime apply');
 })().catch(error => { console.error(error); process.exitCode = 1; });

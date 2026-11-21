@@ -6,15 +6,17 @@ let uci_core = require("core.uci");
 let connections = require("config.connections");
 let core_ip = require("core.ip");
 let core_url = require("core.url");
+let xrust = require("xrust.binary");
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
 const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
 const STATE_UC = getenv("FORKOP_STATE_UC") || LIB_DIR + "/service/state.uc";
+const XRUST_BINARY = xrust.PATH;
 const BIN_PATH = getenv("FORKOP_BIN") || "/usr/bin/forkop";
 const CRONTAB_FILE = getenv("FORKOP_CRONTAB_FILE") || "/etc/crontabs/root";
-const TMP_SING_BOX_FOLDER = getenv("TMP_SING_BOX_FOLDER") || "/tmp/sing-box";
-const TMP_RULESET_FOLDER = getenv("TMP_RULESET_FOLDER") || TMP_SING_BOX_FOLDER + "/rulesets";
-const RUNTIME_LIST_GENERATION_DIR = getenv("FORKOP_RUNTIME_LIST_GENERATION_DIR") || TMP_SING_BOX_FOLDER + "/list-generation";
-const TMP_SUBSCRIPTION_FOLDER = getenv("TMP_SUBSCRIPTION_FOLDER") || TMP_SING_BOX_FOLDER + "/subscriptions";
+const TMP_XRUST_FOLDER = getenv("TMP_XRUST_FOLDER") || getenv("TMP_SING_BOX_FOLDER") || "/tmp/xrust";
+const TMP_RULESET_FOLDER = getenv("TMP_RULESET_FOLDER") || TMP_XRUST_FOLDER + "/rulesets";
+const RUNTIME_LIST_GENERATION_DIR = getenv("FORKOP_RUNTIME_LIST_GENERATION_DIR") || TMP_XRUST_FOLDER + "/list-generation";
+const TMP_SUBSCRIPTION_FOLDER = getenv("TMP_SUBSCRIPTION_FOLDER") || TMP_XRUST_FOLDER + "/subscriptions";
 const RUNTIME_STATE_DIR = getenv("FORKOP_RUNTIME_STATE_DIR") || "/var/run/forkop";
 const PERSISTENT_LIST_CACHE_DIR = getenv("FORKOP_PERSISTENT_LIST_CACHE_DIR") || "/etc/forkop/list-cache";
 const PERSISTENT_RULESET_CACHE_DIR = getenv("FORKOP_RULESET_CACHE_DIR") || "/etc/forkop/ruleset-cache";
@@ -53,12 +55,12 @@ const LIST_UPDATE_RELOAD_FILE = getenv("FORKOP_LIST_UPDATE_RELOAD_FILE") || RUNT
 const RULESET_REFRESH_AFTER_LIST_FILE = getenv("FORKOP_RULESET_REFRESH_AFTER_LIST_FILE") || RUNTIME_STATE_DIR + "/ruleset-refresh-after-list";
 const RELOAD_LOCK_DIR = getenv("FORKOP_RELOAD_LOCK_DIR") || "/var/run/forkop.reload.lock";
 const SERVICE_INIT = getenv("FORKOP_SERVICE_INIT") || "/etc/init.d/forkop";
-const PRIORITY_UC = getenv("FORKOP_PRIORITY_UC") || LIB_DIR + "/singbox/priority.uc";
-const DNS_FAILOVER_UC = getenv("FORKOP_DNS_FAILOVER_UC") || LIB_DIR + "/singbox/dns_failover.uc";
+const PRIORITY_UC = getenv("FORKOP_PRIORITY_UC") || LIB_DIR + "/xrust/priority.uc";
+const DNS_FAILOVER_UC = getenv("FORKOP_DNS_FAILOVER_UC") || LIB_DIR + "/xrust/dns_failover.uc";
 const SUBSCRIPTION_APPLY_ERROR_FILE = getenv("FORKOP_SUBSCRIPTION_APPLY_ERROR_FILE") || RUNTIME_STATE_DIR + "/subscription-apply-error.json";
 let subscription_failure_detail = null;
 const DIAGNOSTICS_UC = getenv("FORKOP_DIAGNOSTICS_UC") || LIB_DIR + "/diagnostics/runtime.uc";
-const RULESET_CACHE_UC = getenv("FORKOP_RULESET_CACHE_UC") || LIB_DIR + "/singbox/ruleset_cache.uc";
+const RULESET_CACHE_UC = getenv("FORKOP_RULESET_CACHE_UC") || LIB_DIR + "/xrust/ruleset_cache.uc";
 const COMPONENT_JOB_DIR = getenv("UPDATES_JOB_DIR") || getenv("FORKOP_UI_COMPONENT_ACTION_DIR") || "/var/run/forkop/component-actions";
 const COMPONENT_UPDATE_CHECK_CACHE_DIR = getenv("FORKOP_COMPONENT_UPDATE_CHECK_CACHE_DIR") || RUNTIME_STATE_DIR + "/component-update-checks";
 const COMPONENT_UPDATE_CHECK_STATE_FILE = getenv("FORKOP_COMPONENT_UPDATE_CHECK_STATE_FILE") || RUNTIME_STATE_DIR + "/component-update-check.timestamp";
@@ -80,7 +82,6 @@ const NFT_INTERFACE_SET_NAME = getenv("NFT_INTERFACE_SET_NAME") || "forkop_inter
 const NFT_FAKEIP_MARK = getenv("NFT_FAKEIP_MARK") || "0x04000000";
 const SB_SERVICE_MIXED_INBOUND_ADDRESS = getenv("SB_SERVICE_MIXED_INBOUND_ADDRESS") || "127.0.0.1";
 const SB_SERVICE_MIXED_INBOUND_PORT = getenv("SB_SERVICE_MIXED_INBOUND_PORT") || "4534";
-const SB_VARIANT_STATE_FILE = getenv("SB_VARIANT_STATE_FILE") || "/etc/forkop/sing-box-variant";
 let core_constants = require("core.constants");
 const GITHUB_RAW_URL = getenv("GITHUB_RAW_URL") || core_constants.GITHUB_RAW_URL;
 const FORKOP_MIRROR_BASE_URL = core_constants.FORKOP_MIRROR_BASE_URL || "";
@@ -99,7 +100,7 @@ const BUILTIN_SUBNET_URLS = {
 };
 let rule_config = null;
 let routing_rulesets_module_value = null;
-let singbox_rulesets_module_value = null;
+let xrust_rulesets_module_value = null;
 let list_mirror_download_state = {};
 let list_ruleset_snapshot_dir = "";
 let list_nft_candidate_file = "";
@@ -117,10 +118,10 @@ function routing_rulesets_module() {
     return routing_rulesets_module_value;
 }
 
-function singbox_rulesets_module() {
-    if (singbox_rulesets_module_value == null)
-        singbox_rulesets_module_value = require("singbox.rulesets");
-    return singbox_rulesets_module_value;
+function xrust_rulesets_module() {
+    if (xrust_rulesets_module_value == null)
+        xrust_rulesets_module_value = require("xrust.rulesets");
+    return xrust_rulesets_module_value;
 }
 
 function as_string(value) {
@@ -517,7 +518,7 @@ function validate_staged_list_download(path, format) {
     // Parse every compiled rule without expanding domain/IP structures into
     // JSON alongside the running proxy (large lists can otherwise cause OOM).
     return command_success_from_args([
-        "sing-box", "rule-set", "match", "--format", "binary", path,
+        XRUST_BINARY, "rule-set", "match", "--format", "binary", path,
         "forkop-validation.invalid"
     ]);
 }
@@ -582,18 +583,18 @@ function list_preflight_entries(sections) {
             if (match(reference, /^https?:\/\//) != null)
                 list_preflight_add(entries, seen, reference, "plain");
         for (let url in list_option_values(section, "remote_domain_lists")) {
-            let extension = singbox_rulesets_module().file_extension(url);
+            let extension = xrust_rulesets_module().file_extension(url);
             if (extension != "json" && extension != "srs")
                 list_preflight_add(entries, seen, url, "plain");
         }
         for (let url in list_option_values(section, "remote_subnet_lists")) {
-            let extension = singbox_rulesets_module().file_extension(url);
+            let extension = xrust_rulesets_module().file_extension(url);
             list_preflight_add(entries, seen, url, extension == "json" || extension == "srs" ? extension : "plain");
         }
         for (let reference in connections.rule_sets_with_subnets(section)) {
             if (match(reference, /^https?:\/\//) == null)
                 continue;
-            let extension = singbox_rulesets_module().file_extension(reference);
+            let extension = xrust_rulesets_module().file_extension(reference);
             list_preflight_add(entries, seen, reference, extension == "json" || extension == "srs" ? extension : "srs");
         }
     }
@@ -997,9 +998,9 @@ function invalidate_persistent_list_cache(preserve_runtime) {
 }
 
 function runtime_list_generation_has_capacity(required) {
-    if (!ensure_dir(TMP_SING_BOX_FOLDER))
+    if (!ensure_dir(TMP_XRUST_FOLDER))
         return false;
-    let output = trim(command_output_from_args([ "df", "-Pk", TMP_SING_BOX_FOLDER ]));
+    let output = trim(command_output_from_args([ "df", "-Pk", TMP_XRUST_FOLDER ]));
     let lines = split(output, "\n");
     let fields = length(lines) >= 2 ? split(trim(lines[length(lines) - 1]), /[ \t]+/) : [];
     let available = length(fields) >= 4 ? int(fields[3]) * 1024 : -1;
@@ -1818,7 +1819,7 @@ function ensure_subscription_runtime_dirs() {
     let command = command_env({
         FORKOP_CONFIG_NAME: CONFIG_NAME,
         FORKOP_LIB: LIB_DIR,
-        TMP_SING_BOX_FOLDER,
+        TMP_XRUST_FOLDER,
         TMP_RULESET_FOLDER,
         TMP_SUBSCRIPTION_FOLDER,
         FORKOP_RUNTIME_STATE_DIR: RUNTIME_STATE_DIR,
@@ -1963,7 +1964,7 @@ function subscription_worker_env() {
         FORKOP_CONFIG_NAME: CONFIG_NAME,
         FORKOP_LIB: LIB_DIR,
         FORKOP_BIN: BIN_PATH,
-        TMP_SING_BOX_FOLDER,
+        TMP_XRUST_FOLDER,
         TMP_RULESET_FOLDER,
         TMP_SUBSCRIPTION_FOLDER,
         FORKOP_RUNTIME_STATE_DIR: RUNTIME_STATE_DIR,
@@ -2108,23 +2109,13 @@ function component_running_job_state_value(component, action, started_at) {
     };
 }
 
-function normalize_component_name(component) {
-    component = as_string(component);
-    if (component == "sing-box" || component == "singbox")
-        return "sing_box";
-    if (component == "forkop")
-        return "forkop";
-    return component;
-}
-
 function valid_component_name(component) {
-    component = normalize_component_name(component);
-    return component == "forkop" || component == "sing_box" || component == "zapret_manager" ||
+    return component == "forkop" || component == "zapret_manager" ||
         component == "packet_steering" || component == "direct_proxy" || component == "torrserver_direct";
 }
 
 function component_update_check_cache_path(component) {
-    component = normalize_component_name(component);
+    component = as_string(component);
     if (!valid_component_name(component))
         return "";
     return COMPONENT_UPDATE_CHECK_CACHE_DIR + "/" + component + ".json";
@@ -2147,7 +2138,7 @@ function cache_component_update_check_result(value, notify_update) {
     if (!component_update_check_result_cacheable(value))
         return false;
 
-    let component = normalize_component_name(value.component);
+    let component = as_string(value.component);
     let path = component_update_check_cache_path(component);
     if (path == "" || !ensure_dir(COMPONENT_UPDATE_CHECK_CACHE_DIR))
         return false;
@@ -2171,9 +2162,7 @@ function cache_component_update_check_result(value, notify_update) {
     if (arg_bool(notify_update) && cached.status == "outdated" &&
         (as_string(previous.status) != "outdated" ||
             as_string(previous.latest_version) != cached.latest_version)) {
-        let notification_component = component;
-        if (component == "sing_box" && trim(fs.readfile(SB_VARIANT_STATE_FILE) || "") == "rust-x") notification_component = "rust_x";
-        log_message("[component-update] " + notification_component + " " + cached.latest_version, "info");
+        log_message("[component-update] " + component + " " + cached.latest_version, "info");
     }
 
     return true;
@@ -2181,7 +2170,7 @@ function cache_component_update_check_result(value, notify_update) {
 
 function update_component_check_cache_from_action(value) {
     value = object_or_empty(value);
-    let component = normalize_component_name(value.component);
+    let component = as_string(value.component);
     let action = as_string(value.action);
     let path = component_update_check_cache_path(component);
     if (path == "")
@@ -2228,11 +2217,9 @@ function component_update_check_cache() {
     let results = [];
 
     if (enabled) {
-        for (let component in [ "forkop", "sing_box" ]) {
-            let value = read_json_file(component_update_check_cache_path(component));
-            if (component_update_check_result_cacheable(value))
-                push(results, value);
-        }
+        let value = read_json_file(component_update_check_cache_path("forkop"));
+        if (component_update_check_result_cacheable(value))
+            push(results, value);
     }
 
     write_json({ enabled, results });
@@ -2495,7 +2482,7 @@ function launch_component_worker(args) {
 }
 
 function component_action_worker(state_file, output_file, component, action, version) {
-    component = normalize_component_name(component);
+    component = as_string(component);
     let command = command_env(component_worker_env()) + " " +
         command_from_args([
             "ucode",
@@ -2513,16 +2500,18 @@ function component_action_worker(state_file, output_file, component, action, ver
 
 function component_action_async(component, action, version) {
     version = as_string(version);
-    // An exact version can be chosen for Forkop and for Xrust.
+    // Version selection is for a complete Forkop release.
     let forkop_version = component == "forkop" && action == "install" &&
         match(version, /^[0-9]+[.][0-9]+[.][0-9]+(-canary[.][0-9]+)?$/) != null;
-    let rust_x_version = component == "sing_box" && action == "install_rust_x" &&
-        match(version, /^[0-9]+[.][0-9]+[.][0-9]+$/) != null;
-    if (version != "" && !forkop_version && !rust_x_version) {
+    if (version != "" && !forkop_version) {
         component_job_json_response(false, "", "Invalid release selection");
         exit(1);
     }
-    component = normalize_component_name(component);
+    component = as_string(component);
+    if (!valid_component_name(component)) {
+        component_job_json_response(false, "", "Unknown component");
+        exit(1);
+    }
     if (!ensure_component_runtime_dirs()) {
         component_job_json_response(false, "", "Failed to create component action state directory");
         exit(1);
@@ -2575,15 +2564,6 @@ function component_action_status(job_id) {
 
     refresh_component_running_job_state(state_file);
     print(as_string(fs.readfile(state_file)));
-}
-
-function automatic_component_check_names() {
-    let result = [ "forkop" ];
-
-    if (fs.stat("/usr/bin/sing-box") != null)
-        push(result, "sing_box");
-
-    return result;
 }
 
 function run_automatic_component_update_check(component) {
@@ -2645,8 +2625,7 @@ function component_updates_if_due() {
     }
 
     ensure_dir(COMPONENT_UPDATE_CHECK_CACHE_DIR);
-    for (let component in automatic_component_check_names())
-        run_automatic_component_update_check(component);
+    run_automatic_component_update_check("forkop");
 
     if (!write_file(COMPONENT_UPDATE_CHECK_STATE_FILE, as_string(now_seconds()) + "\n")) {
         release_runtime_lock(COMPONENT_UPDATE_CHECK_LOCK_DIR);
@@ -3251,7 +3230,7 @@ function import_builtin_subnets_from_rule(section, settings) {
     let materialized = { version: 3, rules: [] };
     let materialized_path = TMP_RULESET_FOLDER + "/" + section_name(section) + "-community-subnets-lists-ruleset.json";
     for (let service in connections.community_lists(section)) {
-        if (!singbox_rulesets_module().is_community(service))
+        if (!xrust_rulesets_module().is_community(service))
             continue;
 
         let urls = BUILTIN_SUBNET_URLS[as_string(service)];
@@ -3297,7 +3276,7 @@ function import_builtin_subnets_from_rule(section, settings) {
         }
     }
 
-    // Publish the same downloaded subnet generation for sing-box. The list
+    // Publish the same downloaded subnet generation for Xrust. The list
     // transaction snapshots/validates this managed file together with nft.
     if (ok && !write_file(materialized_path, sprintf("%J\n", materialized)))
         ok = false;
@@ -3316,7 +3295,7 @@ function import_custom_ruleset_subnets_from_local(path, format, section, label) 
 
     let ok = true;
     if (as_string(format) == "binary") {
-        if (!command_success_from_args([ "sing-box", "rule-set", "decompile", path, "-o", json_tmpfile ])) {
+        if (!command_success_from_args([ XRUST_BINARY, "rule-set", "decompile", path, "-o", json_tmpfile ])) {
             log_message("Failed to decompile rule set " + as_string(path), "error");
             ok = false;
         }
@@ -3349,7 +3328,7 @@ function import_custom_ruleset_subnets_from_remote(url, format, section, label, 
 
     let ok = true;
     if (as_string(format) == "binary") {
-        if (!command_success_from_args([ "sing-box", "rule-set", "decompile", remote_tmpfile, "-o", json_tmpfile ])) {
+        if (!command_success_from_args([ XRUST_BINARY, "rule-set", "decompile", remote_tmpfile, "-o", json_tmpfile ])) {
             log_message("Failed to decompile remote rule set " + safe_remote_source_identity(url, section_name(section)), "error");
             ok = false;
         }
@@ -3383,7 +3362,7 @@ function import_rule_sets_with_subnets_from_rule(section, settings) {
         reference = as_string(reference);
         log_message("Importing subnets from rule set " + safe_remote_source_identity(reference, section_name(section)), "info");
 
-        let extension = singbox_rulesets_module().file_extension(reference);
+        let extension = xrust_rulesets_module().file_extension(reference);
         if (match(reference, /^\/.*\.srs$/) != null) {
             if (!import_custom_ruleset_subnets_from_local(reference, "binary", section, "Rule set " + reference))
                 ok = false;
@@ -3393,7 +3372,7 @@ function import_rule_sets_with_subnets_from_rule(section, settings) {
                 ok = false;
         }
         else if (match(reference, /^https?:\/\//) != null) {
-            let format = extension == "json" ? "source" : (extension == "srs" ? "binary" : singbox_rulesets_module().remote_format(reference));
+            let format = extension == "json" ? "source" : (extension == "srs" ? "binary" : xrust_rulesets_module().remote_format(reference));
             if (!import_custom_ruleset_subnets_from_remote(reference, format, section, "Rule set " + reference, settings))
                 ok = false;
         }
@@ -3437,10 +3416,10 @@ function import_domains_from_remote_domain_lists(section, settings) {
     let ok = true;
     for (let url in references) {
         log_message("Importing domains from " + safe_remote_source_identity(url, section_name(section)), "info");
-        let extension = singbox_rulesets_module().file_extension(url);
+        let extension = xrust_rulesets_module().file_extension(url);
         log_message("Detected file extension: '" + extension + "'", "debug");
         if (extension == "json" || extension == "srs") {
-            log_message("No update needed - sing-box manages updates automatically.", "info");
+            log_message("No update needed - Xrust manages updates automatically.", "info");
             continue;
         }
         log_message("Import domains from a remote plain-text list", "info");
@@ -3482,7 +3461,7 @@ function import_subnets_from_remote_srs_file(url, section, settings) {
         return false;
     }
 
-    let ok = command_success_from_args([ "sing-box", "rule-set", "decompile", binary_tmpfile, "-o", json_tmpfile ]);
+    let ok = command_success_from_args([ XRUST_BINARY, "rule-set", "decompile", binary_tmpfile, "-o", json_tmpfile ]);
     if (!ok)
         log_message("Failed to decompile binary rule set file", "error");
     if (ok && !add_json_ruleset_subnets_to_nft_for_section(section, json_tmpfile, "Remote SRS rule set " + as_string(url))) {
@@ -3527,7 +3506,7 @@ function import_subnets_from_remote_subnet_lists(section, settings) {
     let ok = true;
     for (let url in references) {
         log_message("Importing subnets from " + safe_remote_source_identity(url, section_name(section)), "info");
-        let extension = singbox_rulesets_module().file_extension(url);
+        let extension = xrust_rulesets_module().file_extension(url);
         log_message("Detected file extension: '" + extension + "'", "debug");
         if (extension == "json") {
             log_message("Import subnets from a remote JSON list", "info");
@@ -3617,7 +3596,7 @@ function finish_list_ruleset_snapshot(commit) {
         return false;
     }
 
-    let sing_box_changed = false;
+    let xrust_changed = false;
     // A source edit is prepared inside lifecycle's transaction. Keep its
     // existing snapshot until the core and nft policy have both committed,
     // so a hot-reload rollback can still read the exact old list contents.
@@ -3636,18 +3615,18 @@ function finish_list_ruleset_snapshot(commit) {
                 fs.rename(backup, current);
         }
         else if (match(name, /-(lists|remote-domains)-ruleset\.json$/) != null)
-            sing_box_changed = true;
+            xrust_changed = true;
     }
     for (let current in fs.glob(TMP_RULESET_FOLDER + "/*")) {
         let name = substr(current, length(TMP_RULESET_FOLDER) + 1);
         if (!seen[name] && match(name, /-(lists|remote-domains)-ruleset\.json$/) != null)
-            sing_box_changed = true;
+            xrust_changed = true;
     }
 
     if (!retain)
         command_success_from_args([ "rm", "-rf", list_ruleset_snapshot_dir ]);
     list_ruleset_snapshot_dir = "";
-    return sing_box_changed;
+    return xrust_changed;
 }
 
 function reset_remote_plain_rulesets(sections) {
@@ -3656,14 +3635,14 @@ function reset_remote_plain_rulesets(sections) {
             continue;
 
         for (let url in list_option_values(section, "remote_domain_lists")) {
-            let extension = singbox_rulesets_module().file_extension(url);
+            let extension = xrust_rulesets_module().file_extension(url);
             if (extension != "json" && extension != "srs") {
                 remove_file(remote_ruleset_path(section, "domains"));
                 break;
             }
         }
         for (let url in list_option_values(section, "remote_subnet_lists")) {
-            let extension = singbox_rulesets_module().file_extension(url);
+            let extension = xrust_rulesets_module().file_extension(url);
             if (extension != "json" && extension != "srs") {
                 remove_file(remote_ruleset_path(section, "subnets"));
                 break;
@@ -3732,7 +3711,7 @@ function finish_list_update(status, applied, generation_changed) {
     let ruleset_changed = false;
     remove_file(RULESET_REFRESH_AFTER_LIST_FILE);
 
-    // When both list families changed, refresh remote sing-box rule sets while
+    // When both list families changed, refresh remote Xrust rule sets while
     // the old service proxy is still alive and coalesce everything into the
     // same final reload.
     if (!applied) {
@@ -3806,7 +3785,7 @@ function list_update(reuse_sources) {
 
     // Share the same lock as lifecycle reloads.  Waiting here is intentional:
     // a startup or config reload must settle before this worker opens requests
-    // through the sing-box service proxy.  Conversely, init.d queues reloads
+    // through the Xrust service proxy.  Conversely, init.d queues reloads
     // that arrive while this lock is held, and finish_list_update() runs them.
     if (as_string(getenv("FORKOP_MANUAL_RESTART_LOCK_HELD") || "0") != "1" && !acquire_runtime_lock(RELOAD_LOCK_DIR, true)) {
         log_message("Lists update skipped because Forkop reload did not release the runtime lock", "warn");
@@ -3951,7 +3930,7 @@ function subscription_cache_env() {
     return {
         FORKOP_CONFIG_NAME: CONFIG_NAME,
         FORKOP_LIB: LIB_DIR,
-        TMP_SING_BOX_FOLDER,
+        TMP_XRUST_FOLDER,
         TMP_RULESET_FOLDER,
         TMP_SUBSCRIPTION_FOLDER,
         FORKOP_RUNTIME_STATE_DIR: RUNTIME_STATE_DIR,
@@ -4006,19 +3985,19 @@ function log_file_lines_from_text(text, level, prefix) {
             log_message(as_string(prefix) + as_string(line), level);
 }
 
-function singbox_runtime_success(args) {
-    let command_args = [ LIB_DIR + "/singbox/runtime.uc" ];
+function xrust_runtime_success(args) {
+    let command_args = [ LIB_DIR + "/xrust/runtime.uc" ];
     for (let arg in args)
         push(command_args, arg);
 
     let result = module_env_capture(subscription_cache_env(), command_args);
     if (result.output != "")
-        log_file_lines_from_text(result.output, "debug", "sing-box runtime: ");
+        log_file_lines_from_text(result.output, "debug", "Xrust runtime: ");
     return result.status == 0;
 }
 
 function mark_pending_reload(reason) {
-    service_state_success([ "mark-pending-reload", PENDING_RELOAD_FILE, reason ]);
+    return service_state_success([ "mark-pending-reload", PENDING_RELOAD_FILE, reason ]);
 }
 
 function run_pending_reload_if_requested() {
@@ -4083,18 +4062,18 @@ function subscription_record_result(ok, section) {
     }
 }
 
-function subscription_hot_transition(config_path) {
-    let work = trim(command_output_from_args([ "mktemp", "-d", "/tmp/forkop-subscription-hot.XXXXXX" ]));
-    if (work == "" || !fs.chmod(work, 0700)) {
+function subscription_hot_transition(config_path, prepared_work) {
+    let work = prepared_work || trim(command_output_from_args([ "mktemp", "-d", "/tmp/forkop-subscription-hot.XXXXXX" ]));
+    if (work == "" || (!prepared_work && !fs.chmod(work, 0700))) {
         if (work != "") command_success_from_args([ "rm", "-rf", work ]);
         return { handled: true, ok: subscription_apply_failure("stage_failed", "previous") };
     }
     let stage = work + "/candidate.json", backup = work + "/previous.json";
     let hot_module = LIB_DIR + "/service/hot_reload.uc";
-    let prepared = singbox_runtime_success([ "prepare-config-stage", "0", "1", "1", "", stage ]);
-    let plan = prepared ? module_capture([ hot_module, "plan", stage ]) : { status: 1 };
+    let prepared = prepared_work || xrust_runtime_success([ "prepare-config-stage", "0", "1", "1", "", stage, config_path ]);
+    let plan = prepared ? module_capture([ hot_module, "plan", stage, config_path ]) : { status: 1 };
     if (plan.status != 0 || trim(plan.output) != "hot") {
-        singbox_runtime_success([ "discard-config-stage", stage ]);
+        xrust_runtime_success([ "discard-config-stage", stage ]);
         command_success_from_args([ "rm", "-rf", work ]);
         return plan.status == 0 && trim(plan.output) == "cold"
             ? { handled: false }
@@ -4104,13 +4083,13 @@ function subscription_hot_transition(config_path) {
     if ((had_cache && !command_success_from_args([ "cp", "-R", "-p", SECTION_CACHE_DIR, backup + ".section-cache" ])) ||
         !command_success_from_args([ "cp", "-p", config_path, backup ]) ||
         !module_success([ LIB_DIR + "/service/lifecycle.uc", "save-selector-state", backup + ".selectors" ])) {
-        singbox_runtime_success([ "discard-config-stage", stage ]);
+        xrust_runtime_success([ "discard-config-stage", stage ]);
         command_success_from_args([ "rm", "-rf", work ]);
         return { handled: true, ok: subscription_apply_failure("backup_failed", "previous") };
     }
     module_success([ DNS_FAILOVER_UC, "stop-runtime" ]);
     module_success([ PRIORITY_UC, "stop-runtime" ]);
-    let committed = singbox_runtime_success([ "commit-config-stage", stage, backup ]);
+    let committed = xrust_runtime_success([ "commit-config-stage", stage, backup, config_path ]);
     let applied = committed && module_success([ hot_module, "apply", stage + ".hot-plan" ]);
     let reason = "hot_apply_failed";
     if (applied) {
@@ -4126,7 +4105,7 @@ function subscription_hot_transition(config_path) {
     if (!applied) {
         let restored = module_success([ hot_module, "restore", stage + ".hot-plan", backup ]);
         let cache_restored = restored && (had_cache
-            ? singbox_runtime_success([ "publish-section-cache", backup ])
+            ? xrust_runtime_success([ "publish-section-cache", backup ])
             : command_success_from_args([ "rm", "-rf", SECTION_CACHE_DIR ]));
         cache_restored = cache_restored && module_success([ LIB_DIR + "/service/lifecycle.uc", "restore-selector-state", backup + ".selectors" ]);
         if (restored) {
@@ -4134,13 +4113,13 @@ function subscription_hot_transition(config_path) {
             module_success([ DNS_FAILOVER_UC, "start-runtime", "applied" ]);
         }
         if (restored && cache_restored) {
-            singbox_runtime_success([ "discard-config-stage", stage ]);
+            xrust_runtime_success([ "discard-config-stage", stage ]);
             command_success_from_args([ "rm", "-rf", work ]);
         }
         else log_message("Subscription rollback files retained at " + work, "error");
         return { handled: true, ok: subscription_apply_failure(cache_restored ? reason : "rollback_failed", cache_restored ? "previous" : "recovery_failed") };
     }
-    singbox_runtime_success([ "discard-config-stage", stage ]);
+    xrust_runtime_success([ "discard-config-stage", stage ]);
     command_success_from_args([ "rm", "-rf", work ]);
     log_message("Subscriptions applied with acknowledged Xrust hot reload; core process preserved", "info");
     return { handled: true, ok: true };
@@ -4155,10 +4134,11 @@ function subscription_restore_selectors(backup) {
 }
 
 function subscription_restore_runtime(backup, config_path, timeout) {
-    let restore = backup + ".restore";
+    let cache_backup = fs.stat(backup + ".section-cache") != null;
     let restored = service_state_success([ "stop-managed-sing-box-runtime", timeout ]) &&
-        command_success_from_args([ "cp", "-p", backup, restore ]) &&
-        singbox_runtime_success([ "restore-config-stage", restore ]) &&
+        xrust_runtime_success([ "restore-config-stage", backup, config_path ]) &&
+        (cache_backup ? xrust_runtime_success([ "publish-section-cache", backup ]) :
+            command_success_from_args([ "rm", "-rf", SECTION_CACHE_DIR ])) &&
         service_state_success([ "start-managed-sing-box-runtime", timeout ]) &&
         service_state_success([ "wait-managed-sing-box-config-listeners", config_path,
             as_string(getenv("FORKOP_SING_BOX_READY_TIMEOUT") || "90") ]);
@@ -4197,7 +4177,7 @@ function subscription_runtime_change_check(config_path) {
         return { ok: false, changed: true };
     }
     let stage = work + "/candidate.json";
-    let prepared = singbox_runtime_success([ "prepare-config-stage", "0", "1", "1", "", stage ]);
+    let prepared = xrust_runtime_success([ "prepare-config-stage", "0", "1", "1", "", stage, config_path ]);
     let current = read_json_file(config_path);
     let candidate = prepared ? read_json_file(stage) : null;
     let valid = type(current) == "object" && type(current.outbounds) == "array" &&
@@ -4206,8 +4186,11 @@ function subscription_runtime_change_check(config_path) {
     // and routing. Equal proxy signatures alone cannot justify skipping reload.
     let unchanged = valid && sprintf("%J", subscription_config_value(current)) ==
         sprintf("%J", subscription_config_value(candidate));
-    let published = !unchanged || singbox_runtime_success([ "publish-section-cache", stage ]);
-    singbox_runtime_success([ "discard-config-stage", stage ]);
+    if (valid && !unchanged)
+        return { ok: true, changed: true, work };
+
+    let published = !unchanged || xrust_runtime_success([ "publish-section-cache", stage ]);
+    xrust_runtime_success([ "discard-config-stage", stage ]);
     command_success_from_args([ "rm", "-rf", work ]);
     return { ok: prepared && valid && published, changed: !unchanged };
 }
@@ -4215,8 +4198,6 @@ function subscription_runtime_change_check(config_path) {
 function subscription_update_common_locked(force, target_section, target_source_index) {
     subscription_failure_detail = null;
     subscription_outbounds_changed = false;
-    let sing_box_config_path = option(uci_settings(), "config_path", "");
-    let proxy_signature_before = current_proxy_outbounds_signature(sing_box_config_path);
     let prepared = subscription_prepare_cache_request(force, target_section, target_source_index);
     if (!prepared.ok)
         return false;
@@ -4225,7 +4206,21 @@ function subscription_update_common_locked(force, target_section, target_source_
     if (updated == 0 && fs.stat(SUBSCRIPTION_APPLY_ERROR_FILE) == null)
         return true;
 
-    let change = subscription_runtime_change_check(sing_box_config_path);
+    // Refreshing a stopped service's caches must not start it. When the
+    // saved config path differs, only the full lifecycle may move the file
+    // and the service pointer as part of its rollback transaction.
+    if (!service_state_success([ "sing-box-service-running" ]))
+        return true;
+    if (!uci_core.reload(CONFIG_NAME))
+        return subscription_apply_failure("config_read_failed", "previous");
+    let xrust_config_path = file_first_line_value(xrust.APPLIED_CONFIG_PATH_FILE);
+    if (xrust_config_path == "" || xrust_config_path != option(uci_settings(), "config_path", "")) {
+        log_message("Subscription cache refreshed; queued a full reload for the changed Xrust configuration path", "info");
+        return mark_pending_reload("subscription_config_path_changed");
+    }
+    let proxy_signature_before = current_proxy_outbounds_signature(xrust_config_path);
+
+    let change = subscription_runtime_change_check(xrust_config_path);
     if (!change.ok) {
         log_message("Cannot compare the updated subscription configuration; preserving the running runtime", "error");
         return false;
@@ -4235,24 +4230,24 @@ function subscription_update_common_locked(force, target_section, target_source_
         return true;
     }
 
-    let hot = subscription_hot_transition(sing_box_config_path);
+    let hot = subscription_hot_transition(xrust_config_path, change.work);
     if (hot.handled && !hot.ok)
         return false;
     if (!hot.handled) {
-        log_message("Reloading sing-box to apply updated subscriptions", "info");
+        log_message("Reloading Xrust to apply updated subscriptions", "info");
         let validation = module_capture([ LIB_DIR + "/config/validator.uc", "validate-runtime" ]);
         if (validation.status != 0) {
             log_message("Forkop configuration is invalid: " + validation_failure_message(validation), "fatal");
             return false;
         }
 
-        if (!singbox_runtime_success([ "configure-service" ]))
-            return false;
         let backup_dir = trim(command_output_from_args([ "mktemp", "-d", "/tmp/forkop-subscription-runtime.XXXXXX" ]));
         let backup = backup_dir + "/previous.json";
-        let previous = fs.readfile(sing_box_config_path);
+        let previous = fs.readfile(xrust_config_path);
         if (backup_dir == "" || !fs.chmod(backup_dir, 0700) || previous == null ||
-            common.write_private_file(backup, previous) == null) {
+            common.write_private_file(backup, previous) == null ||
+            (fs.stat(SECTION_CACHE_DIR) != null &&
+                !command_success_from_args([ "cp", "-R", "-p", SECTION_CACHE_DIR, backup + ".section-cache" ]))) {
             if (backup_dir != "")
                 command_success_from_args([ "rm", "-rf", backup_dir ]);
             log_message("Cannot stage the previous subscription runtime", "error");
@@ -4273,46 +4268,47 @@ function subscription_update_common_locked(force, target_section, target_source_
             command_success_from_args([ "rm", "-rf", backup_dir ]);
             module_success([ PRIORITY_UC, "start-runtime" ]);
             module_success([ DNS_FAILOVER_UC, "start-runtime", "applied" ]);
-            log_message("Refusing subscription runtime update: the previous sing-box runtime did not stop safely", "error");
+            log_message("Refusing subscription runtime update: the previous Xrust runtime did not stop safely", "error");
             return false;
         }
-        if (!singbox_runtime_success([ "init-config", "0", "1", "1" ])) {
-            if (subscription_restore_runtime(backup, sing_box_config_path, transition_timeout))
+        if (!xrust_runtime_success([ "init-config", "0", "1", "1", "", xrust_config_path ])) {
+            if (subscription_restore_runtime(backup, xrust_config_path, transition_timeout))
                 command_success_from_args([ "rm", "-rf", backup_dir ]);
-            log_message("Failed to rebuild sing-box after subscription update", "error");
+            log_message("Failed to rebuild Xrust after subscription update", "error");
             return false;
         }
         if (!service_state_success([
             "start-managed-sing-box-runtime",
             transition_timeout
         ])) {
-            if (subscription_restore_runtime(backup, sing_box_config_path, transition_timeout))
+            if (subscription_restore_runtime(backup, xrust_config_path, transition_timeout))
                 command_success_from_args([ "rm", "-rf", backup_dir ]);
             return false;
         }
         if (!service_state_success([
-            "wait-managed-sing-box-config-listeners", sing_box_config_path,
+            "wait-managed-sing-box-config-listeners", xrust_config_path,
             as_string(getenv("FORKOP_SING_BOX_READY_TIMEOUT") || "90")
         ])) {
             log_message("Updated subscription runtime did not open its configured listeners", "error");
-            if (subscription_restore_runtime(backup, sing_box_config_path, transition_timeout))
+            if (subscription_restore_runtime(backup, xrust_config_path, transition_timeout))
                 command_success_from_args([ "rm", "-rf", backup_dir ]);
             return false;
         }
         subscription_restore_selectors(backup);
+        if (!module_success([ PRIORITY_UC, "start-runtime" ]) ||
+            !module_success([ DNS_FAILOVER_UC, "start-runtime", "", xrust_config_path ])) {
+            module_success([ PRIORITY_UC, "stop-runtime" ]);
+            module_success([ DNS_FAILOVER_UC, "stop-runtime" ]);
+            if (subscription_restore_runtime(backup, xrust_config_path, transition_timeout))
+                command_success_from_args([ "rm", "-rf", backup_dir ]);
+            log_message("Failed to restart auxiliary workers after subscription update", "error");
+            return false;
+        }
         command_success_from_args([ "rm", "-rf", backup_dir ]);
-        if (!module_success([ PRIORITY_UC, "start-runtime" ])) {
-            log_message("Failed to restart Priority runtime after subscription update", "error");
-            return false;
-        }
-        if (!module_success([ DNS_FAILOVER_UC, "start-runtime", "", sing_box_config_path ])) {
-            log_message("Failed to restart DNS failover runtime after subscription update", "error");
-            return false;
-        }
     }
-    // This transition only applied sing-box. Leave the last full lifecycle
+    // This transition only applied Xrust. Leave the last full lifecycle
     // snapshot intact so a queued reload can still see unrelated UCI changes.
-    let proxy_signature_after = current_proxy_outbounds_signature(sing_box_config_path);
+    let proxy_signature_after = current_proxy_outbounds_signature(xrust_config_path);
     let final_proxy_set_changed = proxy_signature_after != "" && proxy_signature_after != proxy_signature_before;
     if (final_proxy_set_changed) {
         if (schedule_automatic_latency_test(proxy_signature_after))
@@ -4361,7 +4357,7 @@ function subscription_update_common(force, target_section, target_source_index) 
     return ok ? 0 : 1;
 }
 
-// Refresh subscription cache data without reloading sing-box. Used only by
+// Refresh subscription cache data without reloading Xrust. Used only by
 // the explicit LuCI manual-restart workflow, which performs one full runtime
 // restart after all data families have completed their own atomic updates.
 function subscription_prepare_only(target_section, target_source_index) {

@@ -1,6 +1,6 @@
 const MASKED_VALUE = 'MASKED';
 
-const SING_BOX_MASKED_KEYS = new Set([
+const XRUST_MASKED_KEYS = new Set([
   'auth_key',
   'control_url',
   'exit_node',
@@ -29,6 +29,10 @@ const SING_BOX_MASKED_KEYS = new Set([
   'ip_cidr',
   'source_ip_cidr',
   'excluded_source_ip_cidr',
+  'authorization',
+  'proxy-authorization',
+  'cookie',
+  'set-cookie',
 ]);
 
 const FORKOP_MASK_AFTER_TOKEN = [
@@ -177,18 +181,18 @@ function maskMultilineContinuation(line: string) {
   return `${leadingSpace}${MASKED_VALUE}${hasClosingQuote ? "'" : ''}`;
 }
 
-export function maskSingBoxConfigValue(value: unknown): unknown {
+export function maskXrustConfigValue(value: unknown): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => maskSingBoxConfigValue(item));
+    return value.map((item) => maskXrustConfigValue(item));
   }
 
   if (isRecord(value)) {
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [
         key,
-        SING_BOX_MASKED_KEYS.has(key)
+        XRUST_MASKED_KEYS.has(key.toLowerCase())
           ? MASKED_VALUE
-          : maskSingBoxConfigValue(item),
+          : maskXrustConfigValue(item),
       ]),
     );
   }
@@ -196,20 +200,19 @@ export function maskSingBoxConfigValue(value: unknown): unknown {
   return value;
 }
 
-export function stringifySingBoxConfig(value: unknown) {
+export function stringifyXrustConfig(value: unknown) {
   return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
 }
 
-export function formatMaskedSingBoxConfig(value: unknown) {
-  if (typeof value === 'string') {
-    try {
-      return JSON.stringify(maskSingBoxConfigValue(JSON.parse(value)), null, 2);
-    } catch (_error) {
-      return value;
-    }
+export function formatMaskedXrustConfig(value: unknown) {
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    return isRecord(parsed)
+      ? JSON.stringify(maskXrustConfigValue(parsed), null, 2)
+      : MASKED_VALUE;
+  } catch {
+    return MASKED_VALUE;
   }
-
-  return JSON.stringify(maskSingBoxConfigValue(value), null, 2);
 }
 
 export function maskGlobalCheckText(text: string = '') {

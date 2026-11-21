@@ -2,7 +2,7 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 LIB="$ROOT/forkop/files/usr/lib"
-SOURCE="$LIB/singbox/priority.uc"
+SOURCE="$LIB/xrust/priority.uc"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 

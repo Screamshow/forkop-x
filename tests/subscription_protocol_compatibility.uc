@@ -1,7 +1,7 @@
-// ucode -L LIB tests/subscription_protocol_compatibility.uc WORK LIB [RUST_X_BINARY] [LEGACY_BINARY]
+// ucode -L LIB tests/subscription_protocol_compatibility.uc WORK LIB [RUST_X_BINARY]
 // Xrust is built without vmess, shadowsocks and socks outbounds, and only
 // builds declaring the outbound.trojan feature include the Trojan client.
-let fs=require("fs"), parser=require("subscription.parser"), work=ARGV[0], lib=ARGV[1], rust_binary=ARGV[2], legacy_binary=ARGV[3];
+let fs=require("fs"), parser=require("subscription.parser"), work=ARGV[0], lib=ARGV[1], rust_binary=ARGV[2];
 function expect(ok,why){if(!ok)die(why+"\n");}
 function write(path,value){expect(fs.writefile(path,sprintf("%J",value))!=null,"write fixture");}
 function quote(v){return "'"+replace(""+v,/'/g,"'\\''")+"'";}
@@ -22,7 +22,6 @@ let chained=json(sprintf("%J",vless));chained.tag="vless-via-trojan";chained.rem
 let mixed_group={type:"selector",tag:"mixed-group",remark:"Mixed group",outbounds:["trojan-a","vless-a","ss-a"],default:"trojan-a",__forkop_allow_group:true};
 let legacy_group={type:"urltest",tag:"legacy-group",remark:"Legacy group",outbounds:["trojan-a","vmess-a"],__forkop_allow_group:true};
 let nested_group={type:"selector",tag:"nested-group",remark:"Nested group",outbounds:["legacy-group","socks-a"],__forkop_allow_group:true};
-let legacy_nodes=[trojan,ss,vmess,socks];
 
 let settings={".name":"settings",".type":"settings",dns_server:"1.1.1.1"};
 let subscription_section={".name":"probe",".type":"section",enabled:"1",action:"connection",subscription_urls:["https://feed.example/test"],subscription_url_settings:'{"https://feed.example/test":{"user_agent":"Happ"}}'};
@@ -31,7 +30,7 @@ for(let suffix in ["url","user_agent","hwid"])
 // supports_trojan is the generator argument runtime.uc derives from Features.
 function generate(fixture,version,output,supports_trojan,xray_features){
  write(work+"/fixture.json",fixture);
- let args=["env","TMP_SUBSCRIPTION_FOLDER="+work+"/cache","FORKOP_RUNTIME_STATE_DIR="+work+"/state","TMP_SING_BOX_FOLDER="+work+"/singbox","FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR="+work+"/persistent","FORKOP_LIB="+lib,"ucode","-L",lib,lib+"/singbox/generator.uc","generate-config-fixture",work+"/fixture.json",output,"127.0.0.1","0","1","",version,supports_trojan||"","0","0",xray_features||""];
+ let args=["env","TMP_SUBSCRIPTION_FOLDER="+work+"/cache","FORKOP_RUNTIME_STATE_DIR="+work+"/state","TMP_SING_BOX_FOLDER="+work+"/singbox","FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR="+work+"/persistent","FORKOP_LIB="+lib,"ucode","-L",lib,lib+"/xrust/generator.uc","generate-config-fixture",work+"/fixture.json",output,"127.0.0.1","0","1","",version,supports_trojan||"","0","0",xray_features||""];
  return system(join(" ",map(args,quote))+" >"+quote(work+"/generation.log")+" 2>&1");
 }
 function tag_set(config){let tags={};for(let o in config.outbounds)tags[o.tag]=true;return tags;}
@@ -55,7 +54,7 @@ function outbounds_of_type(config,types){return filter(config.outbounds,function
 write(work+"/cache/probe-subscription-1.json",{outbounds:[vless,hy2,trojan,ss,vmess,socks,chained,mixed_group,legacy_group,nested_group]});
 let cached=fs.readfile(work+"/cache/probe-subscription-1.json");
 let fixture={settings,section:[subscription_section]};
-for(let profile in [{version:"1.14.2-rust-x.0.0.26",binary:rust_binary}]){
+for(let profile in [{version:"0.0.26",binary:rust_binary}]){
  let output=work+"/generated.json";
  expect(generate(fixture,profile.version,output)==0,"mixed subscription failed: "+profile.version+": "+log_text());
  let config=json(fs.readfile(output));
@@ -74,18 +73,13 @@ for(let profile in [{version:"1.14.2-rust-x.0.0.26",binary:rust_binary}]){
  expect(fs.readfile(work+"/cache/probe-subscription-1.json")==cached,profile.version+": protocol filter changed subscription cache");
 }
 
-// Cores built with these protocols keep every node.
-expect(generate(fixture,"1.14.2-x-1.0.4",work+"/generated.json")==0,"Go X mixed subscription failed: "+log_text());
-let go_config=json(fs.readfile(work+"/generated.json"));
-expect(length(outbounds_of_type(go_config,["trojan","shadowsocks","vmess","socks"]))==4,"Go X lost legacy subscription nodes");
-expect(!has_log("is not included in Xrust"),"Go X reported an Xrust protocol skip");
-expect_references_resolve(go_config,"Go X");
-if(legacy_binary)expect(run([legacy_binary,"check","-c",work+"/generated.json"])==0,"real legacy-profile check failed");
+expect(generate(fixture,"1.14.2-x-1.0.4",work+"/generated.json")!=0 &&
+    has_log("the installed client must be Xrust"), "Go client unexpectedly accepted by 3.x generator");
 
 // No compatible node: explicit error, no Direct fallback, previous config kept.
 write(work+"/cache/probe-subscription-1.json",{outbounds:[trojan,ss,legacy_group]});
 fs.writefile(work+"/kept.json","LAST_KNOWN_GOOD\n");
-expect(generate(fixture,"1.14.2-rust-x.0.0.26",work+"/kept.json")!=0,"subscription without compatible nodes must fail");
+expect(generate(fixture,"0.0.26",work+"/kept.json")!=0,"subscription without compatible nodes must fail");
 expect(index(last_log_line(),"connection section 'probe' has no outbounds compatible with Xrust; skipped subscription outbounds with unsupported protocols: shadowsocks (1), trojan (1)")>=0,"unclear error for subscription without compatible nodes: "+last_log_line());
 expect(fs.readfile(work+"/kept.json")=="LAST_KNOWN_GOOD\n","failed generation replaced live config");
 
@@ -93,24 +87,22 @@ expect(fs.readfile(work+"/kept.json")=="LAST_KNOWN_GOOD\n","failed generation re
 let manual={settings,section:[{".name":"manual",".type":"section",enabled:"1",action:"connection",selector_proxy_links:[
  "vless://"+uuid+"@127.0.0.1:443?security=tls&sni=localhost#VLESS%20Manual",
  "trojan://pw@127.0.0.1:443?security=tls&sni=localhost#Trojan%20Manual"]}]};
-expect(generate(manual,"1.14.2-rust-x.0.0.26",work+"/kept.json")!=0,"manual Trojan link accepted on Xrust");
+expect(generate(manual,"0.0.26",work+"/kept.json")!=0,"manual Trojan link accepted on Xrust without the feature");
 expect(index(last_log_line(),"manual outbound 'Trojan Manual' uses protocol trojan, which is not included in Xrust")>=0,"unclear manual link error: "+last_log_line());
 expect(fs.readfile(work+"/kept.json")=="LAST_KNOWN_GOOD\n","manual failure replaced config");
 for(let link in ["ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpwdw@127.0.0.1:8388#SS%20Manual","socks5://127.0.0.1:1080#SOCKS%20Manual"]){
  manual.section[0].selector_proxy_links=[link];
- expect(generate(manual,"1.14.2-rust-x.0.0.26",work+"/kept.json")!=0,"manual link accepted on Xrust: "+link);
+ expect(generate(manual,"0.0.26",work+"/kept.json")!=0,"manual link accepted on Xrust: "+link);
  expect(index(last_log_line(),"is not included in Xrust")>=0,"unclear manual link error: "+last_log_line());
 }
-manual.section[0].selector_proxy_links=["trojan://pw@127.0.0.1:443?security=tls&sni=localhost#Trojan%20Manual"];
-expect(generate(manual,"1.14.2-x-1.0.4",work+"/generated.json")==0,"manual Trojan link rejected on Go X: "+log_text());
 let json_section={settings,section:[{".name":"jsonout",".type":"section",enabled:"1",action:"connection",outbound_jsons:[sprintf("%J",{type:"vmess",tag:"JSON VMess",server:"127.0.0.1",server_port:10086,uuid})]}]};
-expect(generate(json_section,"1.14.2-rust-x.0.0.26",work+"/kept.json")!=0,"JSON VMess outbound accepted on Xrust");
+expect(generate(json_section,"0.0.26",work+"/kept.json")!=0,"JSON VMess outbound accepted on Xrust");
 expect(index(last_log_line(),"JSON outbound 'JSON VMess' uses protocol vmess, which is not included in Xrust")>=0,"unclear JSON outbound error: "+last_log_line());
 expect(fs.readfile(work+"/kept.json")=="LAST_KNOWN_GOOD\n","JSON outbound failure replaced config");
 
 // Xrust declaring outbound.trojan: Trojan nodes are kept like VLESS ones,
 // the other legacy protocols are still skipped.
-let trojan_core="1.14.2-rust-x.0.0.28";
+let trojan_core="0.0.28";
 write(work+"/cache/probe-subscription-1.json",{outbounds:[vless,hy2,trojan,ss,vmess,socks,chained,mixed_group,legacy_group,nested_group]});
 cached=fs.readfile(work+"/cache/probe-subscription-1.json");
 expect(generate(fixture,trojan_core,work+"/generated.json","1")==0,"Trojan-capable Xrust mixed subscription failed: "+log_text());
@@ -149,7 +141,7 @@ for(let o in parsed_trojan){
  expect(o.share_link==null&&o.remark==null&&o.multiplex==null,"internal or unexpected fields in Trojan outbound: "+sprintf("%J",o));
 }
 if(rust_binary)expect(run([rust_binary,"check","-c",work+"/generated.json"])==0,"real Xrust check failed for REALITY Trojan nodes");
-expect(generate(fixture,"1.14.2-rust-x.0.0.27",work+"/kept.json","0")!=0,"Trojan-only subscription accepted on Xrust without the feature");
+expect(generate(fixture,"0.0.27",work+"/kept.json","0")!=0,"Trojan-only subscription accepted on Xrust without the feature");
 expect(index(last_log_line(),"skipped subscription outbounds with unsupported protocols: trojan (2)")>=0,"unclear error for Trojan-only subscription: "+last_log_line());
 expect(fs.readfile(work+"/kept.json")=="LAST_KNOWN_GOOD\n","failed generation replaced live config");
 
@@ -246,8 +238,8 @@ manual.section[0].selector_proxy_links=["ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpwdw
 expect(generate(manual,trojan_core,work+"/kept.json","1")!=0,"manual Shadowsocks link accepted on Trojan-capable Xrust");
 expect(index(last_log_line(),"which is not included in Xrust; remove it or use a VLESS, Trojan or Hysteria2 connection")>=0,"unclear manual link error: "+last_log_line());
 manual.section[0].selector_proxy_links=["trojan://pw@127.0.0.1:443?security=tls&sni=localhost#Trojan%20Manual"];
-expect(generate(manual,"1.14.2-rust-x.0.0.27",work+"/kept.json","0")!=0,"manual Trojan link accepted on Xrust without the feature");
+expect(generate(manual,"0.0.27",work+"/kept.json","0")!=0,"manual Trojan link accepted on Xrust without the feature");
 expect(index(last_log_line(),"manual outbound 'Trojan Manual' uses protocol trojan, which is not included in Xrust; remove it or use a VLESS or Hysteria2 connection")>=0,"old-core manual link error changed: "+last_log_line());
 expect(fs.readfile(work+"/kept.json")=="LAST_KNOWN_GOOD\n","manual failure replaced config");
 
-print("Protocol compatibility: Xrust skips unsupported subscription nodes and references, keeps the cache, fails clearly without compatible nodes, rejects manual and JSON outbounds, keeps the last good config; Xrust declaring outbound.trojan keeps Trojan nodes and links; legacy cores keep every node\n");
+print("Xrust protocol compatibility: legacy core rejected; unsupported nodes and references skipped; advertised Trojan and Xray features retained; last-good config and cache kept\n");

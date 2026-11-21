@@ -25,7 +25,7 @@ export function getDiagnosticsChecks(
 ): Array<IDiagnosticsChecksStoreItem> {
   const checks = [
     DIAGNOSTICS_CHECKS.DNS,
-    DIAGNOSTICS_CHECKS.SINGBOX,
+    DIAGNOSTICS_CHECKS.XRUST,
     DIAGNOSTICS_CHECKS.NFT,
     DIAGNOSTICS_CHECKS.OUTBOUNDS,
     DIAGNOSTICS_CHECKS.FAKEIP,
@@ -59,11 +59,8 @@ export const initialDiagnosticStore: Pick<
     forkop_version: 'loading',
     forkop_latest_version: 'loading',
     luci_app_version: 'loading',
-    sing_box_version: 'loading',
-    sing_box_extended: 0,
-    sing_box_tiny: 0,
-    sing_box_compressed: 0,
-    sing_box_tailscale: 1,
+    xrust_version: 'loading',
+    xrust_tailscale: 0,
     zapret_manager_installed: 0,
     packet_steering_mode: '',
     direct_proxy_enabled: 0,
@@ -98,7 +95,7 @@ export const initialDiagnosticStore: Pick<
     viewLogs: {
       loading: false,
     },
-    showSingBoxConfig: {
+    showXrustConfig: {
       loading: false,
     },
     supportReport: {
@@ -110,12 +107,6 @@ export const initialDiagnosticStore: Pick<
   updatesActions: {
     forkopCheck: { loading: false },
     forkopInstall: { loading: false },
-    singBoxCheck: { loading: false },
-    singBoxInstall: { loading: false },
-    singBoxInstallTiny: { loading: false },
-    singBoxInstallX: { loading: false },
-    singBoxInstallRustX: { loading: false },
-    singBoxInstallStable: { loading: false },
     zapretManagerInstall: { loading: false },
     zapretManagerRemove: { loading: false },
     packetSteeringEnable: { loading: false },
@@ -127,7 +118,6 @@ export const initialDiagnosticStore: Pick<
   },
   updatesChecks: {
     forkop: { status: null, latest_version: '', release_url: '' },
-    sing_box: { status: null, latest_version: '', release_url: '' },
     zapret_manager: { status: null, latest_version: '', release_url: '' },
     packet_steering: { status: null, latest_version: '', release_url: '' },
     direct_proxy: { status: null, latest_version: '', release_url: '' },

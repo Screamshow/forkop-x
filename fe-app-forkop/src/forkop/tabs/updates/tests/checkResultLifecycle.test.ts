@@ -63,7 +63,7 @@ describe('updates check result lifecycle', () => {
             {
               success: true,
               running: true,
-              component: 'sing_box',
+              component: 'forkop',
               action: 'check_update',
               message: 'Component action is running',
               job_id: 'job-1',

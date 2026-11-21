@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -39,13 +40,19 @@ def main():
             path = destination / asset['file']
             if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != asset['sha256']:
                 raise ValueError('Refusing to replace an existing stable archive')
-    subprocess.run([args.publisher, str(args.directory.resolve()), version], check=True)
+    subprocess.run([args.publisher, str(args.directory.resolve()), version], check=True,
+                   env={**os.environ, 'MIRROR_ROOT': str(args.root), 'APK_BIN': args.apk_tool})
     for asset in manifest['assets']:
         if hashlib.sha256((destination / asset['file']).read_bytes()).hexdigest() != asset['sha256']:
             raise ValueError('Stable publisher changed package bytes')
     for name in ('forkop-manifest.json', 'forkop-apk.pem', 'SHA256SUMS'):
-        shutil.copyfile(args.directory / name, destination / name)
-    subprocess.run(['python3', '/usr/local/lib/forkop/write-release-catalog.py', str(args.root / 'updates')], check=True)
+        if int(version.split('.', 1)[0]) >= 3:
+            if (args.directory / name).read_bytes() != (destination / name).read_bytes():
+                raise ValueError(f'Stable publisher changed release metadata: {name}')
+        else:
+            shutil.copyfile(args.directory / name, destination / name)
+    if int(version.split('.', 1)[0]) < 3:
+        subprocess.run(['python3', '/usr/local/lib/forkop/write-release-catalog.py', str(args.root / 'updates')], check=True)
 
 
 if __name__ == '__main__':

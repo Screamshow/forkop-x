@@ -8,7 +8,7 @@ let uci = require("core.uci");
 let connections = require("config.connections");
 const CONFIG = getenv("FORKOP_CONFIG_NAME") || "forkop";
 const CACHE = getenv("FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR") || "/etc/forkop/subscription-cache";
-const RUNTIME = getenv("TMP_SUBSCRIPTION_FOLDER") || "/tmp/sing-box/subscriptions";
+const RUNTIME = getenv("TMP_SUBSCRIPTION_FOLDER") || "/tmp/xrust/subscriptions";
 
 function list(value) {
     return type(value) == "array" ? value : value == null || value == "" ? [] : [ value ];

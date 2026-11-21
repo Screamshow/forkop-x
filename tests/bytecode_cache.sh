@@ -307,6 +307,18 @@ case "$entry_resolved" in
   "$WORK_DIR/entry-cache"/lib.*) ;;
   *) fail "entrypoint must hand the resolved cache to its children, got '$entry_resolved'" ;;
 esac
+cat >"$WORK_DIR/entry/diagnostics/runtime.uc" <<'UCODE'
+print("new-package\n");
+UCODE
+[ -f "$entry_resolved/diagnostics/runtime.uc" ] || fail "previous cache no longer exists"
+entry_after_package="$(
+  env FORKOP_LIB="$entry_resolved" FORKOP_SOURCE_LIB="$WORK_DIR/entry" \
+    FORKOP_BYTECODE_CACHE_DIR="$WORK_DIR/entry-cache" FORKOP_BYTECODE_VALIDATION_TTL=0 \
+    ucode "$FORKOP_ENTRY" show_version
+)"
+[ "$entry_after_package" = "new-package" ] ||
+  fail "fresh CLI invocation inherited the old updater's cached package"
+cp "$WORK_DIR/fake/diagnostics/runtime.uc" "$WORK_DIR/entry/diagnostics/runtime.uc"
 entry_disabled="$(
   env FORKOP_SOURCE_LIB="$WORK_DIR/entry" FORKOP_BYTECODE_CACHE_DIR="$WORK_DIR/entry-off" \
     FORKOP_BYTECODE_CACHE=0 ucode "$FORKOP_ENTRY" show_version

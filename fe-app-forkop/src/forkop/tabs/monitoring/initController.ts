@@ -1493,7 +1493,7 @@ function watchServiceState() {
             (section) => section['.type'] === 'settings',
           );
           return runtimeRouteRulesLoader.load({
-            path: settings?.config_path || '/etc/sing-box/config.json',
+            path: settings?.config_path || '/etc/xrust/config.json',
             revision: 'legacy',
           });
         })

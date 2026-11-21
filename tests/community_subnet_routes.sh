@@ -19,7 +19,7 @@ if (regular[0].network != null) die("ordinary subnet unexpectedly UDP-only\n");
 push(rules, regular[0]);
 fs.writefile(ARGV[0], sprintf("%J", {version:3,rules}));
 ' "$WORK_DIR/config.json.rulesets/voice-community-subnets-lists-ruleset.json"
-ucode -L "$FORKOP_LIB" "$FORKOP_LIB/singbox/generator.uc" generate-config-fixture \
+ucode -L "$FORKOP_LIB" "$FORKOP_LIB/xrust/generator.uc" generate-config-fixture \
   "$WORK_DIR/fixture.json" "$WORK_DIR/config.json" "127.0.0.1" "0" "1" "" "1.12.22"
 ucode -e '
 let fs=require("fs"); let c=json(fs.readfile(ARGV[0])); let found=false;
@@ -33,11 +33,11 @@ for (let r in c.route.rules) {
   found=true;
 }
 if (!found) die("materialized community subnets not routed\n");
-// Replace remote domain lists only for offline sing-box schema validation.
+// Replace remote domain lists for offline Xrust schema validation.
 for (let i,r in c.route.rule_set) if(r.type=="remote") c.route.rule_set[i]={type:"inline",tag:r.tag,rules:[{domain_suffix:["discord.com"]}]};
 fs.writefile(ARGV[1],sprintf("%J",c));
 ' "$WORK_DIR/config.json" "$WORK_DIR/check.json"
-sing-box check -c "$WORK_DIR/check.json"
+"${XRUST_BIN:-xrust}" check -c "$WORK_DIR/check.json"
 # Missing, empty and corrupt downloaded lists must fail instead of using
 # hardcoded Discord/Cloudflare ranges.
 rm "$WORK_DIR/config.json.rulesets/voice-community-subnets-lists-ruleset.json"
@@ -46,7 +46,7 @@ for state in missing empty invalid; do
     empty) printf '{"version":3,"rules":[]}' > "$WORK_DIR/config.json.rulesets/voice-community-subnets-lists-ruleset.json" ;;
     invalid) printf 'invalid' > "$WORK_DIR/config.json.rulesets/voice-community-subnets-lists-ruleset.json" ;;
   esac
-  if ucode -L "$FORKOP_LIB" "$FORKOP_LIB/singbox/generator.uc" generate-config-fixture \
+  if ucode -L "$FORKOP_LIB" "$FORKOP_LIB/xrust/generator.uc" generate-config-fixture \
     "$WORK_DIR/fixture.json" "$WORK_DIR/config.json" "127.0.0.1" "0" "1" "" "1.12.22" > "$WORK_DIR/error.log" 2>&1; then
     echo "FAIL: $state Discord subnets accepted" >&2
     exit 1
@@ -71,6 +71,7 @@ export SUBNETS_DISCORD=https://fixture.test/discord4.lst
 export SUBNETS_DISCORD6=https://fixture.test/discord6.lst
 export FORKOP_UCI_STATE_FILE="$WORK_DIR/uci.state"
 export FORKOP_LIB TMP_RULESET_FOLDER="$WORK_DIR/runtime"
+export FORKOP_RUNTIME_STATE_DIR="$WORK_DIR/state"
 export FORKOP_PERSISTENT_LIST_CACHE_DIR="$WORK_DIR/cache"
 export FORKOP_RUNTIME_LIST_GENERATION_DIR="$WORK_DIR/generation"
 export FORKOP_LIST_CACHE_LOG_STATE_FILE="$WORK_DIR/cache-log-state"

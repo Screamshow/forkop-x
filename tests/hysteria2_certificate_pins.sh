@@ -76,12 +76,12 @@ echo 'Hysteria2 pin survives export, cache repair and Xray JSON import'
 cat >"$WORK/fixture.json" <<JSON
 {"settings":{".name":"settings",".type":"settings","dns_server":"1.1.1.1"},"section":[{".name":"pinned",".type":"section","enabled":"1","action":"connection","selector_proxy_links":["$LINK"]}]}
 JSON
-ucode -L "$LIB" "$LIB/singbox/generator.uc" generate-config-fixture "$WORK/fixture.json" "$WORK/generated.json" 127.0.0.1 0 1 '' 1.14.2-rust-x.0.0.26
+ucode -L "$LIB" "$LIB/xrust/generator.uc" generate-config-fixture "$WORK/fixture.json" "$WORK/generated.json" 127.0.0.1 0 1 '' 0.0.26
 ucode -e 'let c=json(require("fs").readfile(ARGV[0]));let n=filter(c.outbounds,function(o){return o.type=="hysteria2";});assert(length(n)==1&&n[0].tls.certificate_sha256&&n[0].tls.certificate_sha256[0]==ARGV[1],"manual Hysteria2 link lost pinSHA256");' "$WORK/generated.json" "$PIN"
 echo 'Manual Hysteria2 link keeps pinSHA256 on Xrust'
 
 sed "s@pinSHA256=$COLON@pcs=$COLON@" "$WORK/fixture.json" >"$WORK/pcs.json"
-ucode -L "$LIB" "$LIB/singbox/generator.uc" generate-config-fixture "$WORK/pcs.json" "$WORK/older.json" 127.0.0.1 0 1 '' 1.14.2-rust-x.0.0.43
+ucode -L "$LIB" "$LIB/xrust/generator.uc" generate-config-fixture "$WORK/pcs.json" "$WORK/older.json" 127.0.0.1 0 1 '' 0.0.43
 ucode -e 'let c=json(require("fs").readfile(ARGV[0]));let n=filter(c.outbounds,function(o){return o.type=="hysteria2";})[0];assert(n.tls.certificate_sha256[0]==ARGV[1]&&n.tls.insecure===true&&n.tls.xray_pinned_peer_cert_sha256==null,"old Xrust strict leaf pin missing");' "$WORK/older.json" "$PIN"
 echo 'Older Xrust uses a mandatory whole-certificate leaf pin for HY2 pcs'
 
@@ -91,7 +91,7 @@ for pins in '[]' '[""]'; do
     print(sprintf("%J",{settings:{".name":"settings",".type":"settings",dns_server:"1.1.1.1"},
         section:[{".name":"pinned",".type":"section",enabled:"1",action:"connection",outbound_jsons:[sprintf("%J",outbound)]}]}));' \
         "$pins" >"$WORK/empty-pcs.json"
-    if ucode -L "$LIB" "$LIB/singbox/generator.uc" generate-config-fixture "$WORK/empty-pcs.json" "$WORK/empty-result.json" 127.0.0.1 0 1 '' 1.14.2-rust-x.0.0.43 >"$WORK/log" 2>&1; then
+    if ucode -L "$LIB" "$LIB/xrust/generator.uc" generate-config-fixture "$WORK/empty-pcs.json" "$WORK/empty-result.json" 127.0.0.1 0 1 '' 0.0.43 >"$WORK/log" 2>&1; then
         echo 'An empty HY2 pin list enabled insecure fallback' >&2
         exit 1
     fi
@@ -100,10 +100,10 @@ done
 echo 'HY2 fallback refuses empty and blank pin values'
 
 echo KEEP >"$WORK/kept.json"
-if ucode -L "$LIB" "$LIB/singbox/generator.uc" generate-config-fixture "$WORK/fixture.json" "$WORK/kept.json" 127.0.0.1 0 1 '' 1.14.2-x-1.0.4 >"$WORK/log" 2>&1; then
-    echo "Hysteria2 pin accepted by a core without certificate pin support" >&2
+if ucode -L "$LIB" "$LIB/xrust/generator.uc" generate-config-fixture "$WORK/fixture.json" "$WORK/kept.json" 127.0.0.1 0 1 '' 1.14.2-x-1.0.4 >"$WORK/log" 2>&1; then
+    echo "Legacy core accepted by the Xrust generator" >&2
     exit 1
 fi
-grep -q "manual outbound 'HY2 Pinned' requires TLS certificate SHA-256 pinning" "$WORK/log"
+grep -q "the installed client must be Xrust" "$WORK/log"
 test "$(cat "$WORK/kept.json")" = KEEP
-echo 'Cores without pin support refuse the pinned Hysteria2 link'
+echo 'The Xrust generator rejects a legacy core and preserves the active configuration'

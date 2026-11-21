@@ -1,6 +1,6 @@
 #!/usr/bin/env ucode
 let uci_core = require("core.uci");
-let singbox_constants = require("singbox.constants");
+let singbox_constants = require("xrust.constants");
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
 function str(v) {
     return v == null ? "" : "" + v;

@@ -32,7 +32,7 @@ function command_status(command){if(index(command,'reload')<0)die('wrong command
 function command_from_args(args){return join(' ',args);}
 function log_message(){}
 UC
-sed -n '/^function worker(/,/^}/p' "$ROOT/forkop/files/usr/lib/singbox/dns_failover.uc"
+sed -n '/^function worker(/,/^}/p' "$ROOT/forkop/files/usr/lib/xrust/dns_failover.uc"
 cat <<'UC'
 try { worker(); } catch(e) { if(!finished) die(e); }
 assert(finished && sprintf("%J",reloads)=="[ 20, 50, 110, 130 ]",sprintf("unexpected WAN reload requests: %J",reloads));

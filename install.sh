@@ -31,7 +31,11 @@ CORE_PACKAGE_SPACE_KB=0
 
 FORKOP_RELEASE_JSON=""
 FORKOP_RELEASE_TAG=""
+FORKOP_BRIDGE_VERSION=2.7.6
 FORKOP_XRUST_VERSION=""
+FRESH_PINNED_PACKAGES=""
+XRUST_PACKAGE_FILE=""
+LEGACY_UPGRADE_RECOVERY_HOOK=""
 FORKOP_BACKEND_URL=""
 FORKOP_BACKEND_SHA256=""
 FORKOP_BACKEND_NAME=""
@@ -89,6 +93,7 @@ Installs or updates Forkop packages:
 
 Proxy core policy:
   - Forkop 3.x installs the Xrust version specified by its release
+  - older Forkop installations update through stable 2.7.6 on either channel
   - an existing installation must already use Xrust before updating to 3.x
   - Forkop 2.x preserves installed sing-box variants and updates installed Xrust
   - Forkop 2.x installs Xrust when no proxy core is installed
@@ -132,6 +137,7 @@ parse_args() {
 
 cleanup() {
     rollback_current_update
+    rollback_fresh_pinned_install
     rollback_package_mirror
     if [ "$UPDATE_ROLLBACK_FAILED" -eq 1 ]; then
         warn "Rollback files retained for recovery: $TMP_DIR"
@@ -161,13 +167,13 @@ init_tmp_dir() {
 }
 
 detect_fetcher() {
-    if command_exists wget; then
-        FETCHER="wget"
+    if command_exists curl; then
+        FETCHER="curl"
         return 0
     fi
 
-    if command_exists curl; then
-        FETCHER="curl"
+    if command_exists wget; then
+        FETCHER="wget"
         return 0
     fi
 
@@ -187,7 +193,7 @@ run_with_deadline() {
     "$forkop_deadline_helper" run "$forkop_deadline_seconds" "$forkop_deadline_result" "$@"
     forkop_deadline_status=$?
     rm -f "$forkop_deadline_result.output" "$forkop_deadline_result.error" \
-        "$forkop_deadline_result.status" "$forkop_deadline_result.timeout"
+        "$forkop_deadline_result.status" "$forkop_deadline_result.timeout" "$forkop_deadline_result.watchdog-ready"
     return "$forkop_deadline_status"
 }
 
@@ -267,7 +273,7 @@ run_command() {
     local command_pid command_starttime watchdog_pid status
     shift 2
 
-    rm -f "$result.output" "$result.error" "$result.status" "$result.timeout"
+    rm -f "$result.output" "$result.error" "$result.status" "$result.timeout" "$result.watchdog-ready"
     umask 077
     "$@" >"$result.output" 2>"$result.error" &
     command_pid=$!
@@ -278,6 +284,7 @@ run_command() {
         trap 'kill "$sleep_pid" 2>/dev/null || true; wait "$sleep_pid" 2>/dev/null || true; exit 0' TERM INT
         sleep "$seconds" &
         sleep_pid=$!
+        : > "$result.watchdog-ready"
         wait "$sleep_pid" || exit 0
         current_starttime="$(process_starttime "$command_pid" 2>/dev/null || true)"
         [ -n "$command_starttime" ] && [ "$current_starttime" = "$command_starttime" ] || exit 0
@@ -288,6 +295,10 @@ run_command() {
 
     wait "$command_pid"
     status=$?
+    # A fast download can finish before the watchdog installs its TERM trap.
+    while [ ! -e "$result.watchdog-ready" ] && kill -0 "$watchdog_pid" 2>/dev/null; do
+        sleep 0.05 2>/dev/null || sleep 1
+    done
     kill "$watchdog_pid" 2>/dev/null || true
     wait "$watchdog_pid" 2>/dev/null || true
     [ ! -e "$result.timeout" ] || status=124
@@ -1603,6 +1614,20 @@ function release_version_valid(value) {
     return match(as_string(value), /^[0-9]+[.][0-9]+[.][0-9]+(-canary[.][0-9]+)?$/) != null;
 }
 
+function release_before_bridge(version, bridge) {
+    let installed = match(version, /^([0-9]+)[.]([0-9]+)[.]([0-9]+)(-canary[.][0-9]+|_rc[0-9]+)?(-r?[0-9]+)?$/);
+    if (installed == null)
+        exit(1);
+    let minimum = split(bridge, ".");
+    for (let i = 0; i < 3; i++) {
+        if (int(installed[i + 1]) != int(minimum[i])) {
+            print(int(installed[i + 1]) < int(minimum[i]) ? "1\n" : "0\n");
+            return;
+        }
+    }
+    print(installed[4] != null ? "1\n" : "0\n");
+}
+
 function asset_matches(name, kind, ext, version) {
     if (!release_version_valid(version))
         return false;
@@ -1624,6 +1649,8 @@ function core_package_plan(name, arch, format, base, version) {
     if (catalog?.schema != 1 || catalog?.name != name ||
         match(as_string(catalog.version), /^[0-9]+[.][0-9]+[.][0-9]+$/) == null ||
         (version != null && version != "" && catalog.version !== version))
+        exit(1);
+    if (version != null && version != "" && catalog.minimum_forkop_major !== 3)
         exit(1);
     for (let asset in catalog.assets || []) {
         if (asset.package != name || asset.format != format ||
@@ -1702,6 +1729,8 @@ if (mode == "release-tag")
     release_tag();
 else if (mode == "release-xrust-version")
     release_xrust_version();
+else if (mode == "release-before-bridge")
+    release_before_bridge(ARGV[1], ARGV[2]);
 else if (mode == "release-asset-url")
     release_asset_url(ARGV[1], ARGV[2]);
 else if (mode == "release-asset-sha256")
@@ -2571,9 +2600,16 @@ resolve_forkop_release() {
 
     [ "$PKG_IS_APK" -eq 1 ] && asset_ext="apk"
 
-    FORKOP_RELEASE_JSON="$(fetch_forkop_latest_release_json)"
+    if [ -n "${1:-}" ]; then
+        FORKOP_RELEASE_JSON="$(http_get "$MIRROR_BASE_URL/forkop/updates/releases/$1/release.json")" ||
+            fail "Failed to query the archived Forkop $1 release"
+    else
+        FORKOP_RELEASE_JSON="$(fetch_forkop_latest_release_json)" || exit 1
+    fi
     FORKOP_RELEASE_TAG="$(printf '%s' "$FORKOP_RELEASE_JSON" | install_json_ucode release-tag 2>/dev/null)"
     [ -n "$FORKOP_RELEASE_TAG" ] || fail "Failed to detect the Forkop release tag"
+    [ -z "${1:-}" ] || [ "$FORKOP_RELEASE_TAG" = "$1" ] ||
+        fail "The archived Forkop release does not match $1"
 
     resolve_release_asset backend forkop
     FORKOP_BACKEND_URL="$RELEASE_ASSET_URL"
@@ -2644,15 +2680,105 @@ upgrade_forkop_with_pinned_xrust() {
     [ "$INSTALL_MODE" = "update" ] && [ -x /usr/bin/forkop ] ||
         fail "Install Forkop X 2.7.6 and switch to Xrust before updating to $FORKOP_RELEASE_TAG"
 
+    installed_release="$(installed_forkop_package_version forkop 2>/dev/null)" ||
+        fail "Cannot determine the installed Forkop release for recovery"
+    case "$installed_release" in
+        2.7.6|2.7.6_rc*|2.7.6-canary.*)
+            LEGACY_UPGRADE_RECOVERY_HOOK="/etc/rc.d/S98forkop-upgrade-recovery"
+            [ ! -L "$LEGACY_UPGRADE_RECOVERY_HOOK" ] ||
+                fail "An interrupted Forkop update has recovery packages ready for the next boot"
+            if ! pkg_is_installed rust-x; then
+                fail "Forkop X 2.7.6 is ready. Switch to Xrust in LuCI, verify that it starts, then rerun the installer."
+            fi
+            prepare_legacy_upgrade_recovery || fail "Cannot prepare recovery for the Forkop X 2.7.6 upgrade"
+            ;;
+    esac
     # Older backends reject the explicit action before changing packages.
     msg "Updating Forkop $FORKOP_RELEASE_TAG with Xrust $FORKOP_XRUST_VERSION"
     if ! FORKOP_MIRROR_BASE_URL="$MIRROR_BASE_URL" /usr/bin/forkop \
         component_action forkop install_pinned_xrust "$FORKOP_RELEASE_TAG" >"$TMP_DIR/pinned-update.json" 2>&1; then
         cat "$TMP_DIR/pinned-update.json" >&2
+        if [ -n "$LEGACY_UPGRADE_RECOVERY_HOOK" ]; then
+            if "$LEGACY_UPGRADE_RECOVERY_HOOK" commit-restored; then
+                msg "Previous Forkop packages, configuration and service verified; boot recovery cleared"
+            else
+                warn "The exact previous package set remains available for boot recovery"
+            fi
+        fi
         fail "Forkop update failed. This update requires Forkop X 2.7.6 or later with Xrust support."
+    fi
+    if [ -n "$LEGACY_UPGRADE_RECOVERY_HOOK" ]; then
+        "$LEGACY_UPGRADE_RECOVERY_HOOK" commit ||
+            fail "Forkop was updated but its boot recovery journal could not be cleared"
     fi
     cat "$TMP_DIR/pinned-update.json"
 }
+
+prepare_legacy_upgrade_recovery() (
+    core_package_version="$(pinned_xrust_installed_version)" || return 1
+    legacy_build="${core_package_version%-*}"
+    printf '%s\n' "$core_package_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-r?[1-9][0-9]*$' &&
+        [ -x /usr/lib/rust-x/sing-box ] ||
+        fail "Switch to the packaged Xrust core before upgrading Forkop X 2.7.6"
+    legacy_format=ipk
+    [ "$PKG_IS_APK" -eq 0 ] || legacy_format=apk
+    current_catalog="$TMP_DIR/legacy-xrust.json"
+    http_get "$MIRROR_BASE_URL/forkop/rust-x/releases/$legacy_build/manifest.json" > "$current_catalog" ||
+        fail "Cannot find the exact installed Xrust archive for rollback"
+    install_json_ucode core-package-plan rust-x "$(read_openwrt_release_value DISTRIB_ARCH)" \
+        "$legacy_format" "$MIRROR_BASE_URL" < "$current_catalog" > "$TMP_DIR/legacy-core.tsv" ||
+        fail "Cannot resolve the exact installed Xrust archive"
+    IFS="$(printf '\t')" read -r core_url core_hash core_bytes _ < "$TMP_DIR/legacy-core.tsv"
+    legacy_core_name="${core_url##*/}"
+    # The catalog plan already checked architecture and format. Match the
+    # installed revision without splitting architecture names like x86_64.
+    legacy_core_prefix="rust-x_${core_package_version}_"
+    case "$legacy_core_name" in
+        "$legacy_core_prefix"*".$legacy_format") ;;
+        *) fail "The rollback Xrust revision differs from the installed package" ;;
+    esac
+    core_package_arch="${legacy_core_name#"$legacy_core_prefix"}"
+    core_package_arch="${core_package_arch%.*}"
+
+    prepare_current_config_backup
+    prepare_current_update_rollback
+    legacy_core="$TMP_DIR/rollback/$legacy_core_name"
+    download_with_retry "$core_url" "$legacy_core" "Xrust rollback" ||
+        fail "Cannot download the exact installed Xrust package"
+    [ "$(wc -c < "$legacy_core" | tr -d '[:space:]')" = "$core_bytes" ] ||
+        fail "The Xrust rollback archive has an unexpected length"
+    verify_download_sha256 "$legacy_core" "$core_hash" "$legacy_core_name"
+    verify_pinned_xrust_package "$legacy_core" || fail "The Xrust rollback archive has invalid package metadata"
+    {
+        printf 'rust-x\t%s\t%s\n' "$core_package_version" "$legacy_core"
+        cat "$UPDATE_ROLLBACK_MANIFEST"
+    } > "$TMP_DIR/rollback/pinned.tsv"
+
+    candidate="$TMP_DIR/$FORKOP_BACKEND_NAME"
+    download_with_retry "$FORKOP_BACKEND_URL" "$candidate" "$FORKOP_BACKEND_NAME" ||
+        fail "Cannot download the Forkop package recovery helper"
+    verify_download_sha256 "$candidate" "$FORKOP_BACKEND_SHA256" "$FORKOP_BACKEND_NAME"
+    recovery_tools="$TMP_DIR/recovery-tools"
+    mkdir -p "$recovery_tools" || fail "Cannot prepare the package recovery helper"
+    if [ "$PKG_IS_APK" -eq 1 ]; then
+        apk extract --allow-untrusted --no-chown --destination "$recovery_tools" "$candidate" ||
+            fail "Cannot extract the package recovery helper"
+    else
+        (tar -xzOf "$candidate" ./data.tar.gz 2>/dev/null || tar -xzOf "$candidate" data.tar.gz) > "$TMP_DIR/recovery-data.tar.gz" &&
+            tar -xzf "$TMP_DIR/recovery-data.tar.gz" -C "$recovery_tools" ./usr/share/forkop/upgrade-recovery ./usr/share/forkop/package-init ||
+            fail "Cannot extract the package recovery helper"
+    fi
+    recovery_tools="$recovery_tools/usr/share/forkop"
+    recovery_manager=opkg
+    [ "$PKG_IS_APK" -eq 0 ] || recovery_manager=apk
+    sh "$recovery_tools/upgrade-recovery" prepare "$recovery_manager" "$FORKOP_WAS_ENABLED" \
+        "$core_package_version" "$TMP_DIR/rollback/configuration.tar.gz" "$recovery_tools/package-init" \
+        "$TMP_DIR/rollback/pinned.tsv" legacy "$FORKOP_WAS_RUNNING" ||
+        fail "Cannot arm recovery for the Forkop X 2.7.6 upgrade"
+    # The delegated updater downloads its own temporary archives.
+    rm -rf "$TMP_DIR/rollback" "$TMP_DIR/recovery-tools"
+    rm -f "$candidate" "$TMP_DIR/recovery-data.tar.gz"
+)
 
 # Check the mirror catalog of the core package the backend will install and
 # reserve its flash space. The backend downloads the package itself and
@@ -2678,10 +2804,95 @@ prepare_core_package_plan() {
     IFS="$(printf '\t')" read -r core_url core_hash core_archive_bytes core_installed_bytes < "$TMP_DIR/core-plan.tsv"
     CORE_PACKAGE_SPACE_KB=$(((core_installed_bytes + 1023) / 1024 + 256))
     core_tmp_free="$(temporary_available_space_kb)" || fail "Unable to determine temporary memory"
-    # The backend downloads the archive into tmpfs and needs workspace too.
+    # Leave room for the archive and package-manager workspace.
     core_tmp_need=$(((core_archive_bytes + 1023) / 1024 + 8192))
     [ "$core_tmp_free" -ge "$core_tmp_need" ] ||
         fail "Not enough temporary memory for $core_label installation: need ${core_tmp_need} KiB, have ${core_tmp_free} KiB"
+}
+
+pinned_xrust_binary_matches() {
+    [ -x /usr/bin/xrust ] &&
+        [ "$(/usr/bin/xrust version | head -n 1)" = "xrust version $FORKOP_XRUST_VERSION" ]
+}
+
+pinned_xrust_installed_version() (
+    if [ "$PKG_IS_APK" -eq 1 ]; then
+        rows="$(apk list --installed --manifest rust-x 2>/dev/null)" || return 1
+        printf '%s\n' "$rows" | awk '$1 == "rust-x" && NF == 2 { print $2 }'
+    else
+        rows="$(opkg list-installed rust-x 2>/dev/null)" || return 1
+        printf '%s\n' "$rows" | awk '$1 == "rust-x" && $2 == "-" { print $3 }'
+    fi
+)
+
+verify_pinned_xrust_package() (
+    archive="$1"
+    if [ "$PKG_IS_APK" -eq 1 ]; then
+        if ! apk verify "$archive" >/dev/null 2>&1; then
+            # Native system feeds do not install the Forkop mirror key.
+            # Verify the archive with a private key directory for this run.
+            mirror_key="$TMP_DIR/forkop-mirror.pem"
+            key_directory="$TMP_DIR/xrust-apk-keys"
+            if [ ! -s "$mirror_key" ]; then
+                download_with_retry "$MIRROR_BASE_URL/forkop/forkop-apk.pem" "$mirror_key" "Forkop mirror APK key" ||
+                    return 1
+            fi
+            grep -Fq 'BEGIN PUBLIC KEY' "$mirror_key" &&
+                mkdir -p "$key_directory" &&
+                cp "$mirror_key" "$key_directory/forkop-mirror.pem" &&
+                apk --keys-dir "$key_directory" verify "$archive" >/dev/null || return 1
+        fi
+        metadata="$(apk adbdump "$archive")" || return 1
+        identity="$(printf '%s\n' "$metadata" | awk '
+            /^[[:space:]]+name: / && !name { name=$2 }
+            /^[[:space:]]+version: / && !version { version=$2 }
+            /^[[:space:]]+arch: / && !arch { arch=$2 }
+            END { print name, version, arch }
+        ')"
+    else
+        identity="$( (tar -xzOf "$archive" ./control.tar.gz 2>/dev/null ||
+            tar -xzOf "$archive" control.tar.gz 2>/dev/null) |
+            tar -xzOf - control 2>/dev/null | awk '
+                /^Package: / { name=$2 } /^Version: / { version=$2 }
+                /^Architecture: / { arch=$2 } END { print name, version, arch }
+            ')"
+    fi
+    [ "$identity" = "rust-x $core_package_version $core_package_arch" ]
+)
+
+stage_fresh_pinned_xrust() {
+    local core_filename="${core_url##*/}"
+    core_package_version="${core_filename#rust-x_}"
+    core_package_version="${core_package_version%%_*}"
+    core_package_arch="${core_filename#"rust-x_${core_package_version}_"}"
+    core_package_arch="${core_package_arch%.*}"
+    if pkg_is_installed rust-x; then
+        [ "$(pinned_xrust_installed_version)" = "$core_package_version" ] && pinned_xrust_binary_matches ||
+            fail "The existing standalone Xrust installation must be $core_package_version for this Forkop release."
+        CORE_PACKAGE_SPACE_KB=0
+        return
+    fi
+    if sing_box_is_present || [ -e /usr/bin/xrust ] || [ -e /usr/lib/rust-x/sing-box ]; then
+        fail "Forkop $FORKOP_RELEASE_TAG requires its Xrust package. Remove the existing standalone core first."
+    fi
+    XRUST_PACKAGE_FILE="$TMP_DIR/$core_filename"
+    download_with_retry "$core_url" "$XRUST_PACKAGE_FILE" "Xrust $FORKOP_XRUST_VERSION" ||
+        fail "Failed to download the pinned Xrust package"
+    [ "$(wc -c <"$XRUST_PACKAGE_FILE" | tr -d '[:space:]')" = "$core_archive_bytes" ] ||
+        fail "Pinned Xrust package has an unexpected length"
+    verify_download_sha256 "$XRUST_PACKAGE_FILE" "$core_hash" "$core_filename"
+    verify_pinned_xrust_package "$XRUST_PACKAGE_FILE" || fail "Pinned Xrust package identity is invalid"
+    core_payload_kb="$(package_payload_size_kb "$XRUST_PACKAGE_FILE")" || fail "Cannot measure the pinned Xrust package payload"
+    CORE_PACKAGE_SPACE_KB=$((core_payload_kb + 256))
+}
+
+rollback_fresh_pinned_install() {
+    for fresh_package in $FRESH_PINNED_PACKAGES; do
+        if pkg_is_installed "$fresh_package" && ! pkg_remove_name "$fresh_package"; then
+            UPDATE_ROLLBACK_FAILED=1
+            warn "Could not remove $fresh_package after the incomplete installation"
+        fi
+    done
 }
 
 select_sing_box_for_release() {
@@ -2900,6 +3111,7 @@ download_forkop_packages() {
 preinstall_release_dependencies() {
     set -- "$FORKOP_BACKEND_FILE" "$FORKOP_APP_FILE"
     [ -z "$FORKOP_I18N_FILE" ] || set -- "$@" "$FORKOP_I18N_FILE"
+    [ -z "$XRUST_PACKAGE_FILE" ] || set -- "$@" "$XRUST_PACKAGE_FILE"
     dependency_check="$TMP_DIR/release-dependencies.log"
     if [ "$PKG_IS_APK" -eq 1 ]; then
         apk add --simulate --allow-untrusted "$@" </dev/null >"$dependency_check" 2>&1
@@ -2913,6 +3125,9 @@ preinstall_release_dependencies() {
     # apk: "(1/2) Installing flock (2.40-r1)"; opkg: "Installing flock (2.40-1) to root..."
     for dependency in $(sed -n -E 's/^(\([0-9]+\/[0-9]+\) )?Installing ([A-Za-z0-9][A-Za-z0-9._+-]*) \(.*/\2/p' "$dependency_check" | sort -u); do
         case "$dependency" in forkop|luci-app-forkop|luci-i18n-forkop-ru) continue ;; esac
+        if [ "$dependency" = "rust-x" ] && [ -n "$XRUST_PACKAGE_FILE" ]; then
+            continue
+        fi
         msg "Installing new Forkop dependency before stopping Forkop: $dependency"
         pkg_install_name "$dependency" || fail "Failed to install Forkop dependency $dependency"
     done
@@ -3015,25 +3230,88 @@ main() {
         fail "Missing or invalid Xrust version for Forkop $FORKOP_RELEASE_TAG"
     if [ -n "$FORKOP_XRUST_VERSION" ]; then
         if [ "$INSTALL_MODE" != "clean" ]; then
+            needs_bridge=1
+            if [ "$INSTALL_MODE" = "update" ]; then
+                installed_release="$(installed_forkop_package_version forkop 2>/dev/null)" ||
+                    fail "Cannot determine the installed Forkop release"
+                needs_bridge="$(install_json_ucode release-before-bridge "$installed_release" "$FORKOP_BRIDGE_VERSION")" ||
+                    fail "Cannot determine the upgrade path for installed Forkop $installed_release"
+            fi
+            if [ "$needs_bridge" = 1 ]; then
+                install_forkop_upgrade_bridge || exit 1
+                INSTALL_MODE=update
+            fi
             upgrade_forkop_with_pinned_xrust
             return 0
         fi
-        if sing_box_is_present && ! pkg_is_installed rust-x; then
-            fail "Forkop $FORKOP_RELEASE_TAG requires Xrust. Switch from the installed sing-box core first."
-        fi
         SING_BOX_INSTALL_VARIANT="rust-x"
         UPDATE_EXISTING_XRUST=0
+    elif [ "$INSTALL_MODE" = "update" ]; then
+        installed_release="$(installed_forkop_package_version forkop 2>/dev/null || true)"
+        if [ -z "$installed_release" ] && [ -x /usr/bin/xrust ]; then
+            fail "Cannot determine the installed Forkop release for rollback"
+        fi
+        installed_major="${installed_release%%.*}"
+        case "$installed_major" in
+            ''|*[!0-9]*) ;;
+            *)
+                if [ "$installed_major" -ge 3 ]; then
+                    FORKOP_MIRROR_BASE_URL="$MIRROR_BASE_URL" /usr/bin/forkop \
+                        component_action forkop install "$FORKOP_RELEASE_TAG" ||
+                        fail "Forkop rollback failed"
+                    return 0
+                fi
+                ;;
+        esac
     fi
+    install_resolved_forkop_release
+}
+
+install_forkop_upgrade_bridge() (
+    # Phase one owns its downloads, lifecycle adapter and rollback. Keep the
+    # outer transaction's resolved 3.x release and selected channel intact.
+    trap - EXIT
+    TMP_DIR="$(mktemp -d /tmp/forkop.XXXXXX)" ||
+        fail "Cannot create the temporary directory for the Forkop $FORKOP_BRIDGE_VERSION update"
+    trap cleanup EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    FORKOP_CHANNEL=stable
+    FORKOP_XRUST_VERSION=""
+    UPDATE_EXISTING_XRUST=0
+    msg "Updating to Forkop $FORKOP_BRIDGE_VERSION before installing Forkop $FORKOP_RELEASE_TAG"
+    resolve_forkop_release "$FORKOP_BRIDGE_VERSION"
+    install_resolved_forkop_release "$FORKOP_BRIDGE_VERSION"
+    [ "$FORKOP_CONFIG_READY" -eq 1 ] || fail "Resolve the configuration in Forkop $FORKOP_BRIDGE_VERSION before updating again"
+)
+
+install_resolved_forkop_release() {
     select_sing_box_for_release
     msg "Downloading Forkop X packages before making system changes"
     download_forkop_packages
     prepare_core_package_plan
+    [ -z "$FORKOP_XRUST_VERSION" ] || stage_fresh_pinned_xrust
 
     confirm_legacy_migration
     prepare_current_config_backup
     prepare_current_update_rollback
     ensure_flash_space
     preinstall_release_dependencies
+    if [ -n "$FORKOP_XRUST_VERSION" ]; then
+        for fresh_package in luci-i18n-forkop-ru luci-app-forkop forkop; do
+            if pkg_is_installed "$fresh_package"; then
+                fail "Unexpected existing $fresh_package package on a fresh Forkop install"
+            fi
+        done
+        FRESH_PINNED_PACKAGES="luci-i18n-forkop-ru luci-app-forkop forkop"
+        if [ -n "$XRUST_PACKAGE_FILE" ]; then
+            FRESH_PINNED_PACKAGES="$FRESH_PINNED_PACKAGES rust-x"
+            pkg_install_files "$XRUST_PACKAGE_FILE" || fail "Failed to install the pinned Xrust package"
+            [ "$(pinned_xrust_installed_version)" = "$core_package_version" ] && pinned_xrust_binary_matches ||
+                fail "Installed Xrust does not match Forkop $FORKOP_RELEASE_TAG"
+        fi
+    fi
 
     if [ "$INSTALL_MODE" = "legacy" ]; then
         msg "Installing the Forkop X backend before removing legacy packages"
@@ -3046,8 +3324,14 @@ main() {
         install_backend_package
     fi
     install_ui_packages
+    if [ -n "${1:-}" ]; then
+        for bridge_package in forkop luci-app-forkop luci-i18n-forkop-ru; do
+            [ "$(installed_forkop_package_version "$bridge_package")" = "$1" ] ||
+                fail "Installed $bridge_package does not match the required Forkop $1 release"
+        done
+    fi
     persist_release_channel
-    install_selected_sing_box
+    [ -n "$FORKOP_XRUST_VERSION" ] || install_selected_sing_box
     validate_installed_configuration
     if [ "$INSTALL_MODE" = "update" ] && [ "$FORKOP_CONFIG_READY" -eq 0 ]; then
         fail "Updated Forkop configuration failed validation: $FORKOP_CONFIG_VALIDATION_ERROR"
@@ -3062,6 +3346,7 @@ main() {
     post_install
     remove_legacy_backup
     UPDATE_TRANSACTION_ACTIVE=0
+    FRESH_PINNED_PACKAGES=""
 
     msg "Forkop $FORKOP_PACKAGE_VERSION has been installed successfully"
     msg "Source mirror: ${MIRROR_BASE_URL} (${FORKOP_RELEASE_TAG})"

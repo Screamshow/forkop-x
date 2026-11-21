@@ -99,7 +99,7 @@ function singbox_runtime_success(args){
   fs.writefile(args[5]+".section-cache/Proxy.json",'{"new":true}');return ok;
  }
  if(index(["discard-config-stage","commit-config-stage","publish-section-cache"],args[0])<0)die("unexpected cold mutation\n");
- let command=[LIB_DIR+"/singbox/runtime.uc"];for(let arg in args)push(command,arg);return module_success(command);
+ let command=[LIB_DIR+"/xrust/runtime.uc"];for(let arg in args)push(command,arg);return module_success(command);
 }
 function service_state_success(args){if(args[0]!="sing-box-current-owned-service-runtime")die("cold service action\n");return true;}
 function current_proxy_outbounds_signature(p){return command_output_from_args(["sha256sum",p]);}

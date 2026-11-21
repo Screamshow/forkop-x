@@ -11,10 +11,13 @@ let filter_selection = require("subscription.filter_selection");
 let source_cache = require("subscription.source_cache");
 let core_ip = require("core.ip");
 let core_url = require("core.url");
+let xrust = require("xrust.binary");
+let xrust_tags = require("xrust.constants");
+let locks = require("core.locks");
 
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
 const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
-const TMP_SING_BOX_FOLDER = getenv("TMP_SING_BOX_FOLDER") || "/tmp/sing-box";
+const TMP_SING_BOX_FOLDER = getenv("TMP_SING_BOX_FOLDER") || "/tmp/xrust";
 const TMP_RULESET_FOLDER = getenv("TMP_RULESET_FOLDER") || TMP_SING_BOX_FOLDER + "/rulesets";
 const TMP_SUBSCRIPTION_FOLDER = getenv("TMP_SUBSCRIPTION_FOLDER") || TMP_SING_BOX_FOLDER + "/subscriptions";
 const FORKOP_RUNTIME_STATE_DIR = getenv("FORKOP_RUNTIME_STATE_DIR") || "/var/run/forkop";
@@ -31,11 +34,13 @@ const FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_FORMAT = getenv("FORKOP_PERSISTENT_SU
 const FORKOP_SUBSCRIPTION_BOOTSTRAP_RETRY_PID_FILE = getenv("FORKOP_SUBSCRIPTION_BOOTSTRAP_RETRY_PID_FILE") || FORKOP_RUNTIME_STATE_DIR + "/subscription-bootstrap-retry.pid";
 const FORKOP_SUBSCRIPTION_UPDATE_LOCK_DIR = getenv("FORKOP_SUBSCRIPTION_UPDATE_LOCK_DIR") || FORKOP_RUNTIME_STATE_DIR + "/subscription-update.lock";
 const FORKOP_PENDING_RELOAD_FILE = getenv("FORKOP_PENDING_RELOAD_FILE") || FORKOP_RUNTIME_STATE_DIR + "/reload.pending";
+const RELOAD_LOCK_DIR = getenv("FORKOP_RELOAD_LOCK_DIR") || "/var/run/forkop.reload.lock";
 const FORKOP_SERVICE_INIT = getenv("FORKOP_SERVICE_INIT") || "/etc/init.d/forkop";
 const SB_SERVICE_MIXED_INBOUND_ADDRESS = getenv("SB_SERVICE_MIXED_INBOUND_ADDRESS") || "127.0.0.1";
-const SB_SERVICE_MIXED_INBOUND_PORT = getenv("SB_SERVICE_MIXED_INBOUND_PORT") || "4534";
-const SB_VARIANT_STATE_FILE = getenv("SB_VARIANT_STATE_FILE") || "/etc/forkop/sing-box-variant";
-const SB_VERSION_STATE_FILE = getenv("SB_VERSION_STATE_FILE") || "/etc/forkop/sing-box-version";
+const SUBSCRIPTION_DOWNLOAD_MAX_BYTES = 16 * 1024 * 1024;
+const SUBSCRIPTION_PREVIEW_MAX_BYTES = 4 * 1024 * 1024;
+const SUBSCRIPTION_ATTEMPT_SECONDS = 20;
+const SUBSCRIPTION_DOWNLOAD_SECONDS = 60;
 
 function as_string(value) {
     return value == null ? "" : "" + value;
@@ -371,30 +376,17 @@ function uci_sections() {
 
 let forkop_version = as_string(constants.FORKOP_VERSION);
 let incy_version = match(forkop_version, /^([0-9]+[.][0-9]+[.][0-9]+)(-canary[.][0-9]+)?$/);
-let auto_user_agent_profiles = [
-    "INCY/" + (incy_version != null ? incy_version[1] : forkop_version)
-];
-
-let auto_user_agents = {};
-for (let profile in auto_user_agent_profiles)
-    auto_user_agents[profile] = true;
+const SUBSCRIPTION_USER_AGENT = "INCY/" + (incy_version != null ? incy_version[1] : forkop_version);
 
 function user_agent_supported(user_agent, default_user_agent) {
     user_agent = as_string(user_agent);
-    default_user_agent = as_string(default_user_agent);
-
     if (user_agent == "")
         return false;
-    if (user_agent == default_user_agent)
-        return true;
-
-    // Automatic profiles remain usable across core/package upgrades. Explicit
-    // user profiles still require an exact match in user_agent_matches_config.
-    if (match(user_agent, /^sing-box\/[A-Za-z0-9][A-Za-z0-9._+-]*$/) != null ||
-        match(user_agent, /^INCY\/[0-9][A-Za-z0-9._+-]*$/) != null)
-        return true;
-
-    return auto_user_agents[user_agent] == true;
+    // A last working 2.x response is still usable during a provider outage.
+    // Its metadata never controls the User-Agent sent by a new request.
+    return user_agent == default_user_agent ||
+        match(user_agent, /^INCY\/[0-9][A-Za-z0-9._+-]*$/) != null ||
+        match(user_agent, /^sing-box\/[A-Za-z0-9][A-Za-z0-9._+-]*$/) != null;
 }
 
 function user_agent_matches_config(configured_user_agent, cached_user_agent, default_user_agent) {
@@ -636,7 +628,7 @@ function restore_persistent_subscription_cache(source_section, tmp_dir, persiste
     if (!cache_section_is_safe(source_section))
         return false;
 
-    let runtime = source_cache.read(tmp_dir, source_section);
+    let runtime = source_cache.read(tmp_dir, source_section, true);
     let runtime_current = source_cache_matches_profile(runtime,
         expected_url, expected_user_agent, expected_hwid, default_user_agent);
     let backup = null;
@@ -665,7 +657,7 @@ function restore_persistent_subscription_cache(source_section, tmp_dir, persiste
         record.profile.metadata = backup.profile.metadata;
 
     subscription_parser().repair_cached_outbounds(record.payload.outbounds);
-    return source_cache.publish(source_json_path(tmp_dir, source_section), record.payload, record.profile);
+    return source_cache.publish(source_json_path(tmp_dir, source_section), record.payload, record.profile, runtime.text);
 }
 
 function subscription_source_profile(section, entry) {
@@ -699,7 +691,7 @@ function section_current_usable_cache(section, tmp_dir, persistent_dir, default_
             continue;
 
         let source_section = source_id(name, index);
-        if (!restore_persistent_subscription_cache(
+        if (restore_persistent_subscription_cache(
             source_section,
             tmp_dir,
             persistent_dir,
@@ -708,10 +700,6 @@ function section_current_usable_cache(section, tmp_dir, persistent_dir, default_
             parsed.hwid,
             default_user_agent
         ))
-            continue;
-
-        if (source_cache_matches_profile(source_cache.read(tmp_dir, source_section),
-            parsed.url, parsed.user_agent, parsed.hwid, default_user_agent))
             return true;
     }
 
@@ -1239,64 +1227,6 @@ function get_kernel_version() {
     return trim(command_output_from_args([ "uname", "-r" ]));
 }
 
-function sing_box_version_from_output(output) {
-    let first = split(as_string(output), "\n")[0] || "";
-    let fields = whitespace_values(first);
-    return length(fields) > 0 ? fields[length(fields) - 1] : "";
-}
-
-function get_sing_box_version() {
-    if (trim(as_string(fs.readfile(SB_VARIANT_STATE_FILE))) == "extended-compressed") {
-        let version_state = trim(as_string(fs.readfile(SB_VERSION_STATE_FILE)));
-        if (version_state != "")
-            return version_state;
-    }
-
-    if (!command_success_from_args([ "sh", "-c", "command -v sing-box" ]))
-        return "";
-
-    return sing_box_version_from_output(command_output_from_args([ "sing-box", "version" ]));
-}
-
-let default_subscription_user_agent = null;
-
-function get_subscription_user_agent(custom_user_agent) {
-    custom_user_agent = as_string(custom_user_agent);
-    if (custom_user_agent != "")
-        return custom_user_agent;
-
-    if (default_subscription_user_agent != null)
-        return default_subscription_user_agent;
-    let version = get_sing_box_version();
-    // Cache successful detection only within an operation. An unavailable core
-    // may become available on a later bootstrap attempt and must be retried.
-    if (version != "")
-        default_subscription_user_agent = "sing-box/" + version;
-    return version != "" ? default_subscription_user_agent : "sing-box/unknown";
-}
-
-function user_agent_candidates(configured_user_agent, preferred_user_agent, default_user_agent) {
-    configured_user_agent = as_string(configured_user_agent);
-    if (configured_user_agent != "")
-        return [ configured_user_agent ];
-
-    let result = [];
-    let seen = {};
-    let candidates = [ auto_user_agent_profiles[0], preferred_user_agent, default_user_agent ];
-    for (let profile in auto_user_agent_profiles)
-        push(candidates, profile);
-
-    for (let candidate in candidates) {
-        candidate = as_string(candidate);
-        if (user_agent_supported(candidate, default_user_agent) && !seen[candidate]) {
-            seen[candidate] = true;
-            push(result, candidate);
-        }
-    }
-
-    return result;
-}
-
 function get_subscription_hwid(custom_hwid) {
     custom_hwid = as_string(custom_hwid);
     return custom_hwid != "" ? custom_hwid : generate_hwid();
@@ -1327,8 +1257,11 @@ function subscription_url_port(url) {
     return core_url.scheme(url) == "http" ? "80" : "443";
 }
 
-function bootstrap_lookup_address(host, server) {
-    let output = command_output_from_args([ "nslookup", host, server ]);
+function bootstrap_lookup_address(host, server, remaining, bounded) {
+    let args = [ "nslookup", host, server ];
+    if (bounded)
+        args = [ "timeout", "-s", "KILL", as_string(remaining), ...args ];
+    let output = command_output_from_args(args);
     let name_seen = false;
     for (let line in split(output, "\n")) {
         line = trim(as_string(line));
@@ -1349,14 +1282,18 @@ function bootstrap_lookup_address(host, server) {
     return "";
 }
 
-function bootstrap_resolve_subscription_host(url) {
+function bootstrap_resolve_subscription_host(url, deadline) {
     let host = subscription_url_host(url);
     if (host == "" || core_ip.valid_ip(host))
         return null;
 
+    let bounded = command_success_from_args([ "command", "-v", "timeout" ]);
     for (let server in bootstrap_dns_servers()) {
+        let remaining = deadline - int(clock(true)[0]);
+        if (remaining <= 0)
+            break;
         log_message("Resolving subscription host via bootstrap DNS", "info");
-        let address = bootstrap_lookup_address(host, server);
+        let address = bootstrap_lookup_address(host, server, remaining, bounded);
         if (address != "") {
             log_message("Bootstrap DNS " + server + " resolved " + host + " -> " + address, "info");
             return { host, port: subscription_url_port(url), address };
@@ -1370,18 +1307,21 @@ function curl_resolve_address(address) {
     return core_ip.ip_family(address) == 6 ? "[" + address + "]" : address;
 }
 
-function subscription_curl_args(url, filepath, http_proxy_address, headers_filepath, effective_user_agent, effective_hwid, resolve, options) {
+function subscription_curl_args(url, filepath, http_proxy_address, headers_filepath, effective_hwid, resolve, options) {
     options = object_or_empty(options);
     let args = [
         "curl", "-f", "-sS",
         "--connect-timeout", "15",
         "--speed-time", "15",
-        "--speed-limit", "1"
+        "--speed-limit", "1",
+        "--max-time", as_string(options.timeout),
+        "--max-filesize", as_string(options.max_bytes)
     ];
 
     if (http_proxy_address != "") {
         push(args, "-x");
         push(args, "http://" + http_proxy_address);
+        push(args, "--noproxy", "");
     }
     if (headers_filepath != "") {
         push(args, "-D");
@@ -1395,7 +1335,7 @@ function subscription_curl_args(url, filepath, http_proxy_address, headers_filep
     push(args, "-o");
     push(args, filepath);
     let headers = [
-        "User-Agent: " + get_subscription_user_agent(effective_user_agent),
+        "User-Agent: " + SUBSCRIPTION_USER_AGENT,
         "X-HWID: " + get_subscription_hwid(effective_hwid),
         "X-Device-OS: OpenWrt Linux",
         "X-Device-Model: " + get_device_model(),
@@ -1408,12 +1348,10 @@ function subscription_curl_args(url, filepath, http_proxy_address, headers_filep
         for (let header in headers)
             config += "header = " + sprintf("%J", header) + "\n";
         if (!write_file(options.config_path, config))
-            die("Cannot prepare private subscription request\n");
+            return null;
         push(args, "--config", options.config_path);
-        if (http_proxy_address != "")
-            push(args, "--noproxy", "");
-        push(args, "--location", "--proto", "=http,https", "--proto-redir", "=http,https",
-            "--max-time", "20", "--max-filesize", "4194304");
+        if (options.preview)
+            push(args, "--location", "--proto", "=http,https", "--proto-redir", "=http,https");
     }
     else {
         for (let header in headers) {
@@ -1425,8 +1363,22 @@ function subscription_curl_args(url, filepath, http_proxy_address, headers_filep
     return args;
 }
 
-function download_subscription(url, filepath, http_proxy_address, headers_filepath, effective_user_agent, effective_hwid, options) {
-    let retries = options?.config_path ? 1 : 3;
+function run_subscription_curl(args, max_bytes) {
+    if (args == null)
+        return 1;
+    // BusyBox sh counts 512-byte blocks. Keep streaming file output bounded
+    // even with older curl versions and an unknown response length.
+    let status = int(system("umask 077; ulimit -f " + int(max_bytes / 512) +
+        " && " + command_from_args(args) + " 2>/dev/null"));
+    return status > 255 ? int(status / 256) : status;
+}
+
+function download_subscription(url, filepath, http_proxy_address, headers_filepath, effective_hwid, options) {
+    options = object_or_empty(options);
+    options.max_bytes = options.preview ? SUBSCRIPTION_PREVIEW_MAX_BYTES : SUBSCRIPTION_DOWNLOAD_MAX_BYTES;
+    // The retries, pauses and bootstrap fallback share this per-source budget.
+    let deadline = int(clock(true)[0]) + (options.preview ? SUBSCRIPTION_ATTEMPT_SECONDS : SUBSCRIPTION_DOWNLOAD_SECONDS);
+    let retries = options.preview ? 1 : 3;
     let wait_seconds = 2;
     let stamp = clock();
     let suffix = sprintf(".part.%d.%d", stamp[0], stamp[1]);
@@ -1439,16 +1391,22 @@ function download_subscription(url, filepath, http_proxy_address, headers_filepa
         unlink_path(headers_tmpfile);
 
     for (let attempt = 1; attempt <= retries; attempt++) {
-        let status = command_status_from_args(subscription_curl_args(
-            url, tmpfile, http_proxy_address, headers_tmpfile, effective_user_agent, effective_hwid, null, options
-        ));
+        let remaining = deadline - int(clock(true)[0]);
+        if (remaining <= 0)
+            break;
+        options.timeout = remaining < SUBSCRIPTION_ATTEMPT_SECONDS ? remaining : SUBSCRIPTION_ATTEMPT_SECONDS;
+        let status = run_subscription_curl(subscription_curl_args(
+            url, tmpfile, http_proxy_address, headers_tmpfile, effective_hwid, null, options
+        ), options.max_bytes);
         if (status == 6) {
-            let resolved = bootstrap_resolve_subscription_host(url);
-            if (resolved != null) {
+            let resolved = bootstrap_resolve_subscription_host(url, deadline);
+            remaining = deadline - int(clock(true)[0]);
+            if (resolved != null && remaining > 0) {
+                options.timeout = remaining < SUBSCRIPTION_ATTEMPT_SECONDS ? remaining : SUBSCRIPTION_ATTEMPT_SECONDS;
                 log_message("Downloading subscription using bootstrap-resolved address", "info");
-                status = command_status_from_args(subscription_curl_args(
-                    url, tmpfile, http_proxy_address, headers_tmpfile, effective_user_agent, effective_hwid, resolved, options
-                ));
+                status = run_subscription_curl(subscription_curl_args(
+                    url, tmpfile, http_proxy_address, headers_tmpfile, effective_hwid, resolved, options
+                ), options.max_bytes);
             }
         }
         if (status == 0 && file_nonempty(tmpfile)) {
@@ -1472,7 +1430,7 @@ function download_subscription(url, filepath, http_proxy_address, headers_filepa
             break;
         }
 
-        if (attempt < retries)
+        if (attempt < retries && deadline - int(clock(true)[0]) > wait_seconds)
             system("sleep " + int(wait_seconds));
     }
 
@@ -1489,59 +1447,50 @@ function write_source_metadata_output(metadata, metadata_output_path) {
         unlink_path(metadata_output_path);
 }
 
-function subscription_config_is_current(section_name_value, subscription_url, subscription_user_agent, subscription_hwid, sections) {
-    let section = find_section(sections, section_name_value);
-    for (let entry in connections.subscription_urls(section)) {
-        let parsed = subscription_source_profile(section, entry);
-        if (type(parsed) == "object" && parsed.valid === true &&
-            as_string(parsed.url) == as_string(subscription_url) &&
-            as_string(parsed.user_agent) == as_string(subscription_user_agent) &&
-            as_string(parsed.hwid) == as_string(subscription_hwid))
-            return true;
-    }
-
-    return false;
+function subscription_config_is_current(section_name_value, source_index, expected) {
+    if (!uci_core.reload(CONFIG_NAME))
+        return false;
+    connections.reload_item_sections();
+    let section = uci_named_section(section_name_value);
+    if (!section_is_subscription_proxy(section))
+        return false;
+    let entry = connections.subscription_urls(section)[source_index - 1];
+    let current = entry == null ? null : subscription_source_profile(section, entry);
+    return current?.valid === true && current.url == expected.url &&
+        current.user_agent == expected.user_agent && current.hwid == expected.hwid &&
+        current.download_section == expected.download_section;
 }
 
-function get_subscription_download_proxy_address(section_name_value, sections, parsed, phase) {
+function get_subscription_download_proxy_address(section_name_value, parsed, phase) {
     let download_section = as_string(object_or_empty(parsed).download_section);
-    if (phase == "preview" && download_section != "") {
-        if (!sing_box_service_running())
-            return null;
-        // Use the active config, not prospective UCI port ordering. Editing
-        // sources must never send a request through a different section.
-        let config = read_json(as_string(uci_named_section("settings").config_path));
-        let tags = require("singbox.constants");
-        let tag = tags.inbound_tag("service-subscription-" + download_section);
-        for (let inbound in config?.inbounds || []) {
-            if (inbound.tag != tag || inbound.type != "mixed" ||
-                inbound.listen != SB_SERVICE_MIXED_INBOUND_ADDRESS || int(inbound.listen_port) <= 0)
-                continue;
-            for (let rule in config?.route?.rules || [])
-                if ((rule.inbound == tag || (type(rule.inbound) == "array" && length(rule.inbound) == 1 &&
-                    rule.inbound[0] == tag)) && rule.outbound == tags.outbound_tag(download_section))
-                    return inbound.listen + ":" + int(inbound.listen_port);
-        }
-        return null;
-    }
-    if (download_section == "" || download_section == as_string(section_name_value))
-        return "";
-
-    let port = connections.subscription_download_target_port(sections, download_section, int(SB_SERVICE_MIXED_INBOUND_PORT));
-    if (port <= 0)
+    if (download_section == "")
         return "";
 
     if (!sing_box_service_running()) {
-        if (phase == "startup")
-            log_message("Subscription source for rule '" + section_name_value + "' is configured to download via rule '" + download_section + "', but sing-box is not running yet; downloading it directly during startup", "warn");
-        else
-            log_message("Subscription source for rule '" + section_name_value + "' is configured to download via rule '" + download_section + "', but sing-box service proxy is not running; downloading it directly", "warn");
+        if (phase != "startup")
+            return null;
+        log_message("Subscription source for rule '" + section_name_value + "' is configured to download via rule '" + download_section + "', but Xrust is not running yet; downloading it directly during startup", "warn");
         return "";
     }
 
-    let address = SB_SERVICE_MIXED_INBOUND_ADDRESS + ":" + as_string(port);
-    log_message("Downloading subscription for rule '" + section_name_value + "' via service proxy " + address, "debug");
-    return address;
+    // UCI may already contain a new file path or a different order of proxy
+    // sections. Use the listener and its route in the applied core config.
+    let config = read_json(file_first_line_value(xrust.APPLIED_CONFIG_PATH_FILE));
+    let tag = xrust_tags.inbound_tag("service-subscription-" + download_section);
+    for (let inbound in config?.inbounds || []) {
+        let port = int(inbound.listen_port);
+        if (inbound.tag != tag || inbound.type != "mixed" ||
+            inbound.listen != SB_SERVICE_MIXED_INBOUND_ADDRESS || port <= 0 || port > 65535)
+            continue;
+        for (let rule in config?.route?.rules || [])
+            if ((rule.inbound == tag || (type(rule.inbound) == "array" && length(rule.inbound) == 1 &&
+                rule.inbound[0] == tag)) && rule.outbound == xrust_tags.outbound_tag(download_section)) {
+                let address = inbound.listen + ":" + port;
+                log_message("Downloading subscription for rule '" + section_name_value + "' via service proxy " + address, "debug");
+                return address;
+            }
+    }
+    return null;
 }
 
 // Draft-only download: reuse request profiles, bootstrap DNS, curl and parser
@@ -1556,185 +1505,156 @@ function editor_download_source(request_path, prefix) {
     let download_section = source.download_via_proxy_enabled == "1" ? as_string(source.download_via_proxy_section) : "";
     if (source.download_via_proxy_enabled == "1" && download_section == "")
         return { error: "Select a subscription download proxy section" };
-    let proxy = get_subscription_download_proxy_address(as_string(input.section), uci_sections(), { download_section }, "preview");
+    // Keep the selected listener's routing stable until curl is finished.
+    // Plain direct previews do not need an Xrust runtime lock.
+    let proxy_requested = download_section != "";
+    let pid = split(fs.readfile("/proc/self/stat") || "", " ")[0];
+    if (proxy_requested && !locks.acquire(RELOAD_LOCK_DIR, pid))
+        return { error: "Forkop is applying settings; retry the proxy preview after it finishes" };
+    let proxy = get_subscription_download_proxy_address(as_string(input.section), { download_section }, "preview");
+    let hwid = get_subscription_hwid("");
+    let downloaded = proxy != null && download_subscription(url, prefix + ".body", proxy, prefix + ".headers", hwid,
+        { config_path: prefix + ".curl", preview: true }) == 0;
+    if (proxy_requested) {
+        locks.release(RELOAD_LOCK_DIR);
+        if (fs.stat(FORKOP_PENDING_RELOAD_FILE) != null)
+            command_success_from_args([ "ucode", "-L", LIB_DIR, LIB_DIR + "/service/state.uc",
+                "run-pending-reload-if-requested", FORKOP_PENDING_RELOAD_FILE, FORKOP_SERVICE_INIT ]);
+    }
     if (proxy == null)
         return { error: "Selected proxy section is unavailable in the running configuration; direct download was not attempted" };
-    let parser = subscription_parser();
-    let hwid = get_subscription_hwid("");
-    for (let ua in user_agent_candidates("", "", get_subscription_user_agent(""))) {
-        if (download_subscription(url, prefix + ".body", proxy, prefix + ".headers", ua, hwid,
-            { config_path: prefix + ".curl" }) != 0)
-            continue;
+    if (downloaded) {
+        let parser = subscription_parser();
         parser.try_decode_gzip_content_file(prefix + ".body");
         if (parser.normalize_content_validated(prefix + ".body", prefix + ".json"))
-            return { user_agent: ua, hwid };
+            return { user_agent: SUBSCRIPTION_USER_AGENT, hwid };
     }
     return { error: "Subscription download failed or returned an invalid response" };
 }
 
-function download_subscription_into_cache(section_name_value, subscription_url, subscription_json_path, service_proxy_address_value, subscription_user_agent, subscription_hwid, source_index, cache_section, metadata_output_path, sections) {
+function download_subscription_into_cache(section_name_value, parsed, proxy, source_index, cache_section, metadata_output_path) {
+    if (proxy == null) {
+        log_message("Selected subscription download proxy is unavailable for rule '" + section_name_value + "'", "warn");
+        return 1;
+    }
     ensure_dir(TMP_SUBSCRIPTION_FOLDER);
+    let subscription_json_path = source_json_path(TMP_SUBSCRIPTION_FOLDER, cache_section);
     let raw_tmpfile = temp_path(TMP_SUBSCRIPTION_FOLDER, cache_section, "download");
     let headers_tmpfile = temp_path(TMP_SUBSCRIPTION_FOLDER, cache_section, "headers");
     let normalized_tmpfile = temp_path(TMP_SUBSCRIPTION_FOLDER, cache_section, "normalized");
     let metadata_tmpfile = temp_path(TMP_SUBSCRIPTION_FOLDER, cache_section, "metadata");
     let previous = source_cache.read(TMP_SUBSCRIPTION_FOLDER, cache_section);
-    let cached_user_agent = previous.profile.user_agent;
-    let default_user_agent = get_subscription_user_agent("");
     let parser = subscription_parser();
-
-    let attempt_index = 0;
-    for (let effective_user_agent in user_agent_candidates(subscription_user_agent, cached_user_agent, default_user_agent)) {
-        attempt_index++;
-        unlink_path(raw_tmpfile);
-        unlink_path(headers_tmpfile);
-        unlink_path(normalized_tmpfile);
-        unlink_path(metadata_tmpfile);
-
-        let effective_hwid = get_subscription_hwid(subscription_hwid);
-        let download_status = download_subscription(subscription_url, raw_tmpfile, service_proxy_address_value, headers_tmpfile, effective_user_agent, effective_hwid);
-        if (download_status != 0) {
-            if (metadata_output_path != "")
-                unlink_path(metadata_output_path);
-            if (download_status == 6) {
-                log_message("Subscription download failed for rule '" + section_name_value + "' because the subscription host could not be resolved; compatibility retries skipped", "warn");
-                break;
-            }
-            else if (subscription_user_agent != "")
-                log_message("Subscription download failed for rule '" + section_name_value + "' with the configured request profile", "warn");
-            else
-                log_message("Subscription download attempt " + attempt_index + " failed for rule '" + section_name_value + "'; trying another compatibility profile", "warn");
-            continue;
-        }
-
+    let effective_hwid = get_subscription_hwid(parsed.hwid);
+    let curl_config = raw_tmpfile + ".curl";
+    let download_status = download_subscription(parsed.url, raw_tmpfile, proxy, headers_tmpfile, effective_hwid,
+        { config_path: curl_config });
+    unlink_path(curl_config);
+    if (download_status == 0) {
         if (parser.try_decode_gzip_content_file(raw_tmpfile))
             log_message("Decoded gzip-compressed subscription body for rule '" + section_name_value + "'", "info");
-
         parser.extract_ui_metadata_file(headers_tmpfile, raw_tmpfile, metadata_tmpfile) || unlink_path(metadata_tmpfile);
+    }
 
-        if (!parser.normalize_content_validated(raw_tmpfile, normalized_tmpfile)) {
-            if (metadata_output_path != "")
-                unlink_path(metadata_output_path);
-            if (subscription_user_agent != "")
-                log_message("Downloaded subscription for rule '" + section_name_value + "' is invalid with the configured request profile", "error");
-            else
-                log_message("Downloaded subscription for rule '" + section_name_value + "' is invalid; trying another compatibility profile", "warn");
-            continue;
-        }
-
-        if (!subscription_share_link.populate_subscription_file(normalized_tmpfile))
-            log_message("Failed to cache direct proxy links for subscription rule '" + section_name_value + "'", "warn");
-
-        if (!subscription_config_is_current(section_name_value, subscription_url, subscription_user_agent, subscription_hwid, sections)) {
-            log_message("Subscription source settings changed while updating rule '" + section_name_value + "'; discarding superseded download", "warn");
-            if (metadata_output_path != "")
-                unlink_path(metadata_output_path);
-            unlink_path(raw_tmpfile);
-            unlink_path(headers_tmpfile);
-            unlink_path(normalized_tmpfile);
-            unlink_path(metadata_tmpfile);
-            return 4;
-        }
-
-        // Keep legacy name selections attached to the same connection across
-        // renames. This metadata is persisted together with the working feed.
-        if (!filter_identity.preserve_file(subscription_json_path, normalized_tmpfile)) {
-            unlink_path(raw_tmpfile);
-            unlink_path(headers_tmpfile);
-            unlink_path(normalized_tmpfile);
-            unlink_path(metadata_tmpfile);
-            return 1;
-        }
-
-        // Preserve the applied order if only provider metadata or order changed.
-        let unchanged = previous.payload != null && parser.runtime_outbounds_equal(normalized_tmpfile, subscription_json_path);
-        let payload = unchanged ? previous.payload : read_json(normalized_tmpfile);
-        let profile = { url: subscription_url, user_agent: effective_user_agent, hwid: effective_hwid, metadata: null };
-        let metadata = read_json(metadata_tmpfile);
-        if (valid_metadata_object(metadata))
-            profile.metadata = metadata;
-        else if (source_cache.same_profile(profile, previous.profile))
-            profile.metadata = cached_source_metadata(cache_section);
-        else {
-            let persistent = source_cache.read(FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR, cache_section);
-            if (source_cache.same_profile(profile, persistent.profile))
-                profile.metadata = persistent.profile.metadata;
-        }
+    if (download_status != 0 || !parser.normalize_content_validated(raw_tmpfile, normalized_tmpfile)) {
+        if (metadata_output_path != "")
+            unlink_path(metadata_output_path);
         unlink_path(raw_tmpfile);
         unlink_path(headers_tmpfile);
         unlink_path(normalized_tmpfile);
         unlink_path(metadata_tmpfile);
-        if (!source_cache.publish(subscription_json_path, payload, profile)) {
-            if (metadata_output_path != "")
-                unlink_path(metadata_output_path);
-            return 1;
-        }
-
-        persist_subscription_cache(cache_section, { payload, profile }) ||
-            log_message("Failed to persist last working subscription cache for source '" + cache_section + "'", "warn");
-        write_source_metadata_output(profile.metadata, metadata_output_path);
-        log_subscription_source_summary(section_name_value, source_index, subscription_json_path, unchanged ? "runtime-unchanged" : "imported");
-        return unchanged ? 2 : 0;
+        let reason = download_status == 6 ? "subscription host could not be resolved" :
+            download_status != 0 ? "download failed" : "response did not contain valid proxy entries";
+        log_message("INCY subscription for rule '" + section_name_value + "': " + reason, "warn");
+        return 1;
     }
 
-    if (metadata_output_path != "")
-        unlink_path(metadata_output_path);
+    if (!subscription_share_link.populate_subscription_file(normalized_tmpfile))
+        log_message("Failed to cache direct proxy links for subscription rule '" + section_name_value + "'", "warn");
+
+    // Keep legacy name selections attached to the same connection across
+    // renames. This metadata is persisted together with the working feed.
+    if (!filter_identity.preserve_file(subscription_json_path, normalized_tmpfile)) {
+        unlink_path(raw_tmpfile);
+        unlink_path(headers_tmpfile);
+        unlink_path(normalized_tmpfile);
+        unlink_path(metadata_tmpfile);
+        return 1;
+    }
+
+    // Preserve the applied order if only provider metadata or order changed.
+    let unchanged = previous.payload != null && parser.runtime_outbounds_equal(normalized_tmpfile, subscription_json_path);
+    let payload = unchanged ? previous.payload : read_json(normalized_tmpfile);
+    let profile = { url: parsed.url, user_agent: SUBSCRIPTION_USER_AGENT, hwid: effective_hwid, metadata: null };
+    let metadata = read_json(metadata_tmpfile);
+    if (valid_metadata_object(metadata))
+        profile.metadata = metadata;
+    else if (source_cache.same_profile(profile, previous.profile))
+        profile.metadata = cached_source_metadata(cache_section);
+    else {
+        let persistent = source_cache.read(FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR, cache_section);
+        if (source_cache.same_profile(profile, persistent.profile))
+            profile.metadata = persistent.profile.metadata;
+    }
     unlink_path(raw_tmpfile);
     unlink_path(headers_tmpfile);
     unlink_path(normalized_tmpfile);
     unlink_path(metadata_tmpfile);
-    if (subscription_user_agent != "")
-        log_message("Configured subscription request profile for rule '" + section_name_value + "' did not produce valid proxy entries", "error");
-    else
-        log_message("No compatible subscription request profile produced valid proxy entries for rule '" + section_name_value + "'", "error");
-    return 1;
+    if (!subscription_config_is_current(section_name_value, source_index, parsed)) {
+        log_message("Subscription source settings changed while updating rule '" + section_name_value + "'; discarding superseded download", "warn");
+        if (metadata_output_path != "")
+            unlink_path(metadata_output_path);
+        return 4;
+    }
+    if (!source_cache.publish(subscription_json_path, payload, profile)) {
+        if (metadata_output_path != "")
+            unlink_path(metadata_output_path);
+        return 1;
+    }
+
+    persist_subscription_cache(cache_section, { payload, profile }) ||
+        log_message("Failed to persist last working subscription cache for source '" + cache_section + "'", "warn");
+    write_source_metadata_output(profile.metadata, metadata_output_path);
+    log_subscription_source_summary(section_name_value, source_index, subscription_json_path, unchanged ? "runtime-unchanged" : "imported");
+    return unchanged ? 2 : 0;
 }
 
-function cached_source_status(source_section, parsed) {
-    restore_persistent_subscription_cache(
+function ensure_current_subscription_cache(source_section, parsed) {
+    if (restore_persistent_subscription_cache(
         source_section,
         TMP_SUBSCRIPTION_FOLDER,
         FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR,
         parsed.url,
         parsed.user_agent,
         parsed.hwid,
-        get_subscription_user_agent("")
-    );
+        SUBSCRIPTION_USER_AGENT
+    ))
+        return true;
 
     let json_path = source_json_path(TMP_SUBSCRIPTION_FOLDER, source_section);
     let record = source_cache.read(TMP_SUBSCRIPTION_FOLDER, source_section);
-    let had_usable_cache = subscription_parser().validate_subscription_value(record.payload);
-    if (!had_usable_cache)
+    // If a repair could not be published, a previously usable cache remains
+    // eligible as long as its source identity still matches.
+    if (!subscription_parser().validate_subscription_value(record.payload)) {
         unlink_path(json_path);
-
-    if (had_usable_cache &&
-        !source_cache_profile_matches(parsed, record.profile, get_subscription_user_agent(""))) {
-        remove_subscription_source_runtime_cache(source_section);
-        return {
-            usable: false,
-            current: false,
-            cached_url: "",
-            cached_user_agent: "",
-            cached_hwid: ""
-        };
+        return false;
     }
-
-    return {
-        usable: had_usable_cache,
-        current: had_usable_cache,
-        cached_url: record.profile.url,
-        cached_user_agent: record.profile.user_agent,
-        cached_hwid: record.profile.hwid
-    };
+    if (!source_cache_profile_matches(parsed, record.profile, SUBSCRIPTION_USER_AGENT)) {
+        remove_subscription_source_runtime_cache(source_section);
+        return false;
+    }
+    return true;
 }
 
 function update_subscription_source(section_name_value, index_value, entry, phase, metadata_output_path) {
-    default_subscription_user_agent = null;
     ensure_runtime_dirs();
-    let sections = uci_sections();
-    let settings = uci_named_section("settings");
     let index = int(index_value || 0);
-    let section = find_section(sections, section_name_value);
+    if (!uci_core.reload(CONFIG_NAME))
+        return 1;
+    connections.reload_item_sections();
+    let section = uci_named_section(section_name_value);
+    if (!section_is_subscription_proxy(section) || connections.subscription_urls(section)[index - 1] != entry)
+        return 4;
     let parsed = subscription_source_profile(section, entry);
     if (type(parsed) != "object" || parsed.valid !== true) {
         log_message("Invalid subscription URL in rule '" + section_name_value + "': " + as_string(parsed.error || "Invalid subscription source entry"), "error");
@@ -1742,24 +1662,11 @@ function update_subscription_source(section_name_value, index_value, entry, phas
     }
 
     let source_section = source_id(section_name_value, index);
-    let status = cached_source_status(source_section, parsed);
-    if (status.usable && !status.current) {
-        log_message("Discarding stale subscription cache for rule '" + section_name_value + "' source '" + index + "' because source settings changed", "info");
-        remove_subscription_source_runtime_cache(source_section);
-    }
+    ensure_current_subscription_cache(source_section, parsed);
 
-    let proxy = get_subscription_download_proxy_address(section_name_value, sections, parsed, phase || "runtime");
+    let proxy = get_subscription_download_proxy_address(section_name_value, parsed, phase || "runtime");
     return download_subscription_into_cache(
-        section_name_value,
-        parsed.url,
-        source_json_path(TMP_SUBSCRIPTION_FOLDER, source_section),
-        proxy,
-        parsed.user_agent,
-        parsed.hwid,
-        index,
-        source_section,
-        as_string(metadata_output_path),
-        sections
+        section_name_value, parsed, proxy, index, source_section, as_string(metadata_output_path)
     );
 }
 
@@ -2069,8 +1976,7 @@ function ensure_subscription_source_for_prepare(state, section, source_index, en
     }
 
     let source_section = source_id(section_name_value, source_index);
-    let cached = cached_source_status(source_section, parsed);
-    if (cached.usable && cached.current) {
+    if (ensure_current_subscription_cache(source_section, parsed)) {
         append_available_cached_metadata(metadata_tmpfile, section_name_value, source_index, source_section);
         return true;
     }
@@ -2081,18 +1987,9 @@ function ensure_subscription_source_for_prepare(state, section, source_index, en
     }
 
     let metadata_output_path = metadata_tmpfile != "" ? temp_path(TMP_SUBSCRIPTION_FOLDER, source_section, "metadata-output") : "";
-    let proxy = get_subscription_download_proxy_address(section_name_value, state.sections, parsed, state.phase);
+    let proxy = get_subscription_download_proxy_address(section_name_value, parsed, state.phase);
     let update_result = download_subscription_into_cache(
-        section_name_value,
-        parsed.url,
-        source_json_path(TMP_SUBSCRIPTION_FOLDER, source_section),
-        proxy,
-        parsed.user_agent,
-        parsed.hwid,
-        source_index,
-        source_section,
-        metadata_output_path,
-        state.sections
+        section_name_value, parsed, proxy, source_index, source_section, metadata_output_path
     );
 
     if (update_result == 0 || update_result == 2) {
@@ -2102,12 +1999,6 @@ function ensure_subscription_source_for_prepare(state, section, source_index, en
     }
 
     unlink_path(metadata_output_path);
-
-    if (cached.usable && cached.current) {
-        log_message("Keeping cached subscription for rule '" + section_name_value + "' until a fresh download succeeds", "warn");
-        append_available_cached_metadata(metadata_tmpfile, section_name_value, source_index, source_section);
-        return true;
-    }
 
     log_message("No usable subscription cache for rule '" + section_name_value + "'", "warn");
     return false;
@@ -2188,7 +2079,7 @@ function recover_subscription_sources_for_sections(sections) {
             if (type(parsed) == "object" && parsed.valid === true)
                 restore_persistent_subscription_cache(source_id(section_name(section), index_value),
                     TMP_SUBSCRIPTION_FOLDER, FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR,
-                    parsed.url, parsed.user_agent, parsed.hwid, get_subscription_user_agent(""));
+                    parsed.url, parsed.user_agent, parsed.hwid, SUBSCRIPTION_USER_AGENT);
         }
     }
 }
@@ -2205,7 +2096,7 @@ function persist_recovered_subscription_sources(sections) {
             let record = source_cache.read(TMP_SUBSCRIPTION_FOLDER, source);
             if (type(parsed) != "object" || parsed.valid !== true ||
                 !source_cache_matches_profile(record, parsed.url,
-                    parsed.user_agent, parsed.hwid, get_subscription_user_agent("")))
+                    parsed.user_agent, parsed.hwid, SUBSCRIPTION_USER_AGENT))
                 continue;
             if (!persist_subscription_cache(source, record)) {
                 log_message("Failed to persist relocated subscription cache for source '" + source + "'", "warn");
@@ -2217,7 +2108,6 @@ function persist_recovered_subscription_sources(sections) {
 }
 
 function prepare_subscription_caches(phase, already_prepared, no_refresh) {
-    default_subscription_user_agent = null;
     phase = as_string(phase || "startup");
     let sections = uci_sections();
 
@@ -2252,7 +2142,7 @@ function prepare_subscription_caches(phase, already_prepared, no_refresh) {
         return 0;
     }
 
-    if (phase == "startup" && subscription_bootstrap_download_section_is_ready(sections, state.startup_blocked_sections, get_subscription_user_agent(""))) {
+    if (phase == "startup" && subscription_bootstrap_download_section_is_ready(sections, state.startup_blocked_sections, SUBSCRIPTION_USER_AGENT)) {
         log_message("Starting temporarily without subscription-only rule(s): " + state.startup_blocked_sections + ". They will be retried through the service proxy after sing-box starts", "warn");
         print(state.startup_blocked_sections, "\n");
         return 0;
@@ -2289,9 +2179,8 @@ function trigger_subscription_recovery_reload(worker) {
 }
 
 function subscription_bootstrap_retry_result(deferred_sections) {
-    default_subscription_user_agent = null;
     let sections = uci_sections();
-    let default_user_agent = get_subscription_user_agent("");
+    let default_user_agent = SUBSCRIPTION_USER_AGENT;
     let result = {
         recovered: "",
         remaining: ""
@@ -2348,9 +2237,7 @@ function worker_env() {
         FORKOP_PENDING_RELOAD_FILE,
         FORKOP_SERVICE_INIT,
         SB_SERVICE_MIXED_INBOUND_ADDRESS,
-        SB_SERVICE_MIXED_INBOUND_PORT,
-        SB_VARIANT_STATE_FILE,
-        SB_VERSION_STATE_FILE
+        SB_SERVICE_MIXED_INBOUND_PORT
     };
 }
 
@@ -2506,7 +2393,7 @@ else if (mode == "editor-download-source") {
     exit(write_json(ARGV[2] + ".profile.json", editor_download_source(ARGV[1], ARGV[2])) ? 0 : 1);
 }
 else if (mode == "download-subscription-fixture") {
-    exit(download_subscription(ARGV[1], ARGV[2], ARGV[3] || "", ARGV[4] || "", ARGV[5] || "", ARGV[6] || ""));
+    exit(download_subscription(ARGV[1], ARGV[2], ARGV[3] || "", ARGV[4] || "", ARGV[6] || ""));
 }
 else if (mode == "write-outbound-metadata") {
     let cache_dir = ARGV[1], format_version = ARGV[2], section = ARGV[3];

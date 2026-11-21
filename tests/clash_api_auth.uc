@@ -17,7 +17,7 @@ function expect(value, message) {
 function quote(value) { return "'" + replace("" + value, /'/g, "'\\''") + "'"; }
 
 // The secret the generator writes, from its own clash_api_config.
-let source = fs.readfile(lib + "/singbox/generator.uc");
+let source = fs.readfile(lib + "/xrust/generator.uc");
 let start = index(source, "function clash_api_config(");
 if (!expect(start >= 0, "generator clash_api_config exists"))
     die("generator clash_api_config not found\n");

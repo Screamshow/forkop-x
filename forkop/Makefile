@@ -31,7 +31,7 @@ define Package/forkop
 endef
 
 define Package/forkop/description
-	Rule-based Forkop backend with sing-box orchestration
+	Rule-based Forkop backend with Xrust orchestration
 endef
 
 define Build/Configure
@@ -67,6 +67,7 @@ endef
 define Package/forkop/install
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/etc/init.d/forkop $(1)/etc/init.d/forkop
+	$(INSTALL_BIN) ./files/etc/init.d/forkop-xrust $(1)/etc/init.d/forkop-xrust
 	$(INSTALL_BIN) ./files/etc/init.d/forkop-support $(1)/etc/init.d/forkop-support
 	$(INSTALL_BIN) ./files/etc/init.d/forkop-tailscale $(1)/etc/init.d/forkop-tailscale
 	$(INSTALL_BIN) ./files/etc/init.d/forkop-torrserver-direct $(1)/etc/init.d/forkop-torrserver-direct
@@ -89,6 +90,7 @@ define Package/forkop/install
 	$(INSTALL_BIN) ./files/usr/share/forkop/zapret-manager-migrate.sh $(1)/usr/share/forkop/zapret-manager-migrate.sh
 	$(INSTALL_BIN) ./files/usr/share/forkop/mirror-migration.sh $(1)/usr/share/forkop/mirror-migration.sh
 	$(INSTALL_BIN) ./files/usr/share/forkop/package-init $(1)/usr/share/forkop/package-init
+	$(INSTALL_BIN) ./files/usr/share/forkop/upgrade-recovery $(1)/usr/share/forkop/upgrade-recovery
 
 	sed -i -e 's/__COMPILED_VERSION_VARIABLE__/$(FORKOP_COMPILED_VERSION)/g' $(1)/usr/lib/forkop/core/constants.uc
 endef

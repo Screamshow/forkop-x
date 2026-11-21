@@ -4,7 +4,7 @@ let fs = require("fs");
 let uci_core = require("core.uci");
 let common = require("core.common");
 let core_ip = require("core.ip");
-let runtime_dns = require("singbox.dns");
+let runtime_dns = require("xrust.dns");
 let connections = require("config.connections");
 let worker_identity = require("core.worker_identity");
 let runtime_health = require("core.runtime_health");
@@ -15,7 +15,7 @@ const RUNTIME_STATE_DIR = getenv("FORKOP_RUNTIME_STATE_DIR") || "/var/run/forkop
 const STATE_FILE = getenv("FORKOP_DNS_FAILOVER_STATE_FILE") || RUNTIME_STATE_DIR + "/dns-failover.json";
 const SECTION_CACHE_DIR = getenv("FORKOP_SECTION_CACHE_DIR") || RUNTIME_STATE_DIR + "/section-cache";
 const PID_FILE = getenv("FORKOP_DNS_FAILOVER_PID_FILE") || RUNTIME_STATE_DIR + "/dns-failover.pid";
-const DNS_FAILOVER_UC = getenv("FORKOP_DNS_FAILOVER_UC") || LIB_DIR + "/singbox/dns_failover.uc";
+const DNS_FAILOVER_UC = getenv("FORKOP_DNS_FAILOVER_UC") || LIB_DIR + "/xrust/dns_failover.uc";
 const SERVICE_BIN = getenv("FORKOP_BIN") || "/usr/bin/forkop";
 const CHECK_DOMAIN = "example.com";
 const STATE_UC = LIB_DIR + "/service/state.uc";
@@ -485,6 +485,6 @@ else if (mode == "select-fixture")
 else if (mode == "verification-plan-fixture")
     common.write_json(verification_plan(common.read_json_file(ARGV[1]), common.read_json_file(ARGV[2])));
 else {
-    warn("Usage: singbox/dns_failover.uc <start-runtime|stop-runtime|worker|verify-state|probe-candidate|commit-state|select-fixture|verification-plan-fixture> ...\n");
+    warn("Usage: xrust/dns_failover.uc <start-runtime|stop-runtime|worker|verify-state|probe-candidate|commit-state|select-fixture|verification-plan-fixture> ...\n");
     exit(1);
 }

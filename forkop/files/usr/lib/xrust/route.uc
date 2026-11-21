@@ -3,7 +3,7 @@
 let common = require("core.common");
 let connections = require("config.connections");
 let core_ip = require("core.ip");
-let runtime_constants = require("singbox.constants");
+let runtime_constants = require("xrust.constants");
 
 let option = common.option;
 let bool_option = common.bool_option;

@@ -8,7 +8,7 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 # Only selected nodes, plus their complete dependency graph, may be removed
 # from consideration for pruning. External references must remain valid.
 ucode -L "$FORKOP_LIB" -e '
-let reachability = require("singbox.outbound_reachability");
+let reachability = require("xrust.outbound_reachability");
 let config = {
     outbounds: [
         {tag:"section",type:"selector",outbounds:["chosen","group"]},
@@ -39,8 +39,8 @@ if(live.unused || live["unused-group"])die("unused server/group remains loaded\n
 
 cat >"$WORK_DIR/catalog.json" <<'JSON'
 {"outbounds":[
- {"type":"socks","tag":"One","server":"one.example","server_port":1080},
- {"type":"socks","tag":"Two","server":"two.example","server_port":1080},
+ {"type":"vless","tag":"One","server":"one.example","server_port":443,"uuid":"00000000-0000-4000-8000-000000000001"},
+ {"type":"vless","tag":"Two","server":"two.example","server_port":443,"uuid":"00000000-0000-4000-8000-000000000001"},
  {"type":"urltest","tag":"Provider group","outbounds":["One","Two"],"interval":"3m"}
 ]}
 JSON
@@ -64,7 +64,7 @@ for chosen in One Two; do
 ]}
 JSON
     TMP_SUBSCRIPTION_FOLDER="$WORK_DIR/subscriptions" \
-        ucode -L "$FORKOP_LIB" "$FORKOP_LIB/singbox/generator.uc" generate-config-fixture \
+        ucode -L "$FORKOP_LIB" "$FORKOP_LIB/xrust/generator.uc" generate-config-fixture \
         "$WORK_DIR/fixture.json" "$WORK_DIR/$chosen.json" 127.0.0.1
 done
 ucode -e '
@@ -82,11 +82,11 @@ for(let chosen in ["One","Two"]) {
     let live={},filtered={},other={};
     for(let o in cfg.outbounds)live[o.tag]=o;
     closure(cfg,"filtered-out",filtered);closure(cfg,"all-out",other);
-    if(!filtered[chosen] || live[chosen].type!="socks")die("filter re-enable did not instantiate the chosen server\n");
+    if(!filtered[chosen] || live[chosen].type!="vless")die("filter re-enable did not instantiate the chosen server\n");
     let excluded=chosen=="One"?"Two":"One";
     if(live[excluded] || live["Provider group"])die("unused section server/provider group remains loaded\n");
     let other_leaves=0;
-    for(let tag in other)if(live[tag] && live[tag].type=="socks")other_leaves++;
+    for(let tag in other)if(live[tag] && live[tag].type=="vless")other_leaves++;
     if(other_leaves!=2)die("other section lost servers from the same subscription\n");
 }
 ' "$WORK_DIR"
@@ -95,9 +95,9 @@ printf 'filtered outbound graph, catalog retention and re-enable checks passed\n
 # Priority must retain standby levels, not only its currently selected node.
 cat >"$WORK_DIR/priority-catalog.json" <<'JSON'
 {"outbounds":[
- {"type":"socks","tag":"One","server":"one.example","server_port":1080},
- {"type":"socks","tag":"Two","server":"two.example","server_port":1080},
- {"type":"socks","tag":"Three","server":"three.example","server_port":1080},
+ {"type":"vless","tag":"One","server":"one.example","server_port":443,"uuid":"00000000-0000-4000-8000-000000000001"},
+ {"type":"vless","tag":"Two","server":"two.example","server_port":443,"uuid":"00000000-0000-4000-8000-000000000001"},
+ {"type":"vless","tag":"Three","server":"three.example","server_port":443,"uuid":"00000000-0000-4000-8000-000000000001"},
  {"type":"urltest","tag":"Provider group","outbounds":["One","Two","Three"],"interval":"3m"}
 ]}
 JSON
@@ -126,7 +126,7 @@ for mode in Two Three mixed; do
  ]}
 JSON
     TMP_SUBSCRIPTION_FOLDER="$WORK_DIR/subscriptions" \
-        ucode -L "$FORKOP_LIB" "$FORKOP_LIB/singbox/generator.uc" generate-config-fixture \
+        ucode -L "$FORKOP_LIB" "$FORKOP_LIB/xrust/generator.uc" generate-config-fixture \
         "$WORK_DIR/priority-fixture.json" "$WORK_DIR/priority-$mode.json" 127.0.0.1
 done
 ucode -e '

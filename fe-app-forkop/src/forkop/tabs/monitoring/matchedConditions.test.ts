@@ -44,7 +44,7 @@ describe('connection matched conditions', () => {
       }),
     ).toBe('domain=new.org');
   });
-  it('handles character classes and groups in sing-box regex lists', () => {
+  it('handles character classes and groups in Xrust regex lists', () => {
     expect(
       matchedConditions(
         'domain_suffix=[other.org ...] domain_regex=[^api[0-9]+\\.example\\.org$ ^(other|else)\\.org$] ip_cidr=[1.2.3.4 ...] => route(VPN)',

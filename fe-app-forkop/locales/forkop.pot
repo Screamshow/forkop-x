@@ -385,10 +385,6 @@ msgstr ""
 msgid "Choose version"
 msgstr ""
 
-#: src/forkop/tabs/updates/releaseSelector.ts:22
-msgid "Choose Xrust version"
-msgstr ""
-
 #: src/validators/validateSubnet.ts:35
 msgid "CIDR must be between 0 and 32 for IPv4 or 0 and 128 for IPv6"
 msgstr ""
@@ -524,8 +520,8 @@ msgstr ""
 msgid "Could not confirm completion. Check the removal log before retrying."
 msgstr ""
 
-#: src/forkop/tabs/diagnostic/partials/renderAvailableActions.ts:76
-msgid "Could not confirm the sing-box process state. Check the logs before trying again."
+#: src/forkop/tabs/diagnostic/partials/renderAvailableActions.ts:73
+msgid "Could not confirm the Xrust process state. Check the logs before trying again."
 msgstr ""
 
 #: src/forkop/tabs/updates/releaseSelector.ts:47
@@ -932,8 +928,8 @@ msgstr ""
 msgid "Enabled"
 msgstr ""
 
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3183
-msgid "Enter a complete sing-box outbound object"
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3336
+msgid "Enter a complete Xrust outbound object"
 msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:2051
@@ -1254,10 +1250,6 @@ msgstr ""
 #: src/forkop/tabs/updates/initController.ts:1095
 #: src/forkop/tabs/updates/releaseSelector.ts:82
 msgid "Install"
-msgstr ""
-
-#: src/forkop/tabs/updates/initController.ts:1193
-msgid "Install another build:"
 msgstr ""
 
 #: src/forkop/tabs/updates/releaseSelector.ts:67
@@ -1790,10 +1782,6 @@ msgstr ""
 msgid "Not enough storage for Forkop update and rollback. Required reserve: %s KiB; available: %s KiB."
 msgstr ""
 
-#: src/forkop/services/logErrorMessage.service.ts:15
-msgid "Not enough storage for sing-box installation. Required reserve: %s KiB; available: %s KiB."
-msgstr ""
-
 #: src/forkop/services/logErrorMessage.service.ts:17
 msgid "Not enough temporary memory. Required: %s KiB; available: %s KiB."
 msgstr ""
@@ -1818,10 +1806,6 @@ msgstr ""
 #: src/forkop/tabs/diagnostic/diagnostic.store.ts:109
 #: src/forkop/tabs/diagnostic/initController.ts:96
 msgid "Not running"
-msgstr ""
-
-#: src/forkop/tabs/updates/releaseSelector.ts:25
-msgid "Older Xrust versions may not support all current settings. If the installation fails, the previous core is restored."
 msgstr ""
 
 #: src/forkop/tabs/monitoring/initController.ts:396
@@ -2065,8 +2049,8 @@ msgstr ""
 msgid "Remove Forkop X with its settings and restore the original device repositories."
 msgstr ""
 
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:659
-msgid "Remove matching nodes from every current and future subscription before sing-box, URLTest, Priority, and the dashboard are generated."
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:759
+msgid "Remove matching nodes from every current and future subscription before Xrust, URLTest, Priority, and the dashboard are generated."
 msgstr ""
 
 #: src/forkop/tabs/updates/fullUninstall.ts:15
@@ -2127,8 +2111,8 @@ msgstr ""
 msgid "Resident memory (RSS) of the Forkop service and its own workers."
 msgstr ""
 
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:5290
-msgid "Resolve domain names before routing so sing-box can use real destination IPs."
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:5724
+msgid "Resolve domain names before routing so Xrust can use real destination IPs."
 msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:5289
@@ -2291,12 +2275,12 @@ msgstr ""
 msgid "Select network interface for VPN connection"
 msgstr ""
 
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:724
-msgid "Select or enter path for sing-box cache file. Change this ONLY if you know what you are doing"
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:833
+msgid "Select or enter path for Xrust cache file. Change this ONLY if you know what you are doing"
 msgstr ""
 
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:711
-msgid "Select path for sing-box config file. Change this ONLY if you know what you are doing"
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:811
+msgid "Select path for Xrust config file. Change this ONLY if you know what you are doing"
 msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:2558
@@ -2304,8 +2288,8 @@ msgstr ""
 msgid "Select the fastest node"
 msgstr ""
 
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:760
-msgid "Select the log level for sing-box"
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:869
+msgid "Select the log level for Xrust"
 msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:343
@@ -2383,41 +2367,37 @@ msgstr ""
 msgid "Settings"
 msgstr ""
 
-#: src/forkop/tabs/diagnostic/initController.ts:649
-#: src/forkop/tabs/diagnostic/partials/renderAvailableActions.ts:158
-msgid "Show sing-box config"
+#: src/forkop/tabs/diagnostic/initController.ts:631
+#: src/forkop/tabs/diagnostic/partials/renderAvailableActions.ts:152
+msgid "Show Xrust config"
 msgstr ""
 
-#: src/forkop/tabs/diagnostic/checks/runSingBoxCheck.ts:81
-msgid "Sing-box autostart disabled"
+#: src/forkop/tabs/diagnostic/checks/runXrustCheck.ts:77
+msgid "Xrust autostart disabled"
 msgstr ""
 
 #: src/forkop/tabs/diagnostic/checks/runFakeIPCheck.ts:87
-msgid "Sing-box FakeIP DNS does not work"
+msgid "Xrust FakeIP DNS does not work"
 msgstr ""
 
 #: src/forkop/tabs/diagnostic/checks/runFakeIPCheck.ts:86
-msgid "Sing-box FakeIP DNS works"
+msgid "Xrust FakeIP DNS works"
 msgstr ""
 
-#: src/forkop/tabs/diagnostic/checks/runSingBoxCheck.ts:64
-msgid "Sing-box installed"
+#: src/forkop/tabs/diagnostic/checks/runXrustCheck.ts:62
+msgid "Xrust installed"
 msgstr ""
 
-#: src/forkop/tabs/diagnostic/checks/runSingBoxCheck.ts:91
-msgid "Sing-box listening ports"
+#: src/forkop/tabs/diagnostic/checks/runXrustCheck.ts:87
+msgid "Xrust listening ports"
 msgstr ""
 
-#: src/forkop/tabs/diagnostic/checks/runSingBoxCheck.ts:86
-msgid "Sing-box process running"
+#: src/forkop/tabs/diagnostic/checks/runXrustCheck.ts:82
+msgid "Xrust process running"
 msgstr ""
 
-#: src/forkop/tabs/diagnostic/checks/runSingBoxCheck.ts:76
-msgid "Sing-box service exist"
-msgstr ""
-
-#: src/forkop/tabs/diagnostic/checks/runSingBoxCheck.ts:71
-msgid "Sing-box version is compatible (newer than 1.12.4)"
+#: src/forkop/tabs/diagnostic/checks/runXrustCheck.ts:72
+msgid "Xrust service exists"
 msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:5190
@@ -2445,8 +2425,8 @@ msgstr ""
 msgid "Startup phase %s failed (exit code %s)."
 msgstr ""
 
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:2097
-msgid "Stop checking when URLTest group is not used. Use sing-box duration format like 1d, 12h or 30m."
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:2249
+msgid "Stop checking when URLTest group is not used. Use Xrust duration format like 1d, 12h or 30m."
 msgstr ""
 
 #: src/forkop/tabs/diagnostic/partials/renderAvailableActions.ts:100
@@ -2562,8 +2542,8 @@ msgstr ""
 msgid "The core did not confirm the updated configuration."
 msgstr ""
 
-#: src/forkop/services/logErrorMessage.service.ts:24
-msgid "The generated sing-box configuration is invalid. See technical details for the validation error."
+#: src/forkop/services/logErrorMessage.service.ts:39
+msgid "The generated Xrust configuration is invalid. See technical details for the validation error."
 msgstr ""
 
 #: src/forkop/services/subscriptionApplyAlert.service.ts:10
@@ -2786,22 +2766,22 @@ msgstr ""
 msgid "Use real IP addresses for WhatsApp"
 msgstr ""
 
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:180
-msgid "Use sing-box duration format like 10s, 1m or 2m30s"
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:181
+msgid "Use Xrust duration format like 10s, 1m or 2m30s"
 msgstr ""
 
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:1924
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:2058
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:2581
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3723
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3730
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3737
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:563
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:585
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:592
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:608
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:636
-msgid "Use sing-box duration format like 1d, 12h or 30m"
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:2076
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:2210
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:2733
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3973
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3980
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3987
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:663
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:685
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:692
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:708
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:736
+msgid "Use Xrust duration format like 1d, 12h or 30m"
 msgstr ""
 
 #: src/forkop/tabs/dashboard/initController.ts:1137
@@ -2882,17 +2862,8 @@ msgstr ""
 msgid "When switching to another level, test every server and select the fastest instead of the first working one."
 msgstr ""
 
-#: src/forkop/tabs/updates/initController.ts:768
-#: src/forkop/tabs/updates/initController.ts:1121
-msgid "Xrust (experimental)"
-msgstr ""
-
-#: src/forkop/tabs/diagnostic/checks/runSingBoxCheck.ts:70
-msgid "Xrust configuration compatibility confirmed"
-msgstr ""
-
-#: src/forkop/tabs/updates/initController.ts:1112
-msgid "Xrust version"
+#: src/forkop/tabs/diagnostic/checks/runXrustCheck.ts:67
+msgid "Xrust version recognized"
 msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:509
@@ -2949,16 +2920,7 @@ msgstr ""
 msgid "Connection error"
 msgstr ""
 
-msgid "Update Xrust to use native Tailscale"
-msgstr ""
-
 msgid "Unknown status"
-msgstr ""
-
-msgid "Forkop 2.3.4 or later is required"
-msgstr ""
-
-msgid "Available only when Xrust is selected"
 msgstr ""
 
 msgid "Router Tailscale address: "
@@ -3018,9 +2980,6 @@ msgstr ""
 msgid "). In the Tailscale admin console: this router → Edit route settings → approve the route."
 msgstr ""
 
-msgid "Exit Node: update Xrust to continue."
-msgstr ""
-
 msgid "Exit Node: waiting for connection."
 msgstr ""
 
@@ -3066,6 +3025,8 @@ msgstr ""
 msgid "Reconnecting"
 msgstr ""
 
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/tailscale.js:19
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/tailscale.js:63
 msgid "Native Tailscale is unavailable"
 msgstr ""
 
@@ -3115,4 +3076,20 @@ msgid "Import tunnel profile"
 msgstr ""
 
 msgid "Could not read tunnel profile"
+msgstr ""
+
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:624
+msgid "Update Forkop X to enable this setting"
+msgstr ""
+
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/tailscale.js:111
+msgid "Exit Node is unavailable."
+msgstr ""
+
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/forkop.js:55
+msgid "Settings saved to UCI. See Diagnostics for the Forkop runtime result."
+msgstr ""
+
+#: src/forkop/services/core.service.ts:146
+msgid "Forkop settings were not applied"
 msgstr ""

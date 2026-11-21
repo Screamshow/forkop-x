@@ -12,8 +12,6 @@ import {
   renderSquareChartGanttIcon24,
 } from '../../../../icons';
 import { insertIf } from '../../../../helpers';
-import { store } from '../../../services';
-import { formatCoreLabel } from '../../../helpers/singBoxVariant';
 
 interface ActionProps {
   loading: boolean;
@@ -32,7 +30,7 @@ interface IRenderAvailableActionsProps {
   disable: ActionProps;
   globalCheck: ActionProps;
   viewLogs: ActionProps;
-  showSingBoxConfig: ActionProps;
+  showXrustConfig: ActionProps;
   supportReport: ActionProps;
 }
 
@@ -46,7 +44,7 @@ export function renderAvailableActions({
   disable,
   globalCheck,
   viewLogs,
-  showSingBoxConfig,
+  showXrustConfig,
   supportReport,
 }: IRenderAvailableActionsProps) {
   return E('div', { class: 'fkp_diagnostic-page__right-bar__actions' }, [
@@ -72,11 +70,8 @@ export function renderAvailableActions({
           E(
             'div',
             { class: 'fkp_diagnostic_alert__description' },
-            formatCoreLabel(
-              _(
-                'Could not confirm the sing-box process state. Check the logs before trying again.',
-              ),
-              store.get().diagnosticsSystemInfo,
+            _(
+              'Could not confirm the Xrust process state. Check the logs before trying again.',
             ),
           ),
         ]),
@@ -150,16 +145,13 @@ export function renderAvailableActions({
         disabled: viewLogs.disabled,
       }),
     ]),
-    ...insertIf(showSingBoxConfig.visible, [
+    ...insertIf(showXrustConfig.visible, [
       renderButton({
-        onClick: showSingBoxConfig.onClick,
+        onClick: showXrustConfig.onClick,
         icon: renderCogIcon24,
-        text: formatCoreLabel(
-          _('Show sing-box config'),
-          store.get().diagnosticsSystemInfo,
-        ),
-        loading: showSingBoxConfig.loading,
-        disabled: showSingBoxConfig.disabled,
+        text: _('Show Xrust config'),
+        loading: showXrustConfig.loading,
+        disabled: showXrustConfig.disabled,
       }),
     ]),
     ...insertIf(supportReport.visible, [

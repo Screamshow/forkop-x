@@ -4,6 +4,14 @@
 import { popen } from 'fs';
 
 function action_support_report() {
+	http.header('Cache-Control', 'no-store');
+	if (dispatched?.readonly !== false) {
+		http.status(403, 'Forbidden');
+		http.prepare_content('text/plain; charset=UTF-8');
+		http.write('Write permission is required\n');
+		return;
+	}
+
 	let stream = popen(
 		'/usr/bin/forkop support_report 2>&1 | /bin/gzip -c',
 		'r'
@@ -21,7 +29,6 @@ function action_support_report() {
 		'Content-Disposition',
 		'attachment; filename="forkop-support-report.txt.gz"'
 	);
-	http.header('Cache-Control', 'no-store');
 
 	while (true) {
 		let chunk = stream.read(16384);

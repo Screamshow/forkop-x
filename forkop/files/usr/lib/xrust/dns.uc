@@ -2,9 +2,9 @@
 
 let common = require("core.common");
 let core_ip = require("core.ip");
-let runtime_constants = require("singbox.constants");
+let runtime_constants = require("xrust.constants");
 let runtime_url = require("core.url");
-let provider_dns = require("singbox.provider_dns");
+let provider_dns = require("xrust.provider_dns");
 
 let as_string = common.as_string;
 let bool_option = common.bool_option;

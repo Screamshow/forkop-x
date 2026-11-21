@@ -4,6 +4,8 @@ let fs = require("fs");
 let common = require("core.common");
 let core_url = require("core.url");
 
+const DECODED_SUBSCRIPTION_MAX_BYTES = 16 * 1024 * 1024;
+
 function as_string(value) {
     return value == null ? "" : "" + value;
 }
@@ -3145,22 +3147,24 @@ function shell_quote(value) {
 }
 
 function gzip_decode_file(input_file, output_file) {
-    if (as_string(input_file) == "" || as_string(output_file) == "" || !fs.stat(input_file))
+    if (as_string(input_file) == "" || as_string(output_file) == "")
+        return false;
+
+    let source = fs.open(input_file, "r");
+    if (source == null)
+        return false;
+    let header = source.read(2);
+    source.close();
+    if (header != chr(31) + chr(139))
         return false;
 
     for (let command in [ "gzip -dc", "gunzip -c", "zcat" ]) {
-        let pipe = fs.popen(command + " " + shell_quote(input_file) + " 2>/dev/null", "r");
-        if (!pipe)
-            continue;
-
-        let data = pipe.read("all");
-        let status = pipe.close();
-        if (status == 0 && data != null && data != "") {
-            if (common.write_private_file(output_file, data))
-                return true;
-            fs.unlink(output_file);
-            return false;
-        }
+        // Keep decompression streaming and bound its output before any parser
+        // reads the expanded response. OpenWrt sh uses 512-byte blocks.
+        let status = system("umask 077; ulimit -f " + int(DECODED_SUBSCRIPTION_MAX_BYTES / 512) +
+            " && " + command + " " + shell_quote(input_file) + " >" + shell_quote(output_file) + " 2>/dev/null");
+        if (status == 0 && fs.stat(output_file)?.size > 0)
+            return true;
         fs.unlink(output_file);
     }
 

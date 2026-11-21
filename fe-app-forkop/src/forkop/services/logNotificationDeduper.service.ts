@@ -64,7 +64,7 @@ export function isErrorLogLine(line: string) {
   return (
     lower.includes('[error]') ||
     lower.includes('[fatal]') ||
-    (lower.includes('sing-box') &&
+    (lower.includes('xrust') &&
       lower.includes('rule-set') &&
       /\b(error|fatal)\b/.test(lower))
   );
@@ -87,7 +87,7 @@ export function getForkopLogNotification(
   }
 
   const update = line.match(
-    /\[component-update\]\s+(forkop|sing_box|rust_x|zapret_manager)\s+(\S+)/i,
+    /\[component-update\]\s+(forkop|zapret_manager)\s+(\S+)/i,
   );
 
   if (!update) {

@@ -5,7 +5,7 @@ LIB=${FORKOP_LIB:-$ROOT/forkop/files/usr/lib}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 ucode -L "$LIB" -e '
-let fs=require("fs"), identity=require("singbox.cache_identity"), base=ARGV[0]+"/custom.db";
+let fs=require("fs"), identity=require("xrust.cache_identity"), base=ARGV[0]+"/custom.db";
 let versions=["1.14.2","1.14.2-x-1.0.0","1.14.2-rust-x.0.0.17","1.14.2-extended","1.14.2-lx"];
 let paths={};
 for(let v in versions) {

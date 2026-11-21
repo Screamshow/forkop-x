@@ -8,13 +8,13 @@ function as_string(value) {
 
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
 const SOURCE_LIB_DIR = getenv("FORKOP_SOURCE_LIB") || "/usr/lib/forkop";
+const BYTECODE_CACHE_DIR = getenv("FORKOP_BYTECODE_CACHE_DIR") || "/var/run/forkop/bytecode";
 
 // Every process start parses the modules it imports, and on a router that parse
 // costs more than most commands do. core/bytecode.uc keeps a compiled copy of
 // the library in tmpfs and hands back the directory to load from; the fallback
 // is the source tree, so a cache that cannot be built or trusted only costs
-// what it always cost. An explicit FORKOP_LIB still wins, both for tests and
-// because every child process already receives the resolved directory that way.
+// what it always cost. Workers hand their resolved library to child modules.
 function resolved_library_dir() {
     try {
         return loadfile(SOURCE_LIB_DIR + "/core/bytecode.uc")().refresh();
@@ -24,7 +24,20 @@ function resolved_library_dir() {
     }
 }
 
-const LIB_DIR = getenv("FORKOP_LIB") || resolved_library_dir();
+function entry_library_dir() {
+    let inherited = getenv("FORKOP_LIB") || "";
+    let cache_prefix = BYTECODE_CACHE_DIR + "/";
+    // The 2.7.6 updater keeps its cached module tree while installing a new
+    // package. A fresh CLI invocation must see the installed backend, even
+    // when that updater passes down the previous cache generation.
+    if (inherited == "" ||
+        (substr(inherited, 0, length(cache_prefix)) == cache_prefix &&
+         match(substr(inherited, length(cache_prefix)), /^lib[.][0-9]+[.][0-9]+$/) != null))
+        return resolved_library_dir();
+    return inherited;
+}
+
+const LIB_DIR = entry_library_dir();
 const BIN_PATH = getenv("FORKOP_BIN") || "/usr/bin/forkop";
 const SERVICE_INIT = getenv("FORKOP_SERVICE_INIT") || "/etc/init.d/forkop";
 
@@ -98,20 +111,20 @@ function show_help() {
     print("    check_proxy             Check proxy connectivity\n");
     print("    check_nft               Check NFT rules\n");
     print("    check_nft_rules         Check NFT rules status\n");
-    print("    check_sing_box          Check sing-box installation and status\n");
+    print("    check_xrust          Check Xrust installation and status\n");
     print("    check_logs              Show Forkop logs from system journal\n");
-    print("    check_sing_box_logs     Show sing-box logs\n");
+    print("    check_xrust_logs     Show Xrust logs\n");
     print("    check_fakeip            Test sing-box FakeIP DNS\n");
     print("    clash_api               Clash API interface for managing proxies and groups\n");
     print("    show_config             Display current Forkop configuration\n");
     print("    show_version            Show Forkop version\n");
-    print("    show_sing_box_config    Show sing-box configuration\n");
-    print("    show_sing_box_version   Show sing-box version\n");
+    print("    show_xrust_config    Show Xrust configuration\n");
+    print("    show_xrust_version   Show Xrust version\n");
     print("    get_status              Get Forkop service status\n");
     print("    get_outbound_metadata   Get generated outbound display names and countries\n");
     print("    get_subscription_metadata\n");
     print("                            Get UI-only metadata for a subscription rule\n");
-    print("    get_sing_box_status     Get sing-box service status\n");
+    print("    get_xrust_status     Get Xrust service status\n");
     print("    get_system_info         Get system information in JSON format\n");
     print("    get_ui_capabilities     Get lightweight UI capabilities in JSON format\n");
     print("    get_ui_state            Get lightweight UI service/action state in JSON format\n");
@@ -124,7 +137,7 @@ function show_help() {
     print("    component_action_async  Start a component action in the background\n");
     print("    component_action_status Get background component action status\n");
     print("    forkop_releases         List mirrored releases available for GUI installation\n");
-    print("    rust_x_releases         List mirrored Xrust releases available for this router\n");
+
     print("    component_updates_if_due Check installed components for updates when due\n");
     print("    component_update_check_cache Get cached component update check results\n");
     print("    check_dns_available     Check DNS server availability\n");
@@ -135,12 +148,13 @@ function show_help() {
 function command_spec(command) {
     let commands = {
         editor_preview: [ "subscription/editor.uc", "preview", 1 ],
+        editor_removed_subscription_sources: [ "subscription/editor.uc", "removed-sources", 2 ],
         start: [ "service/lifecycle.uc", "start", 0 ],
         post_start_latency: [ "service/lifecycle.uc", "post-start-latency", 0 ],
         stop: [ "service/lifecycle.uc", "stop", 0 ],
         reload: [ "service/initd.uc", "reload-service", 1 ],
         dns_failover_apply: [ "service/lifecycle.uc", "dns-failover-apply", 1 ],
-        provider_dns: [ "singbox/provider_dns.uc", "show", 0 ],
+        provider_dns: [ "xrust/provider_dns.uc", "show", 0 ],
         restart: [ "service/initd.uc", "restart-service", 0 ],
         manual_restart: [ "service/lifecycle.uc", "manual-restart", 0 ],
         enable: [ "service/lifecycle.uc", "enable", 0 ],
@@ -159,19 +173,19 @@ function command_spec(command) {
         check_proxy: [ "diagnostics/runtime.uc", "check-proxy", 0 ],
         check_nft: [ "diagnostics/runtime.uc", "check-nft", 0 ],
         check_nft_rules: [ "diagnostics/runtime.uc", "check-nft-rules", 0 ],
-        check_sing_box: [ "diagnostics/runtime.uc", "check-sing-box", 0 ],
+        check_xrust: [ "diagnostics/runtime.uc", "check-xrust", 0 ],
         check_logs: [ "diagnostics/runtime.uc", "check-logs", 0 ],
-        check_sing_box_logs: [ "diagnostics/runtime.uc", "check-sing-box-logs", 0 ],
+        check_xrust_logs: [ "diagnostics/runtime.uc", "check-xrust-logs", 0 ],
         check_fakeip: [ "diagnostics/runtime.uc", "check-fakeip", 0 ],
         clash_api: [ "diagnostics/runtime.uc", "clash-api", 4 ],
         show_config: [ "diagnostics/runtime.uc", "show-config", 1 ],
         show_version: [ "diagnostics/runtime.uc", "show-version", 0 ],
-        show_sing_box_config: [ "diagnostics/runtime.uc", "show-sing-box-config", 1 ],
-        show_sing_box_version: [ "diagnostics/runtime.uc", "show-sing-box-version", 0 ],
+        show_xrust_config: [ "diagnostics/runtime.uc", "show-xrust-config", 1 ],
+        show_xrust_version: [ "diagnostics/runtime.uc", "show-xrust-version", 0 ],
         get_status: [ "diagnostics/runtime.uc", "get-status", 0 ],
         get_outbound_metadata: [ "diagnostics/runtime.uc", "get-outbound-metadata", 1 ],
         get_subscription_metadata: [ "diagnostics/runtime.uc", "get-subscription-metadata", 1 ],
-        get_sing_box_status: [ "diagnostics/runtime.uc", "get-sing-box-status", 0 ],
+        get_xrust_status: [ "diagnostics/runtime.uc", "get-xrust-status", 0 ],
         get_system_info: [ "diagnostics/runtime.uc", "get-system-info", 0 ],
         get_ui_capabilities: [ "service/ui.uc", "get-ui-capabilities", 0 ],
         get_ui_state: [ "service/ui.uc", "get-ui-state", 0 ],
@@ -183,7 +197,7 @@ function command_spec(command) {
         component_action: [ "components/action.uc", "component-action", 3 ],
         component_action_async: [ "components/updates.uc", "component-action-async", 3 ],
         forkop_releases: [ "components/action.uc", "forkop-releases", 0 ],
-        rust_x_releases: [ "components/action.uc", "rust-x-releases", 0 ],
+
         component_action_status: [ "components/updates.uc", "component-action-status", 1 ],
         component_updates_if_due: [ "components/updates.uc", "component-updates-if-due", 0 ],
         component_update_check_cache: [ "components/updates.uc", "component-update-check-cache", 0 ],

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   getClashApiProxies: vi.fn(),
   canUseDirectClashApi: vi.fn(),
   fsRead: vi.fn(),
+  getCachedRuntimeUiState: vi.fn(),
 }));
 
 vi.mock('../getConfigSections', () => ({
@@ -15,6 +16,10 @@ vi.mock('../../shell', () => ({
   ForkopShellMethods: {
     getClashApiProxies: mocks.getClashApiProxies,
   },
+}));
+
+vi.mock('../../../services/runtimeUiState.service', () => ({
+  getCachedRuntimeUiState: mocks.getCachedRuntimeUiState,
 }));
 
 vi.mock('../../../../helpers', () => ({
@@ -155,6 +160,7 @@ describe('getDashboardSections', () => {
     mocks.getConfigSections.mockReset();
     mocks.getClashApiProxies.mockReset();
     mocks.canUseDirectClashApi.mockReset();
+    mocks.getCachedRuntimeUiState.mockReset();
     mocks.fsRead.mockReset();
     mocks.fsRead.mockRejectedValue(new Error('cache miss'));
     vi.stubGlobal('fs', { read: mocks.fsRead });
@@ -311,7 +317,11 @@ describe('getDashboardSections', () => {
     ).toMatchObject({ description: 'Upstream Tube' });
   });
 
-  it('hydrates imported URLTest settings from the active sing-box config without guessing missing aliases', async () => {
+  it('hydrates imported URLTest settings from the active Xrust config without guessing missing aliases', async () => {
+    const appliedPath = '/tmp/xrust/config.json';
+    mocks.getCachedRuntimeUiState.mockReturnValue({
+      runtime_config: { path: appliedPath, revision: 'a' },
+    });
     mocks.getConfigSections.mockResolvedValue([
       proxySection({
         selector_proxy_links: [],
@@ -322,7 +332,7 @@ describe('getDashboardSections', () => {
       {
         '.name': 'config',
         '.type': 'settings',
-        config_path: '/etc/sing-box/config.json',
+        config_path: '/etc/xrust/config.json',
       },
     ]);
     mocks.getClashApiProxies.mockResolvedValue({
@@ -347,7 +357,7 @@ describe('getDashboardSections', () => {
       },
     });
     mocks.fsRead.mockImplementation(async (path: string) => {
-      if (path === '/etc/sing-box/config.json') {
+      if (path === appliedPath) {
         return JSON.stringify({
           outbounds: [
             {
@@ -411,9 +421,26 @@ describe('getDashboardSections', () => {
       displayName: '🇳🇱 Amsterdam (До 05.09 ❗)',
       description: 'Upstream Tube',
     });
+    await getDashboardSections();
+    expect(
+      mocks.fsRead.mock.calls.filter(([path]) => path === appliedPath),
+    ).toHaveLength(1);
+    expect(mocks.fsRead).not.toHaveBeenCalledWith('/etc/xrust/config.json');
+    mocks.getCachedRuntimeUiState.mockReturnValue({
+      runtime_config: { path: appliedPath, revision: 'b' },
+    });
+    await getDashboardSections();
+    expect(
+      mocks.fsRead.mock.calls.filter(([path]) => path === appliedPath),
+    ).toHaveLength(2);
+    mocks.getCachedRuntimeUiState.mockReturnValue({ runtime_config: null });
+    const transitioning = await getDashboardSections();
+    expect(transitioning.data[0].outbounds[0].urlTestInfo?.interval).not.toBe(
+      '70s',
+    );
   });
 
-  it('keeps an empty configured URLTest visible when sing-box skipped the group', async () => {
+  it('keeps an empty configured URLTest visible when Xrust skipped the group', async () => {
     mocks.getConfigSections.mockResolvedValue([
       proxySection({
         urltest_settings: urlTestSettings('urltest', {
@@ -721,7 +748,7 @@ describe('getDashboardSections', () => {
       result.data[0].outbounds.some((item) => item.code === 'provider-node'),
     ).toBe(false);
   });
-  it('keeps an empty Priority group visible when sing-box skipped the selector', async () => {
+  it('keeps an empty Priority group visible when Xrust skipped the selector', async () => {
     mocks.getConfigSections.mockResolvedValue([
       proxySection({
         selector_proxy_links: [],

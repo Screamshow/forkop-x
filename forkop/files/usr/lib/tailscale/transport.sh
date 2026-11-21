@@ -17,7 +17,7 @@ cleanup() {
 [ "${1:-}" = cleanup ] && { cleanup; exit 0; }
 [ ! -f /var/run/forkop/ui-state/tailscale-stopping ] || exit 1
 [ -f /etc/forkop-tailscale/enabled ] || { cleanup; exit 0; }
-[ "$(cat /etc/forkop/sing-box-variant 2>/dev/null)" = rust-x ] || exit 1
+[ -x /usr/bin/xrust ] || exit 1
 default_routes() {
     /usr/libexec/ip-full "$1" route show default 2>/dev/null || ip "$1" route show default
 }

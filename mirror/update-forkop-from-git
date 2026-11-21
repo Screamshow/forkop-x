@@ -23,7 +23,7 @@ version="${tag#v}"
     exit 1
 }
 
-current="$(cat "$MIRROR_ROOT/MIRROR_LATEST" 2>/dev/null || true)"
+current="$(jq -r '.tag_name // empty' "$MIRROR_ROOT/updates/stable.json" 2>/dev/null || true)"
 if [[ "$current" == "$version" ]]; then
     echo "Forkop mirror is already current at $version"
     exit 0
@@ -34,6 +34,11 @@ if jq -e '.assets[] | select(.name == "forkop-manifest.json")' <<< "$release_jso
     printf '%s\n' "$release_json" | python3 /usr/local/lib/forkop/sync-signed-forkop-stable.py --release-json /dev/stdin
     echo "Forkop signed GitHub release $version was verified and published"
     exit 0
+fi
+
+if (( 10#${version%%.*} >= 3 )); then
+    echo "Forkop $version requires signed assets and an exact archived Xrust version" >&2
+    exit 1
 fi
 
 mkdir -p "$BUILD_ROOT"

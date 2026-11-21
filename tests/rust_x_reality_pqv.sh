@@ -38,12 +38,12 @@ for(let suffix in ["url","user_agent","hwid"])
 let output=work+"/generated.json";
 function generate(fixture,version){
  fs.writefile(work+"/fixture.json",sprintf("%J",fixture));
- let args=["env","TMP_SUBSCRIPTION_FOLDER="+work+"/cache","FORKOP_RUNTIME_STATE_DIR="+work+"/state","TMP_SING_BOX_FOLDER="+work+"/singbox","FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR="+work+"/persistent","FORKOP_LIB="+lib,"ucode","-L",lib,lib+"/singbox/generator.uc","generate-config-fixture",work+"/fixture.json",output,"127.0.0.1","0","1","",version];
+ let args=["env","TMP_SUBSCRIPTION_FOLDER="+work+"/cache","FORKOP_RUNTIME_STATE_DIR="+work+"/state","TMP_SING_BOX_FOLDER="+work+"/singbox","FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR="+work+"/persistent","FORKOP_LIB="+lib,"ucode","-L",lib,lib+"/xrust/generator.uc","generate-config-fixture",work+"/fixture.json",output,"127.0.0.1","0","1","",version];
  return system(join(" ",map(args,quote))+" >"+quote(work+"/generation.log")+" 2>&1");
 }
 function vless_remarks(){let r={};for(let o in json(fs.readfile(output)).outbounds)if(o.type=="vless")r[o.tag]=o;return r;}
 let fixture={settings,section:[section]};
-let rust=["1.14.2-rust-x.0.0.26"];
+let rust=["0.0.26"];
 let plain=normalize(link("Plain",false)+"\n")[0], with_pqv=normalize(link("PQV",true)+"\n")[0];
 
 // Mixed subscription on Xrust: the pqv node is skipped with a warning.
@@ -56,14 +56,6 @@ for(let version in rust){
  expect(index(fs.readfile(output),"mldsa65")<0,version+": marker reached the configuration");
  expect(fs.readfile(work+"/cache/probe-subscription-1.json")==cached,version+": subscription cache changed");
 }
-// Other cores: both nodes, no marker, the same outbound as without pqv.
-expect(generate(fixture,"1.14.2-x-1.0.4")==0,"Go X: mixed subscription failed: "+log_text());
-let go=vless_remarks();
-expect(length(keys(go))==2,"Go X lost a node");
-expect(index(fs.readfile(output),"mldsa65")<0,"Go X configuration carries the marker");
-let shapes=map(values(go),function(o){let c=json(sprintf("%J",o));delete c.tag;return sprintf("%J",c);});
-expect(shapes[0]==shapes[1],"Go X outbound differs with pqv: "+join(" | ",shapes));
-
 // Only pqv nodes on Xrust: fails with the reason, previous configuration kept.
 fs.writefile(work+"/cache/probe-subscription-1.json",sprintf("%J",{outbounds:[with_pqv]}));
 for(let version in rust){
@@ -73,14 +65,12 @@ for(let version in rust){
  expect(fs.readfile(output)=="previous configuration\n",version+": previous configuration replaced");
 }
 
-// Manual link: explicit error on Xrust, unchanged on other cores.
+// Manual link: explicit error without applying a weaker connection.
 let manual={settings,section:[{".name":"manual",".type":"section",enabled:"1",action:"connection",selector_proxy_links:[link("Manual%20PQV",true)]}]};
-expect(generate(manual,"1.14.2-rust-x.0.0.26")!=0,"manual pqv link was applied on Xrust");
+expect(generate(manual,"0.0.26")!=0,"manual pqv link was applied on Xrust");
 expect(has_log("manual outbound 'Manual PQV' requires REALITY ML-DSA-65 verification (pqv), which Xrust does not support"),"manual link error missing: "+log_text());
-expect(generate(manual,"1.14.2-x-1.0.4")==0,"Go X: manual pqv link failed: "+log_text());
-expect(index(fs.readfile(output),"mldsa65")<0,"Go X manual configuration carries the marker");
 let plain_manual={settings,section:[{".name":"manual",".type":"section",enabled:"1",action:"connection",selector_proxy_links:[link("Manual%20Plain",false)]}]};
-expect(generate(plain_manual,"1.14.2-rust-x.0.0.26")==0,"manual link without pqv failed on Xrust: "+log_text());
-print("REALITY pqv: kept on import and export, refused on Xrust (subscription skip with warning, empty section fails, manual link error); other cores unchanged\n");
+expect(generate(plain_manual,"0.0.26")==0,"manual link without pqv failed on Xrust: "+log_text());
+print("REALITY pqv: kept on import and export, refused on Xrust (subscription skip with warning, empty section fails, manual link error)\n");
 UC
 ucode -L "$LIB" "$WORK/check.uc" "$WORK" "$LIB"

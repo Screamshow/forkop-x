@@ -89,7 +89,7 @@ cat >"$WORK/fixture.json" <<'JSON'
   "selector_proxy_links":["socks5://user:pw@127.0.0.1:1080#Manual%20SOCKS","socks4://127.0.0.1:1081#SOCKS4"],
   "outbound_jsons":["{\"type\":\"socks\",\"tag\":\"JSON SOCKS\",\"server\":\"127.0.0.1\",\"server_port\":1082,\"version\":\"5\"}"]}]}
 JSON
-ucode -L "$LIB" "$LIB/singbox/generator.uc" generate-config-fixture \
+ucode -L "$LIB" "$LIB/xrust/generator.uc" generate-config-fixture \
     "$WORK/fixture.json" "$WORK/generated.json" 127.0.0.1 0 1 '' 1.14.2-x-1.0.4 \
     >"$WORK/log" 2>&1 || { cat "$WORK/log" >&2; fail "SOCKS connection generation failed"; }
 ucode -e '

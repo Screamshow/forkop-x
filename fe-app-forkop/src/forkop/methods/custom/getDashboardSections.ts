@@ -7,6 +7,7 @@ import {
 } from '../../../helpers';
 import { getOutboundTagBySection } from '../../runtimeTags';
 import { ForkopShellMethods } from '../shell';
+import { getCachedRuntimeUiState } from '../../services/runtimeUiState.service';
 
 interface IGetDashboardSectionsResponse {
   success: boolean;
@@ -40,7 +41,7 @@ type UrlTestCacheGroup = {
   interrupt_exist_connections?: boolean;
 };
 
-type SingBoxRuntimeConfig = {
+type XrustRuntimeConfig = {
   outbounds?: Array<
     UrlTestCacheGroup & {
       type?: string;
@@ -49,9 +50,17 @@ type SingBoxRuntimeConfig = {
   >;
 };
 
-type SingBoxRuntimeMetadata = {
+type XrustRuntimeMetadata = {
   urltestGroups: Record<string, UrlTestCacheGroup>;
 };
+
+const EMPTY_RUNTIME_METADATA: XrustRuntimeMetadata = { urltestGroups: {} };
+let cachedRuntimeMetadata:
+  | {
+      reference: Forkop.RuntimeConfigReference;
+      result: Promise<XrustRuntimeMetadata>;
+    }
+  | undefined;
 
 type PriorityCacheLevel = {
   id?: string;
@@ -424,7 +433,9 @@ function shouldUseProxyGroup(section: Forkop.ConfigSection) {
 }
 
 function hasNativeTunnel(section: Forkop.ConfigSection) {
-  return section.native_tunnel === 'warp' || section.native_tunnel === 'amneziawg';
+  return (
+    section.native_tunnel === 'warp' || section.native_tunnel === 'amneziawg'
+  );
 }
 
 function getSectionProxyConfigType(section: Forkop.ConfigSection) {
@@ -476,10 +487,6 @@ function buildManualLinkByCode(section: Forkop.ConfigSection) {
       link,
     ]),
   );
-}
-
-function getProxyEntryByCode(proxies: ClashProxyEntry[]) {
-  return new Map(proxies.map((proxy) => [proxy.code, proxy]));
 }
 
 function uniqueCodes(codes: string[]) {
@@ -834,46 +841,61 @@ function getUrlTestGroups(dashboardCache?: DashboardSectionCache) {
   return groups;
 }
 
-async function readRuntimeMetadata(
-  configSections: Forkop.ConfigSection[],
-): Promise<SingBoxRuntimeMetadata> {
-  const configPath =
-    getSettingsSection(configSections)?.config_path ||
-    '/etc/sing-box/config.json';
-
-  try {
-    const parsed = JSON.parse(
-      await fs.read(configPath),
-    ) as SingBoxRuntimeConfig;
-    const groups: Record<string, UrlTestCacheGroup> = {};
-
-    for (const outbound of Array.isArray(parsed?.outbounds)
-      ? parsed.outbounds
-      : []) {
-      const tag = `${outbound?.tag || ''}`;
-      if (!tag) {
-        continue;
-      }
-
-      if (outbound?.type !== 'urltest') {
-        continue;
-      }
-
-      groups[tag] = {
-        displayName: tag,
-        outbounds: Array.isArray(outbound.outbounds) ? outbound.outbounds : [],
-        url: outbound.url,
-        interval: outbound.interval,
-        tolerance: outbound.tolerance,
-        idle_timeout: outbound.idle_timeout,
-        interrupt_exist_connections: outbound.interrupt_exist_connections,
-      };
-    }
-
-    return { urltestGroups: groups };
-  } catch (_error) {
-    return { urltestGroups: {} };
+async function loadRuntimeMetadata(
+  path: string,
+): Promise<XrustRuntimeMetadata> {
+  const parsed = JSON.parse(await fs.read(path)) as XrustRuntimeConfig;
+  const groups: Record<string, UrlTestCacheGroup> = {};
+  for (const outbound of Array.isArray(parsed?.outbounds)
+    ? parsed.outbounds
+    : []) {
+    const tag = outbound?.tag;
+    if (!tag || outbound.type !== 'urltest') continue;
+    groups[tag] = {
+      displayName: tag,
+      outbounds: Array.isArray(outbound.outbounds) ? outbound.outbounds : [],
+      url: outbound.url,
+      interval: outbound.interval,
+      tolerance: outbound.tolerance,
+      idle_timeout: outbound.idle_timeout,
+      interrupt_exist_connections: outbound.interrupt_exist_connections,
+    };
   }
+  return { urltestGroups: groups };
+}
+
+function sameRuntimeConfig(
+  current: Forkop.RuntimeConfigReference | null | undefined,
+  requested: Forkop.RuntimeConfigReference,
+) {
+  return (
+    current?.path === requested.path && current.revision === requested.revision
+  );
+}
+
+async function readRuntimeMetadata(): Promise<XrustRuntimeMetadata> {
+  const reference = getCachedRuntimeUiState()?.runtime_config;
+  if (!reference) {
+    cachedRuntimeMetadata = undefined;
+    return EMPTY_RUNTIME_METADATA;
+  }
+
+  if (
+    !cachedRuntimeMetadata ||
+    !sameRuntimeConfig(cachedRuntimeMetadata.reference, reference)
+  ) {
+    const result = loadRuntimeMetadata(reference.path).catch(() => {
+      if (cachedRuntimeMetadata?.result === result)
+        cachedRuntimeMetadata = undefined;
+      return EMPTY_RUNTIME_METADATA;
+    });
+    cachedRuntimeMetadata = { reference, result };
+  }
+
+  const metadata = await cachedRuntimeMetadata.result;
+  return sameRuntimeConfig(getCachedRuntimeUiState()?.runtime_config, reference)
+    ? metadata
+    : EMPTY_RUNTIME_METADATA;
 }
 
 function mergeUrlTestGroups(
@@ -1139,13 +1161,12 @@ function buildPriorityInfo({
 
 function buildProxyGroupOutbounds(
   section: Forkop.ConfigSection,
-  proxies: ClashProxyEntry[],
+  proxyByCode: Map<string, ClashProxyEntry>,
   outboundMetadata?: Forkop.GetOutboundMetadata,
   urltestGroups: Record<string, UrlTestCacheGroup> = {},
   priorityGroups: Record<string, PriorityCacheGroup> = {},
 ) {
   const sectionName = section['.name'];
-  const proxyByCode = getProxyEntryByCode(proxies);
   const selectorTag = getOutboundTagBySection(sectionName);
   const selector = proxyByCode.get(selectorTag);
   const nativeTunnel = hasNativeTunnel(section);
@@ -1207,12 +1228,7 @@ function buildProxyGroupOutbounds(
     const displayName =
       priorityConfig?.displayName ||
       urlTestConfig?.displayName ||
-      getOutboundDisplayName(
-        code,
-        item,
-        link,
-        outboundMetadata,
-      );
+      getOutboundDisplayName(code, item, link, outboundMetadata);
     const isRuntimeUrlTest = isUrlTestProxyEntry(item);
 
     return [
@@ -1442,7 +1458,7 @@ export async function getDashboardSections(): Promise<IGetDashboardSectionsRespo
   const configSections = hydrateConfigSections(await getConfigSections());
   const [clashProxies, runtimeMetadata] = await Promise.all([
     getClashApiProxies(configSections),
-    readRuntimeMetadata(configSections),
+    readRuntimeMetadata(),
   ]);
 
   if (!clashProxies.success || !clashProxies.data?.proxies) {
@@ -1452,11 +1468,11 @@ export async function getDashboardSections(): Promise<IGetDashboardSectionsRespo
     };
   }
 
-  const proxies = Object.entries(clashProxies.data.proxies).map(
-    ([key, value]) => ({
-      code: key,
-      value,
-    }),
+  const proxyByCode = new Map(
+    Object.entries(clashProxies.data.proxies).map(([code, value]) => [
+      code,
+      { code, value },
+    ]),
   );
   const data = await Promise.all(
     configSections
@@ -1492,7 +1508,7 @@ export async function getDashboardSections(): Promise<IGetDashboardSectionsRespo
           const { selector, latencyTestCode, latencyTestCodes, outbounds } =
             buildProxyGroupOutbounds(
               section,
-              proxies,
+              proxyByCode,
               outboundMetadata,
               urltestGroups,
               priorityGroups,
@@ -1525,7 +1541,7 @@ export async function getDashboardSections(): Promise<IGetDashboardSectionsRespo
 
         if (sectionAction === 'vpn') {
           const outboundTag = getOutboundTagBySection(sectionName);
-          const outbound = proxies.find((proxy) => proxy.code === outboundTag);
+          const outbound = proxyByCode.get(outboundTag);
 
           return {
             withTagSelect: false,
@@ -1549,7 +1565,7 @@ export async function getDashboardSections(): Promise<IGetDashboardSectionsRespo
 
         if (sectionAction === 'outbound') {
           const outboundTag = getOutboundTagBySection(sectionName);
-          const outbound = proxies.find((proxy) => proxy.code === outboundTag);
+          const outbound = proxyByCode.get(outboundTag);
 
           return {
             withTagSelect: false,

@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$#" -ne 2 ]]; then
+    echo "Usage: $0 BUILD_DIRECTORY VERSION" >&2
+    exit 2
+fi
+
+BUILD_DIRECTORY="$1"
+VERSION="$2"
+MIRROR_ROOT="${MIRROR_ROOT:-/srv/mirror/public/forkop}"
+PRIVATE_KEY="${FORKOP_APK_PRIVATE_KEY:-/srv/mirror/keys/forkop-apk.pem}"
+APK_BIN="${APK_BIN:-/root/.cache/forkop/openwrt-sdk/extracted/apk/staging_dir/host/bin/apk}"
+CATALOG_WRITER="${FORKOP_RELEASE_CATALOG_WRITER:-/usr/local/lib/forkop/write-release-catalog.py}"
+STAGING="$MIRROR_ROOT/mirror/.${VERSION}.staging"
+DESTINATION="$MIRROR_ROOT/mirror/releases/$VERSION"
+UPDATES_STAGING="$MIRROR_ROOT/updates/.${VERSION}.staging"
+UPDATES_DESTINATION="$MIRROR_ROOT/updates/releases/$VERSION"
+
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+    echo "Invalid APK feed version: $VERSION" >&2
+    exit 1
+}
+[[ -x "$APK_BIN" ]] || {
+    echo "OpenWrt apk host tool is unavailable: $APK_BIN" >&2
+    exit 1
+}
+major="${VERSION%%.*}"
+current="$(jq -r '.tag_name // empty' "$MIRROR_ROOT/updates/stable.json" 2>/dev/null || true)"
+if [[ "$current" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$current" != "$VERSION" ]] &&
+   [[ "$(printf '%s\n' "$current" "$VERSION" | sort -V | tail -n 1)" == "$current" ]]; then
+    echo "Refusing to move Forkop stable from $current back to $VERSION" >&2
+    exit 1
+fi
+
+mkdir -p "$MIRROR_ROOT/updates/releases"
+rm -rf "$STAGING" "$UPDATES_STAGING"
+mkdir -p "$UPDATES_STAGING"
+if (( 10#$major < 3 )); then
+    install -d -m 0700 "$(dirname "$PRIVATE_KEY")"
+    if [[ ! -s "$PRIVATE_KEY" ]]; then
+        openssl ecparam -name prime256v1 -genkey -noout -out "$PRIVATE_KEY"
+        chmod 0600 "$PRIVATE_KEY"
+    fi
+    mkdir -p "$STAGING" "$MIRROR_ROOT/mirror/releases"
+fi
+
+for package in forkop luci-app-forkop luci-i18n-forkop-ru; do
+    for extension in apk ipk; do
+        source_file="$BUILD_DIRECTORY/${package}_${VERSION}.${extension}"
+        [[ -s "$source_file" ]] || {
+            echo "Missing package artifact: $source_file" >&2
+            exit 1
+        }
+    if (( 10#$major < 3 )); then
+        if [[ "$extension" == "apk" ]]; then
+            cp "$source_file" "$STAGING/${package}-${VERSION}.apk"
+        else
+            cp "$source_file" "$STAGING/"
+        fi
+        fi
+        cp "$source_file" "$UPDATES_STAGING/${package}_${VERSION}.${extension}"
+    done
+done
+
+# Validate and stage the release metadata before activating any feed pointer.
+manifest_writer="${FORKOP_CHANNEL_MANIFEST_WRITER:-/usr/local/lib/forkop/write-channel-manifest.sh}"
+if (( 10#$major >= 3 )); then
+    for name in forkop-manifest.json forkop-apk.pem SHA256SUMS; do
+        cp "$BUILD_DIRECTORY/$name" "$UPDATES_STAGING/$name"
+    done
+    cmp "$MIRROR_ROOT/forkop-apk.pem" "$UPDATES_STAGING/forkop-apk.pem"
+    "$APK_BIN" --keys-dir "$MIRROR_ROOT" verify "$UPDATES_STAGING"/*.apk
+fi
+MIRROR_ROOT="$MIRROR_ROOT" bash "$manifest_writer" stable "$VERSION" "$UPDATES_STAGING" "/forkop/updates/releases/$VERSION" "$UPDATES_STAGING"
+mv "$UPDATES_STAGING/stable.json" "$UPDATES_STAGING/release.json"
+rm "$UPDATES_STAGING/latest.json"
+
+if (( 10#$major < 3 )); then
+    openssl ec -in "$PRIVATE_KEY" -pubout -out "$MIRROR_ROOT/forkop-apk.pem" 2>/dev/null
+    (
+        cd "$STAGING"
+        "$APK_BIN" mkndx --allow-untrusted --sign-key "$PRIVATE_KEY" \
+            --description "Forkop mirror packages" --output packages.adb ./*.apk
+        "$APK_BIN" verify --keys-dir "$MIRROR_ROOT" packages.adb
+        sha256sum ./*.apk ./*.ipk packages.adb > SHA256SUMS
+    )
+fi
+
+if [[ -d "$UPDATES_DESTINATION" ]] && (( 10#$major >= 3 )); then
+    for file in "$UPDATES_STAGING"/*; do
+        cmp -s "$file" "$UPDATES_DESTINATION/${file##*/}" || {
+            echo "Refusing to replace immutable Forkop $VERSION asset ${file##*/}" >&2
+            exit 1
+        }
+    done
+    rm -rf "$UPDATES_STAGING"
+else
+    rm -rf "$UPDATES_DESTINATION"
+    mv "$UPDATES_STAGING" "$UPDATES_DESTINATION"
+fi
+
+if (( 10#$major >= 3 )); then
+    # The combined APK feed has no paired-core transaction. Only expose the
+    # new Forkop release through the updater that enforces its Xrust pin.
+    python3 "$CATALOG_WRITER" "$MIRROR_ROOT/updates"
+else
+    rm -rf "$DESTINATION"
+    mv "$STAGING" "$DESTINATION"
+    printf '%s\n' "$VERSION" > "$MIRROR_ROOT/MIRROR_LATEST"
+    python3 /usr/local/lib/forkop/publish-sing-box-x-feed.py --root "$MIRROR_ROOT" --apk "$APK_BIN" --key "$PRIVATE_KEY"
+fi
+
+stable_manifest_tmp="$MIRROR_ROOT/updates/.stable.json.$$"
+latest_manifest_tmp="$MIRROR_ROOT/updates/.latest.json.$$"
+cp "$UPDATES_DESTINATION/release.json" "$stable_manifest_tmp"
+cp "$UPDATES_DESTINATION/release.json" "$latest_manifest_tmp"
+mv "$stable_manifest_tmp" "$MIRROR_ROOT/updates/stable.json"
+mv "$latest_manifest_tmp" "$MIRROR_ROOT/updates/latest.json"
+
+echo "Published Forkop update release $VERSION"

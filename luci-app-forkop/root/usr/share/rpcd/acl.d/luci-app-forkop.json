@@ -6,10 +6,10 @@
         "/etc/init.d/forkop": [
           "exec"
         ],
-        "/etc/sing-box/config.json": [
+        "/etc/xrust/config.json": [
           "read"
         ],
-        "/tmp/sing-box/config.json": [
+        "/tmp/xrust/config.json": [
           "read"
         ],
         "/var/run/forkop/section-cache/*": [

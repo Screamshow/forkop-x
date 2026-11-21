@@ -66,8 +66,8 @@ describe('full runtime route conditions', () => {
 });
 
 describe('runtime route config refresh', () => {
-  const flash = '/etc/sing-box/config.json';
-  const ram = '/tmp/sing-box/config.json';
+  const flash = '/etc/xrust/config.json';
+  const ram = '/tmp/xrust/config.json';
   const body = (name: string) =>
     JSON.stringify({ route: { rules: [{ domain: name }] } });
 

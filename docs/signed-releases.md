@@ -32,21 +32,60 @@ signing secret or self-hosted runner is required. Forkop releases include
 `forkop-manifest.json`, `forkop-apk.pem` and `SHA256SUMS`; Rust X retains its
 existing `openwrt-manifest.json` format.
 
-For Forkop 3.x, publish the required Xrust release first and pass its exact
-version with `--xrust-version`, for example `--forkop 3.0.0 --xrust-version 0.0.44`.
-Each release keeps that pin in `forkop-manifest.json`. A resumed public
-release uses its existing pin.
+For a new Forkop 3.x release, pass `--xrust-version VERSION` if that exact
+Xrust version is already signed, published and mirrored. When publishing both
+projects, pass `--forkop FORKOP_VERSION --rust XRUST_VERSION`. The command
+publishes and verifies the versioned Xrust archive first and uses its version
+as the Forkop pin. The paired release leaves Xrust's standalone latest pointers
+on GitHub and the mirror where they are. Forkop 2.7.6 still uses the mirror's
+`rust-x/latest.json` for default installation and automatic core updates.
+Each Forkop release keeps the pin in `forkop-manifest.json`. A resumed
+public release uses its existing pin. The release command verifies that the
+public GitHub release and exact Xrust mirror archive describe the same packages.
 
-Before the first 3.x publication, update the mirror's host-side
-`/usr/local/sbin/publish-forkop-feed` and `/usr/local/sbin/sync-forkop-canary`
-to include the validated `xrust_version` from that manifest in the staged
-`release.json` before moving the corresponding channel pointer. The canary
-sync needs to fetch `forkop-manifest.json` from the same GitHub release and
-verify its size and digest. The checked-in `scripts/write-channel-manifest.sh`
-supports generating the channel metadata from the staged packages and
-manifest. Deploy the updated `scripts/write-release-catalog.py` to preserve
-the pin for version selection. The operator command checks the public pin
-against the release and rejects a mismatch.
+Before the first 3.x publication, deploy the mirror scripts from this
+checkout. The release command checks the installed publisher and catalog
+writer before starting the build.
+
+| Checkout | Mirror |
+| --- | --- |
+| `mirror/publish-forkop-feed` | `/usr/local/sbin/publish-forkop-feed` |
+| `mirror/sync-forkop-canary` | `/usr/local/sbin/sync-forkop-canary` |
+| `scripts/write-channel-manifest.sh` | `/usr/local/lib/forkop/write-channel-manifest.sh` |
+| `scripts/write-release-catalog.py` | `/usr/local/lib/forkop/write-release-catalog.py` |
+
+Both publishers validate and include `xrust_version` in the staged
+`release.json` before moving the channel pointer. Canary verifies the
+manifest's GitHub size and digest before reading it. After publishing,
+compare the exact pin in the channel pointer, archived manifest and release
+catalog. Keep all published 2.x and Xrust archives for rollback.
+
+Forkop 2.7.6 upgrades to 3.x with Xrust already installed. If 2.7.6 uses
+sing-box, select Xrust there and verify it starts before upgrading. The 3.x
+installer stages the pinned package for clean installations. The normal
+Forkop update and version selector install the pinned core for the chosen 3.x
+release. These core archives declare `minimum_forkop_major: 3`, and the
+`rust-x/releases.json` selector for 2.x excludes them. Forkop 3.x uses
+`/usr/bin/xrust`, which reports `xrust version VERSION`. During the
+2.7.6 upgrade, the old backend installs the core first and runs
+`/usr/bin/sing-box version` before replacing itself. The 3.x Xrust package
+carries a version-only command for that handoff. A downgrade from 3.x to 2.x
+stages the archived Xrust 0.0.44 runtime and restores it before the 2.x
+backend is installed.
+
+Forkop 3.x stages the exact previous package set and a copy of its UCI
+configuration on flash before replacing packages. If power is lost during
+the update, an early boot hook checks the saved archives and restores the
+previous set. The shared installer also prepares this recovery set before
+delegating a 2.7.6 → 3.x update to the 2.7.6 backend. For that transition, use
+the shared installer to enable boot recovery. The legacy 2.7.6 LuCI updater
+keeps its original rollback behavior.
+
+Stable 3.x packages are published to the updater and its version selector.
+The combined `mirror/current` APK feed keeps its last compatible 2.x release
+because a system-wide APK upgrade cannot coordinate Forkop's exact Xrust pin.
+Both 3.x channel publishers verify the six Forkop packages and the referenced
+native Xrust archive before activating their pointers.
 
 After publication the command runs the existing canary mirror service,
 publishes the signed stable packages through the existing feed publisher,

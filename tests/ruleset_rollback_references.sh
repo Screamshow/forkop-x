@@ -23,12 +23,12 @@ check() {
     export FORKOP_RULESET_RUNTIME_MANIFEST="$WORK/$expected-$TEST_RULESET_FORMAT/runtime.json"
     export FORKOP_PERSISTENT_LIST_CACHE_DIR="$WORK/$expected-$TEST_RULESET_FORMAT/list-cache"
     printf '{"outbounds":[{"type":"direct","tag":"direct"}],"route":{"rule_set":[{"type":"remote","tag":"example","format":"%s","url":"https://fixture.invalid/list"}],"rules":[{"rule_set":"example","outbound":"direct"}],"final":"direct"}}' "$TEST_RULESET_FORMAT" >"$WORK/$expected-$TEST_RULESET_FORMAT/old.json"
-    ucode -L "$lib" "$lib/singbox/ruleset_cache.uc" materialize-config "$WORK/$expected-$TEST_RULESET_FORMAT/old.json" required
+    ucode -L "$lib" "$lib/xrust/ruleset_cache.uc" materialize-config "$WORK/$expected-$TEST_RULESET_FORMAT/old.json" required
     path=$(ucode -e 'let fs=require("fs"); print(json(fs.readfile(ARGV[0])).route.rule_set[0].path);' "$WORK/$expected-$TEST_RULESET_FORMAT/old.json")
     case "$path" in *empty-*) echo 'Fixture unexpectedly used an empty fallback'; exit 1;; esac
     sing-box check -c "$WORK/$expected-$TEST_RULESET_FORMAT/old.json" >"$WORK/$expected-$TEST_RULESET_FORMAT/before.log" 2>&1
     printf '{"outbounds":[{"type":"direct","tag":"direct"}],"route":{"rule_set":[],"rules":[],"final":"direct"}}' >"$WORK/$expected-$TEST_RULESET_FORMAT/candidate.json"
-    ucode -L "$lib" "$lib/singbox/ruleset_cache.uc" materialize-config "$WORK/$expected-$TEST_RULESET_FORMAT/candidate.json" required
+    ucode -L "$lib" "$lib/xrust/ruleset_cache.uc" materialize-config "$WORK/$expected-$TEST_RULESET_FORMAT/candidate.json" required
     if [ "$expected" = old ]; then
         [ ! -e "$path" ] || { echo 'Old version did not reproduce early pruning'; exit 1; }
         if sing-box check -c "$WORK/$expected-$TEST_RULESET_FORMAT/old.json" >"$WORK/$expected-$TEST_RULESET_FORMAT/after.log" 2>&1; then
@@ -39,7 +39,7 @@ check() {
     else
         [ -s "$path" ]
         sing-box check -c "$WORK/$expected-$TEST_RULESET_FORMAT/old.json" >"$WORK/$expected-$TEST_RULESET_FORMAT/after.log" 2>&1
-        FORKOP_SING_BOX_CONFIG_PATH="$WORK/$expected-$TEST_RULESET_FORMAT/candidate.json" ucode -L "$lib" "$lib/singbox/ruleset_cache.uc" prune-applied
+        FORKOP_SING_BOX_CONFIG_PATH="$WORK/$expected-$TEST_RULESET_FORMAT/candidate.json" ucode -L "$lib" "$lib/xrust/ruleset_cache.uc" prune-applied
         [ ! -e "$path" ]
         echo "PASS ($TEST_RULESET_FORMAT): current staging preserves rollback references until applied-config cleanup"
     fi

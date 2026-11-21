@@ -91,17 +91,14 @@ function createUiState(
         status: 'starting',
         dns_configured: 0,
       },
-      sing_box: {
+      xrust: {
         running: 0,
         enabled: 1,
         status: 'stopped but enabled',
       },
     },
     capabilities: {
-      sing_box_extended: 1,
-      sing_box_tiny: 0,
-      sing_box_compressed: 0,
-      sing_box_tailscale: 1,
+      xrust_tailscale: 1,
       ...capabilities,
     },
     actions: {
@@ -115,6 +112,29 @@ function createUiState(
 }
 
 describe('applyUiStateToStore', () => {
+  it('keeps the dashboard data out of unchanged action polls', () => {
+    const state = createUiState();
+    state.actions.subscription = [
+      { section: 'main', running: true, success: true },
+    ];
+    applyUiStateToStore(state);
+    const set = vi.spyOn(store, 'set');
+    try {
+      applyUiStateToStore(state);
+      expect(
+        set.mock.calls.some(([update]) => 'sectionsWidget' in update),
+      ).toBe(false);
+
+      state.actions.subscription = [];
+      applyUiStateToStore(state);
+      expect(store.get().sectionsWidget.subscriptionUpdatingSections).toEqual(
+        {},
+      );
+    } finally {
+      set.mockRestore();
+    }
+  });
+
   it('restores the global subscription update indicator without a section', () => {
     clearLocalActionOverlay();
     applyUiStateToStore(
@@ -136,18 +156,20 @@ describe('applyUiStateToStore', () => {
     applyUiStateToStore(createUiState());
     expect(store.get().sectionsWidget.subscriptionUpdatingSections).toEqual({});
   });
-  it('preserves XHTTP capability independently of the core variant', () => {
-    applyUiStateToStore(
-      createUiState({}, { sing_box_extended: 0, sing_box_xhttp: 1 }),
-    );
-    expect(store.get().diagnosticsSystemInfo.sing_box_xhttp).toBe(1);
-    expect(store.get().diagnosticsSystemInfo.sing_box_extended).toBe(0);
-    applyUiStateToStore(
-      createUiState({}, { sing_box_extended: 0, sing_box_xhttp: 0 }),
-    );
-    expect(store.get().diagnosticsSystemInfo.sing_box_xhttp).toBe(0);
-    applyUiStateToStore(createUiState({}, { sing_box_extended: 1 }));
-    expect(store.get().diagnosticsSystemInfo.sing_box_xhttp).toBe(1);
+  it('applies Xrust Tailscale capability without replacing the installed version', () => {
+    store.set({
+      diagnosticsSystemInfo: {
+        ...store.get().diagnosticsSystemInfo,
+        xrust_version: '0.0.44',
+      },
+    });
+    applyUiStateToStore(createUiState({}, { xrust_tailscale: 1 }));
+    expect(store.get().diagnosticsSystemInfo.xrust_tailscale).toBe(1);
+    applyUiStateToStore(createUiState({}, { xrust_tailscale: 0 }));
+    expect(store.get().diagnosticsSystemInfo).toMatchObject({
+      xrust_version: '0.0.44',
+      xrust_tailscale: 0,
+    });
   });
   beforeEach(() => {
     clearLocalActionOverlay();
@@ -196,7 +218,7 @@ describe('applyUiStateToStore', () => {
             success: true,
             running: true,
             job_id: 'component-1',
-            component: 'sing_box',
+            component: 'forkop',
             action: 'install',
             message: 'Install is running',
             current_version: '',
@@ -220,7 +242,7 @@ describe('applyUiStateToStore', () => {
     });
     expect(state.diagnosticsSystemInfo).toMatchObject({
       providerInfoLoaded: true,
-      sing_box_extended: 1,
+      xrust_tailscale: 1,
     });
     expect(state.diagnosticsActions.start.loading).toBe(true);
     expect(state.sectionsWidget.subscriptionUpdatingSections).toEqual({
@@ -236,7 +258,7 @@ describe('applyUiStateToStore', () => {
         failed: 1,
       },
     });
-    expect(state.updatesActions.singBoxInstall.loading).toBe(true);
+    expect(state.updatesActions.forkopInstall.loading).toBe(true);
   });
 
   it('clears finished persisted action flags while preserving local enable actions', () => {
@@ -260,7 +282,7 @@ describe('applyUiStateToStore', () => {
       },
       updatesActions: {
         ...store.get().updatesActions,
-        singBoxInstall: { loading: true },
+        forkopInstall: { loading: true },
       },
     });
 
@@ -273,18 +295,18 @@ describe('applyUiStateToStore', () => {
     expect(state.sectionsWidget.subscriptionUpdatingSections).toEqual({});
     expect(state.sectionsWidget.latencyFetchingSections).toEqual({});
     expect(state.sectionsWidget.latencyProgressSections).toEqual({});
-    expect(state.updatesActions.singBoxInstall.loading).toBe(false);
+    expect(state.updatesActions.forkopInstall.loading).toBe(false);
   });
 
   it('keeps locally started actions loading until their owner clears them', () => {
-    setLocalComponentAction('singBoxInstall', true);
+    setLocalComponentAction('forkopInstall', true);
     setLocalSubscriptionAction('proxy', true);
     setLocalLatencyAction('gemini', true);
     setLocalServiceAction('restart', true);
 
     applyUiStateToStore(createUiState());
 
-    expect(store.get().updatesActions.singBoxInstall.loading).toBe(true);
+    expect(store.get().updatesActions.forkopInstall.loading).toBe(true);
     expect(store.get().sectionsWidget.subscriptionUpdatingSections).toEqual({
       proxy: true,
     });
@@ -296,7 +318,7 @@ describe('applyUiStateToStore', () => {
     clearLocalActionOverlay();
     applyUiStateToStore(createUiState());
 
-    expect(store.get().updatesActions.singBoxInstall.loading).toBe(false);
+    expect(store.get().updatesActions.forkopInstall.loading).toBe(false);
     expect(store.get().sectionsWidget.subscriptionUpdatingSections).toEqual({});
     expect(store.get().sectionsWidget.latencyFetchingSections).toEqual({});
     expect(store.get().diagnosticsActions.restart.loading).toBe(false);
@@ -426,118 +448,5 @@ describe('applyUiStateToStore', () => {
     );
 
     expect(store.get().diagnosticsActions.restart.loading).toBe(true);
-  });
-
-  it('does not combine a stale extended version with tiny capabilities', () => {
-    store.set({
-      diagnosticsSystemInfo: {
-        ...store.get().diagnosticsSystemInfo,
-        sing_box_version: '1.13.12-extended-2.3.2',
-        sing_box_extended: 1,
-        sing_box_tiny: 0,
-      },
-    });
-
-    applyUiStateToStore(
-      createUiState(undefined, {
-        sing_box_extended: 0,
-        sing_box_tiny: 1,
-        sing_box_compressed: 0,
-        sing_box_tailscale: 0,
-      }),
-    );
-
-    expect(store.get().diagnosticsSystemInfo).toMatchObject({
-      sing_box_version: '1.13.12-extended-2.3.2',
-      sing_box_extended: 1,
-      sing_box_tiny: 0,
-      sing_box_tailscale: 1,
-    });
-  });
-
-  it('keeps current sing-box variant while a different sing-box install action is running', () => {
-    store.set({
-      diagnosticsSystemInfo: {
-        ...store.get().diagnosticsSystemInfo,
-        providerInfoLoaded: true,
-        sing_box_version: '1.12.25',
-        sing_box_extended: 0,
-        sing_box_tiny: 1,
-        sing_box_compressed: 0,
-        sing_box_tailscale: 1,
-      },
-    });
-
-    applyUiStateToStore(
-      createUiState(
-        {
-          component: [
-            {
-              success: true,
-              running: true,
-              job_id: 'sing-box-install',
-              component: 'sing_box',
-              action: 'install_x',
-              message: 'Install is running',
-              current_version: '',
-              latest_version: '',
-              changed: false,
-            },
-          ],
-        },
-        {
-          sing_box_extended: 0,
-          sing_box_tiny: 1,
-          sing_box_compressed: 0,
-          sing_box_tailscale: 0,
-        },
-      ),
-    );
-
-    expect(store.get().diagnosticsSystemInfo).toMatchObject({
-      providerInfoLoaded: true,
-      sing_box_version: '1.12.25',
-      sing_box_extended: 0,
-      sing_box_tiny: 1,
-      sing_box_compressed: 0,
-      sing_box_tailscale: 0,
-    });
-    expect(store.get().updatesActions.singBoxInstallX.loading).toBe(true);
-  });
-
-  it('marks the running sing-box install action without pretending it is installed', () => {
-    applyUiStateToStore(
-      createUiState(
-        {
-          component: [
-            {
-              success: true,
-              running: true,
-              job_id: 'sing-box-install',
-              component: 'sing_box',
-              action: 'install_rust_x',
-              message: 'Install is running',
-              current_version: '',
-              latest_version: '',
-              changed: false,
-            },
-          ],
-        },
-        {
-          sing_box_extended: 0,
-          sing_box_tiny: 1,
-          sing_box_compressed: 0,
-          sing_box_tailscale: 0,
-        },
-      ),
-    );
-
-    expect(store.get().diagnosticsSystemInfo).toMatchObject({
-      sing_box_extended: 0,
-      sing_box_tiny: 1,
-      sing_box_compressed: 0,
-      sing_box_tailscale: 0,
-    });
-    expect(store.get().updatesActions.singBoxInstallRustX.loading).toBe(true);
   });
 });

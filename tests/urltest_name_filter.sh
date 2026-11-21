@@ -10,7 +10,7 @@ function as_string(v) { return v == null ? '' : '' + v; }
 let subscription_filter_connections = { new: 'host-new', old: 'host-old' };
 UCODE
     for name in array_contains tag_display_name tag_name_filter_matches; do
-        sed -n "/^function $name(/,/^}/p" "$ROOT_DIR/forkop/files/usr/lib/singbox/generator.uc"
+        sed -n "/^function $name(/,/^}/p" "$ROOT_DIR/forkop/files/usr/lib/xrust/generator.uc"
     done
     cat <<'UCODE'
 let names = { new: 'Moscow #1', old: 'Moscow #2' };

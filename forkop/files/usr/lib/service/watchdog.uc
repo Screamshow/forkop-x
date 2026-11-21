@@ -1,6 +1,6 @@
 #!/usr/bin/env ucode
 
-// Keep this worker outside sing-box.  procd can respawn a crashed sing-box,
+// Keep this worker outside Xrust. procd can respawn a crashed core,
 // but an explicit stop or a permanently failing runtime otherwise leaves
 // dnsmasq forwarding to an unavailable local DNS listener indefinitely.
 let fs = require("fs");
@@ -10,24 +10,24 @@ let locks = require("core.locks");
 const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
 const BIN_PATH = getenv("FORKOP_BIN") || "/usr/bin/forkop";
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
-const STATE_UC = LIB_DIR + "/service/state.uc";
+const STATE_UC = getenv("FORKOP_SERVICE_STATE_UC") || LIB_DIR + "/service/state.uc";
 const UI_UC = LIB_DIR + "/service/ui.uc";
+const DIAGNOSTICS_UC = LIB_DIR + "/diagnostics/runtime.uc";
+const RUNTIME_STATE_DIR = getenv("FORKOP_RUNTIME_STATE_DIR") || "/var/run/forkop";
 const RELOAD_LOCK_DIR = getenv("FORKOP_RELOAD_LOCK_DIR") || "/var/run/forkop.reload.lock";
 const INTERVAL_SECONDS = int(getenv("FORKOP_WATCHDOG_INTERVAL_SECONDS") || "5");
 const GRACE_SECONDS = int(getenv("FORKOP_WATCHDOG_GRACE_SECONDS") || "90");
 const FAILURE_SECONDS = int(getenv("FORKOP_WATCHDOG_FAILURE_SECONDS") || "60");
 const WATCHDOG_READY_FILE = getenv("FORKOP_WATCHDOG_READY_FILE") ||
-    (getenv("FORKOP_RUNTIME_STATE_DIR") || "/var/run/forkop") + "/watchdog.ready";
+    RUNTIME_STATE_DIR + "/watchdog.ready";
+const PENDING_RELOAD_FILE = getenv("FORKOP_PENDING_RELOAD_FILE") || RUNTIME_STATE_DIR + "/reload.pending";
+const POST_START_LATENCY_FILE = getenv("FORKOP_POST_START_LATENCY_FILE") || RUNTIME_STATE_DIR + "/post-start-latency.pending";
+const AUTOMATIC_LATENCY_PENDING_FILE = getenv("FORKOP_AUTOMATIC_LATENCY_PENDING_FILE") ||
+    "/etc/forkop/automatic-latency-test.pending";
+const LATENCY_LOCK_DIR = getenv("FORKOP_AUTOMATIC_LATENCY_TEST_LOCK_DIR") || RUNTIME_STATE_DIR + "/automatic-latency-test.lock";
 
 function quote(value) {
     return "'" + replace(value == null ? "" : "" + value, /'/g, "'\\''") + "'";
-}
-
-function status(args) {
-    let command = [ "ucode", "-L", LIB_DIR, STATE_UC ];
-    for (let arg in args)
-        push(command, quote(arg));
-    return system(join(" ", command) + " >/dev/null 2>&1") == 0;
 }
 
 function active() {
@@ -41,14 +41,37 @@ function transitioning() {
             " package-upgrade-transition-active >/dev/null 2>&1") == 0;
 }
 
-function singbox_healthy() {
-    // This verifies the exact procd-owned runtime rather than accepting an
-    // unrelated sing-box process with the same executable name.
-    return status([ "sing-box-current-owned-service-runtime" ]);
+function xrust_runtime_kind() {
+    let pipe = fs.popen("ucode -L " + quote(LIB_DIR) + " " + quote(STATE_UC) +
+        " sing-box-owned-service-kind 2>/dev/null", "r");
+    if (!pipe)
+        return "other";
+    let kind = trim(pipe.read("all") || "");
+    return pipe.close() == 0 ? kind : "other";
 }
 
-function singbox_deleted_owned() {
-    return status([ "sing-box-deleted-owned-service-runtime" ]);
+function resume_due_latency_test(now) {
+    let pending = fs.readfile(AUTOMATIC_LATENCY_PENDING_FILE);
+    if (pending == null || fs.stat(PENDING_RELOAD_FILE) != null || fs.stat(POST_START_LATENCY_FILE) != null)
+        return;
+
+    let marker;
+    try {
+        marker = json(pending);
+    }
+    catch (e) {
+        return;
+    }
+    if (type(marker) != "object" || "" + marker.format != "1" ||
+        match("" + marker.signature, /^[0-9a-f]{32}$/) == null ||
+        int(marker.retry_after || 0) > now ||
+        locks.held(LATENCY_LOCK_DIR) || locks.held(LATENCY_LOCK_DIR + ".retry"))
+        return;
+
+    // The diagnostics worker rechecks the pending generation and takes the
+    // shared latency and reload locks before sending any probes.
+    system("ucode -L " + quote(LIB_DIR) + " " + quote(DIAGNOSTICS_UC) +
+        " automatic-latency-test resume </dev/null >/dev/null 2>&1 &");
 }
 
 function log(message, level) {
@@ -69,29 +92,32 @@ function main() {
 
         // Forkop is intentionally stopped, or its own lifecycle currently
         // owns a transition.  Neither case is an outage for this watchdog.
-        if (!active() || transitioning() || now - started < GRACE_SECONDS) {
+        let observing = active() && !transitioning() && now - started >= GRACE_SECONDS;
+        let kind = observing ? xrust_runtime_kind() : "other";
+        if (!observing) {
             failed_since = 0;
         }
-        else if (singbox_deleted_owned()) {
+        else if (kind == "deleted") {
             failed_since = 0;
             if (!replacement_attempted) {
                 replacement_attempted = true;
-                log("replacing the verified procd-owned deleted sing-box runtime", "warn");
-                if (system(quote(BIN_PATH) + " restart >/dev/null 2>&1") == 0 && singbox_healthy())
+                log("replacing the verified procd-owned deleted Xrust runtime", "warn");
+                if (system(quote(BIN_PATH) + " restart >/dev/null 2>&1") == 0 && xrust_runtime_kind() == "current")
                     replacement_attempted = false;
             }
         }
-        else if (singbox_healthy()) {
+        else if (kind == "current") {
             failed_since = 0;
             replacement_attempted = false;
+            resume_due_latency_test(now);
         }
         else {
             if (failed_since == 0) {
                 failed_since = now;
-                log("sing-box became unavailable; waiting " + FAILURE_SECONDS + " seconds before DNS rollback", "warn");
+                log("Xrust became unavailable; waiting " + FAILURE_SECONDS + " seconds before DNS rollback", "warn");
             }
             else if (now - failed_since >= FAILURE_SECONDS) {
-                log("sing-box remained unavailable; stopping Forkop and restoring dnsmasq DNS", "fatal");
+                log("Xrust remained unavailable; stopping Forkop and restoring dnsmasq DNS", "fatal");
                 system(quote(BIN_PATH) + " stop >/dev/null 2>&1");
                 failed_since = 0;
             }

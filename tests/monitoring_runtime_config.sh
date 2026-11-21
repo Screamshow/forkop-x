@@ -6,8 +6,9 @@ UI="$ROOT/forkop/files/usr/lib/service/ui.uc"
 {
     cat <<'UC'
 const RELOAD_LOCK_DIR = "/var/run/forkop.reload.lock";
-const flash = "/etc/sing-box/config.json";
-const ram = "/tmp/sing-box/config.json";
+const flash = "/etc/xrust/config.json";
+const ram = "/tmp/xrust/config.json";
+let xrust = { SERVICE_NAME: "forkop-xrust" };
 let active = false;
 let lock_on_stat = false;
 let inode = 500;
@@ -21,8 +22,8 @@ let fs = { stat: path => {
     return { type: "file", inode, size: 100, mtime: 20, ctime: 20 };
 } };
 function procd(path) {
-    return { "sing-box": { instances: { main: { running: true, pid: owner,
-        command: ["/usr/bin/sing-box", "run", "-c", path, "-D", "/tmp/sing-box"] } } } };
+    return { "forkop-xrust": { instances: { client: { running: true, pid: owner,
+        command: ["/usr/lib/rust-x/sing-box", "run", "-c", path, "-D", "/usr/share/xrust"] } } } };
 }
 UC
     sed -n '/^function monitoring_runtime_config(/,/^}/p' "$UI"

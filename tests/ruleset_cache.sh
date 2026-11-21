@@ -4,12 +4,13 @@ set -o pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 FORKOP_LIB="$ROOT_DIR/forkop/files/usr/lib"
-RULESET_CACHE_UC="$FORKOP_LIB/singbox/ruleset_cache.uc"
+RULESET_CACHE_UC="$FORKOP_LIB/xrust/ruleset_cache.uc"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 export FORKOP_RULESET_RUNTIME_CACHE_DIR="$WORK_DIR/runtime-cache"
 export FORKOP_RULESET_RUNTIME_MANIFEST="$WORK_DIR/runtime-manifest.json"
 export FORKOP_PERSISTENT_LIST_CACHE_DIR="$WORK_DIR/list-cache"
+export FORKOP_XRUST_BIN="$WORK_DIR/bin/xrust"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -45,13 +46,13 @@ case "$url" in
   *) exit 1 ;;
 esac
 EOF
-cat >"$WORK_DIR/bin/sing-box" <<'EOF'
+cat >"$FORKOP_XRUST_BIN" <<'EOF'
 #!/bin/sh
 [ "$1" = rule-set ] && [ "$2" = match ] || exit 1
 [ "$3" = --format ] && [ "$4" = binary ] || exit 1
 [ -f "$5" ] && [ "$6" = forkop-validation.invalid ] || exit 1
 EOF
-chmod +x "$WORK_DIR/bin/curl" "$WORK_DIR/bin/sing-box"
+chmod +x "$WORK_DIR/bin/curl" "$FORKOP_XRUST_BIN"
 
 cat >"$WORK_DIR/config.json" <<'EOF'
 {"route":{"rule_set":[

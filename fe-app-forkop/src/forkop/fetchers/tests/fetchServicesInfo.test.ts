@@ -28,7 +28,7 @@ describe('fetchServicesInfo', () => {
           dns_configured: 1,
           restart_blocked: 1,
         },
-        sing_box: {
+        xrust: {
           running: 1,
           enabled: 0,
           status: 'running but disabled',
@@ -36,9 +36,7 @@ describe('fetchServicesInfo', () => {
         },
       },
       capabilities: {
-        sing_box_extended: 1,
-        sing_box_tiny: 0,
-        sing_box_tailscale: 1,
+        xrust_tailscale: 1,
       },
       actions: {
         service: [
@@ -69,7 +67,7 @@ describe('fetchServicesInfo', () => {
     expect(state.servicesInfoWidget.data.forkopStatus).toBe('restarting');
     expect(state.servicesInfoWidget.data.restartBlocked).toBe(1);
     expect(state.servicesInfoWidget.data.forkopMemoryBytes).toBe(3145728);
-    expect(state.servicesInfoWidget.data.singboxMemoryBytes).toBe(41943040);
+    expect(state.servicesInfoWidget.data.xrustMemoryBytes).toBe(41943040);
     expect(state.diagnosticsActions.restart.loading).toBe(true);
   });
 
@@ -79,7 +77,7 @@ describe('fetchServicesInfo', () => {
         loading: false,
         failed: false,
         data: {
-          singbox: 1,
+          xrust: 1,
           forkopRunning: 1,
           stopAvailable: 1,
           restartBlocked: 1,
@@ -116,7 +114,7 @@ describe('fetchServicesInfo', () => {
 
     expect(state.servicesInfoWidget.failed).toBe(true);
     expect(state.servicesInfoWidget.data).toEqual({
-      singbox: 0,
+      xrust: 0,
       forkopRunning: 1,
       stopAvailable: 1,
       restartBlocked: 1,

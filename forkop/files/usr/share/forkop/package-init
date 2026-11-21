@@ -5,7 +5,19 @@ if [ "${1:-}" = stop ]; then
     active=0
     for exe in /proc/[0-9]*/exe; do
         target="$(readlink "$exe" 2>/dev/null || true)"
-        case "$target" in /usr/bin/sing-box|'/usr/bin/sing-box (deleted)') active=1; break ;; esac
+        case "$target" in
+            /usr/bin/xrust|'/usr/bin/xrust (deleted)'|/usr/lib/rust-x/sing-box|'/usr/lib/rust-x/sing-box (deleted)'|/usr/bin/sing-box|'/usr/bin/sing-box (deleted)')
+                pid="${exe%/exe}"
+                pid="${pid##*/}"
+                mode="$(tr '\000' '\n' < "/proc/$pid/cmdline" 2>/dev/null | sed -n '2p')"
+                case "$mode" in
+                    tailscale-luci|tailscale-native-capability|tailscale-ssh-capability|tailscale-exit-capability|\
+                    check|version|-v|--version|help|-h|--help|\
+                    rule-set|reload-plan|tools|api|generate|format|merge|netns-holder) ;;
+                    *) active=1; break ;;
+                esac
+                ;;
+        esac
     done
     if [ "$active" = 0 ] &&
         ! nft list table inet "${NFT_TABLE_NAME:-ForkopTable}" >/dev/null 2>&1 &&

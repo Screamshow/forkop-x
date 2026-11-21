@@ -137,6 +137,63 @@ class SignatureGateTests(unittest.TestCase):
     def operation(self):
         return release.Release(SimpleNamespace(output=self.directory, ssh_key=Path('test-key'), timeout=1, resume=True, xrust_version=None), 'forkop', '2.2.3-canary.1')
 
+    def test_paired_xrust_release_preserves_legacy_latest(self):
+        operation = release.Release(SimpleNamespace(
+            forkop='3.0.0-canary.1', xrust_version='0.0.45', output=self.directory,
+            ssh_key=Path('test-key'), timeout=1, resume=False), 'rust-x', '0.0.45')
+        operation.source = 'a' * 40
+        operation.directory.mkdir(parents=True)
+        (operation.directory / 'openwrt-manifest.json').write_text('{"assets": []}')
+        archive_url = release.BASE + '/forkop/rust-x/releases/0.0.45/manifest.json'
+        catalog_url = release.BASE + '/forkop/rust-x/releases.json'
+        endpoints = {archive_url: {'assets': [], 'binary_source_commit': operation.source},
+                     catalog_url: {'releases': [{'version': operation.version, 'assets': []}]}}
+        with patch.object(operation, 'current', return_value={'isDraft': True}), \
+                patch.object(operation, 'verify_signatures'), patch.object(operation, 'remote') as remote, \
+                patch.object(release, 'run') as commands, \
+                patch.object(release, 'public_json', side_effect=endpoints.__getitem__) as query:
+            operation.finalize()
+            self.assertEqual(commands.call_args.args[-1], '--latest=false')
+            operation.sync()
+            self.assertNotIn('--latest', remote.call_args.args[0])
+            self.assertEqual([call.args[0] for call in query.call_args_list], [archive_url, catalog_url])
+
+    def test_xrust_pin_requires_complete_matching_mirror_assets(self):
+        version = '0.0.44'
+        data = b'fixture core archive'
+        checksum = hashlib.sha256(data).hexdigest()
+        manifest = dict(schema=1, name='rust-x', version=version, package_revision=1,
+                        minimum_forkop_major=3, apk_signed=True, assets=[])
+        uploaded = dict(tag_name='rust-x-v0.0.44', draft=False, prerelease=False, assets=[])
+        for fmt, revision in (('apk', 'r1'), ('ipk', '1')):
+            name = f'rust-x_{version}-{revision}_x86_64.{fmt}'
+            manifest['assets'].append(dict(name=name, format=fmt, architecture='x86_64',
+                version=f'{version}-{revision}', package='rust-x', size=len(data), sha256=checksum,
+                url=f'{release.BASE}/forkop/rust-x/releases/{version}/{name}'))
+            uploaded['assets'].append(dict(name=name, size=len(data), digest='sha256:' + checksum))
+        with patch.object(release, 'gh', return_value=uploaded), \
+                patch.object(release, 'public_json', return_value=manifest), \
+                patch.object(release.urllib.request, 'urlopen', side_effect=lambda *_a, **_kw: io.BytesIO(data)) as fetch_file:
+            release.verify_xrust_pin(version)
+            self.assertEqual([call.args[0] for call in fetch_file.call_args_list], [a['url'] for a in manifest['assets']])
+            fetch_file.side_effect = FileNotFoundError
+            with self.assertRaises(FileNotFoundError):
+                release.verify_xrust_pin(version)
+            for corrupted in (data[:-1], data + b'extra', b'x' * len(data)):
+                fetch_file.side_effect = lambda *_a, **_kw: io.BytesIO(corrupted)
+                with self.assertRaisesRegex(ValueError, 'size or checksum'):
+                    release.verify_xrust_pin(version)
+            manifest.pop('minimum_forkop_major')
+            with self.assertRaisesRegex(ValueError, 'Invalid mirror manifest'):
+                release.verify_xrust_pin(version)
+            manifest['minimum_forkop_major'] = 3
+            manifest['assets'][0]['sha256'] = 'b' * 64
+            with self.assertRaisesRegex(ValueError, 'asset mismatch'):
+                release.verify_xrust_pin(version)
+            manifest['assets'].pop(0)
+            with self.assertRaisesRegex(ValueError, 'Incomplete mirror archive'):
+                release.verify_xrust_pin(version)
+
     def test_public_release_cannot_be_resigned(self):
         operation = self.operation()
         with patch.object(operation, 'current', return_value={'isDraft': False}), patch.object(release, 'run') as mutate:

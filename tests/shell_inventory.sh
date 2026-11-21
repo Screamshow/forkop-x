@@ -55,6 +55,7 @@ expected_shell_scripts="$(
     'forkop/files/etc/init.d/forkop-support' \
     'forkop/files/etc/init.d/forkop-tailscale' \
     'forkop/files/etc/init.d/forkop-torrserver-direct' \
+    'forkop/files/etc/init.d/forkop-xrust' \
     'forkop/files/usr/lib/full-uninstall.sh' \
     'forkop/files/usr/lib/support/lite-install.sh' \
     'forkop/files/usr/lib/support/ssh-gate.sh' \
@@ -62,7 +63,10 @@ expected_shell_scripts="$(
     'forkop/files/usr/lib/tailscale/lan.sh' \
     'forkop/files/usr/lib/tailscale/transport.sh' \
     'forkop/files/usr/share/forkop/mirror-migration.sh' \
-    'forkop/files/usr/share/forkop/package-init' |
+    'forkop/files/usr/share/forkop/package-init' \
+    'forkop/files/usr/share/forkop/upgrade-recovery' \
+    'forkop/files/usr/share/forkop/zapret-manager-migrate.sh' \
+    'forkop/files/usr/share/forkop/zapret-manager-upgrade.sh' |
     LC_ALL=C sort
 )"
 

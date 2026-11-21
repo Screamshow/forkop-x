@@ -157,10 +157,10 @@ export interface StoreType {
     loading: boolean;
     failed: boolean;
     data: {
-      singbox: number;
+      xrust: number;
       forkopRunning: number;
       forkopMemoryBytes?: number | null;
-      singboxMemoryBytes?: number | null;
+      xrustMemoryBytes?: number | null;
       // Undefined until the runtime reports the service; null state means
       // procd does not know it, so the dashboard leaves its row out.
       tailscale?: { running: number; memoryBytes?: number | null } | null;
@@ -196,7 +196,7 @@ export interface StoreType {
     disable: { loading: boolean };
     globalCheck: { loading: boolean };
     viewLogs: { loading: boolean };
-    showSingBoxConfig: { loading: boolean };
+    showXrustConfig: { loading: boolean };
     supportReport: { loading: boolean };
   };
   diagnosticsSystemInfo: {
@@ -206,12 +206,8 @@ export interface StoreType {
     forkop_version: string;
     forkop_latest_version: string;
     luci_app_version: string;
-    sing_box_version: string;
-    sing_box_extended: number;
-    sing_box_xhttp?: number;
-    sing_box_tiny: number;
-    sing_box_compressed: number;
-    sing_box_tailscale: number;
+    xrust_version: string;
+    xrust_tailscale: number;
     zapret_manager_installed: number;
     packet_steering_mode: string;
     direct_proxy_enabled: number;
@@ -227,12 +223,6 @@ export interface StoreType {
   updatesActions: {
     forkopCheck: { loading: boolean };
     forkopInstall: { loading: boolean };
-    singBoxCheck: { loading: boolean };
-    singBoxInstall: { loading: boolean };
-    singBoxInstallTiny: { loading: boolean };
-    singBoxInstallX: { loading: boolean };
-    singBoxInstallRustX: { loading: boolean };
-    singBoxInstallStable: { loading: boolean };
     zapretManagerInstall: { loading: boolean };
     zapretManagerRemove: { loading: boolean };
     packetSteeringEnable: { loading: boolean };
@@ -276,7 +266,7 @@ const initialStore: StoreType = {
     loading: true,
     failed: false,
     data: {
-      singbox: 0,
+      xrust: 0,
       forkopRunning: 0,
       stopAvailable: 0,
       restartBlocked: 0,

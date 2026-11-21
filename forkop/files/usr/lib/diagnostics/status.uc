@@ -583,76 +583,28 @@ function render_flag_line(value, key, ok_message, fail_message) {
     print_line((flag_is_one(value[key]) ? ok_message : fail_message));
 }
 
-function sing_box_core_label(value) {
-    if (match(as_string(value.sing_box_version), /-rust-x[.]/) != null)
-        return "Xrust";
-    if (flag_is_one(value.sing_box_extended) && flag_is_one(value.sing_box_compressed))
-        return "extended compressed";
-    if (flag_is_one(value.sing_box_extended))
-        return "extended";
-    if (flag_is_one(value.sing_box_tiny))
-        return "tiny";
-    return "";
-}
-
-function sing_box_version_note_label(value) {
-    if (flag_is_one(value.sing_box_extended) && flag_is_one(value.sing_box_compressed))
-        return "compressed";
-    if (flag_is_one(value.sing_box_tiny))
-        return "tiny";
-    return "";
-}
-
-function sing_box_version_is_known(version) {
-    version = lc(trim(as_string(version)));
-    return version != "" &&
-        version != "loading" &&
-        version != "unknown" &&
-        version != "not installed";
-}
-
-function format_sing_box_version(value, version) {
-    version = as_string(version);
-    let rust = match(version, /-rust-x[.]([0-9]+[.][0-9]+[.][0-9]+)$/);
-    if (rust != null) return "Xrust " + rust[1];
-    if (!sing_box_version_is_known(version))
-        return version;
-
-    let variant = sing_box_version_note_label(value);
-    return variant != "" ? version + " (" + variant + ")" : version;
-}
-
-function render_global_sing_box_check() {
+function render_global_xrust_check() {
     let value = object_or_empty(read_stdin_json());
 
-    render_flag_line(value, "sing_box_installed", "\u2705 Sing-box installed", "\u274c Sing-box installed");
-    render_flag_line(value, "sing_box_version_ok", "\u2705 Sing-box version is compatible (newer than 1.12.4)", "\u274c Sing-box version is not compatible (older than 1.12.4)");
-
-    if (flag_is_one(value.sing_box_extended))
-        print_line("Sing-box extended detected");
-    else
-        print_line("Sing-box regular build detected");
-
-    render_flag_line(value, "sing_box_service_exist", "\u2705 Sing-box service exist", "\u274c Sing-box service exist");
-    render_flag_line(value, "sing_box_autostart_disabled", "\u2705 Sing-box autostart disabled", "\u274c Sing-box autostart disabled");
-    render_flag_line(value, "sing_box_process_running", "\u2705 Sing-box process running", "\u274c Sing-box process running");
-    render_flag_line(value, "sing_box_ports_listening", "\u2705 Sing-box listening ports", "\u274c Sing-box listening ports");
+    render_flag_line(value, "xrust_installed", "\u2705 Xrust installed", "\u274c Xrust installed");
+    render_flag_line(value, "xrust_version_ok", "\u2705 Xrust version recognized", "\u274c Xrust version could not be determined");
+    render_flag_line(value, "xrust_service_exist", "\u2705 Xrust service exists", "\u274c Xrust service exists");
+    render_flag_line(value, "xrust_autostart_disabled", "\u2705 Xrust standalone autostart disabled", "\u274c Xrust standalone autostart disabled");
+    render_flag_line(value, "xrust_process_running", "\u2705 Xrust process running", "\u274c Xrust process running");
+    render_flag_line(value, "xrust_ports_listening", "\u2705 Xrust listening ports", "\u274c Xrust listening ports");
 }
 
 function render_global_system_info() {
     let value = object_or_empty(read_stdin_json());
     let forkop_version = object_value(value, "forkop_version") || "unknown";
     let luci_app_version = object_value(value, "luci_app_version") || "unknown";
-    let sing_box_version = object_value(value, "sing_box_version") || "unknown";
+    let xrust_version = object_value(value, "xrust_version") || "unknown";
     let openwrt_version = object_value(value, "openwrt_version") || "unknown";
     let device_model = object_value(value, "device_model") || "unknown";
 
-    let sing_box_core = sing_box_core_label(value) || "regular";
-    print_line("Sing-box core: " + sing_box_core);
-
     print_line("\ud83d\udd73\ufe0f Forkop:   " + forkop_version);
     print_line("\ud83d\udd73\ufe0f LuCI App:      " + luci_app_version);
-    print_line("\ud83d\udce6 Sing-box:      " + format_sing_box_version(value, sing_box_version));
+    print_line("\ud83d\udce6 Xrust:         " + xrust_version);
     print_line("\ud83d\udedc OpenWrt:       " + openwrt_version);
     print_line("\ud83d\udedc Device:        " + device_model);
 }
@@ -662,9 +614,9 @@ function render_global_fakeip_check() {
     let fakeip_address = object_value(value, "IP");
 
     if (flag_is_true(value.fakeip))
-        print_line("\u2705 Sing-box FakeIP DNS works: " + fakeip_address);
+        print_line("\u2705 Xrust FakeIP DNS works: " + fakeip_address);
     else
-        print_line("\u274c Sing-box FakeIP DNS does NOT work");
+        print_line("\u274c Xrust FakeIP DNS does NOT work");
 }
 
 function render_global_dns_check(dont_touch_dhcp) {
@@ -731,6 +683,7 @@ function nft_ruleset_other_mark_lines(table_name) {
     let in_forkop_table = false;
     let family = "";
     let current_table = "";
+    let current_chain = "";
 
     for (let line in split(read_stdin(), "\n")) {
         line = as_string(line);
@@ -738,11 +691,14 @@ function nft_ruleset_other_mark_lines(table_name) {
         if (header != null) {
             family = header[1];
             current_table = header[2];
+            current_chain = "";
             in_forkop_table = family == "inet" && current_table == table_name;
             continue;
         }
-        if (mark_rules.is_native_tailscale_mark(family, current_table, line) ||
-            mark_rules.is_proxy_transport_mark(family, current_table, line))
+        let chain = match(line, /^\s*chain ([^ ]+) \{/);
+        if (chain != null)
+            current_chain = chain[1];
+        if (mark_rules.is_forkop_mark(family, current_table, current_chain, line))
             continue;
 
         if (!in_forkop_table && (index(line, "mark set") >= 0 || index(line, "meta mark") >= 0))
@@ -777,6 +733,10 @@ function is_udp_unsupported_outbound_log(line) {
     return index(as_string(line), "UDP is not supported by outbound:") >= 0;
 }
 
+function is_xrust_log(line) {
+    return match(line, /(^|[ \t])xrust\[[0-9]+\]:[ \t]/) != null;
+}
+
 function render_matching_log_tail(needle, max_lines) {
     let lines = split(read_stdin(), "\n");
     let filtered = [];
@@ -785,7 +745,7 @@ function render_matching_log_tail(needle, max_lines) {
     for (let line in lines) {
         if (line == "")
             continue;
-        if (line_contains(line, needle))
+        if (needle == "xrust" ? is_xrust_log(line) : line_contains(line, needle))
         {
             if (needle == "sing-box" && is_udp_unsupported_outbound_log(line)) {
                 if (!udp_http_notice_emitted) {
@@ -816,7 +776,7 @@ function render_forkop_logs() {
     for (let line in lines) {
         if (line == "")
             continue;
-        if (!line_contains(line, "forkop") && !line_contains(line, "sing-box"))
+        if (!line_contains(line, "forkop") && !line_contains(line, "sing-box") && !is_xrust_log(line))
             continue;
 
         if (line_contains(line, "sing-box") && is_udp_unsupported_outbound_log(line)) {
@@ -890,7 +850,11 @@ let masked_sing_box_keys = {
     domain_regex: true,
     ip_cidr: true,
     source_ip_cidr: true,
-    excluded_source_ip_cidr: true
+    excluded_source_ip_cidr: true,
+    authorization: true,
+    "proxy-authorization": true,
+    cookie: true,
+    "set-cookie": true
 };
 
 function mask_sing_box_value(value) {
@@ -904,7 +868,7 @@ function mask_sing_box_value(value) {
     if (type(value) == "object") {
         let result = {};
         for (let key, item in value)
-            result[key] = masked_sing_box_keys[key] ? "MASKED" : mask_sing_box_value(item);
+            result[key] = masked_sing_box_keys[lc(key)] ? "MASKED" : mask_sing_box_value(item);
         return result;
     }
 
@@ -912,7 +876,8 @@ function mask_sing_box_value(value) {
 }
 
 function mask_sing_box_config(path) {
-    write_json(mask_sing_box_value(read_json_file(path)));
+    let config = read_json_file(path);
+    write_json(type(config) == "object" ? mask_sing_box_value(config) : "MASKED");
 }
 
 function prepare_check_proxy_config(input_path, output_path, cache_path) {
@@ -1091,8 +1056,8 @@ else if (mode == "service-list-instance-running")
     service_list_instance_running(ARGV[1]);
 else if (mode == "mask-dns-server")
     mask_dns_server(ARGV[1]);
-else if (mode == "global-sing-box-check")
-    render_global_sing_box_check();
+else if (mode == "global-xrust-check")
+    render_global_xrust_check();
 else if (mode == "global-system-info")
     render_global_system_info();
 else if (mode == "global-fakeip-check")

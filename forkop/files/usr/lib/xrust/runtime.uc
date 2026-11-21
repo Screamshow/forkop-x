@@ -3,16 +3,17 @@
 let fs = require("fs");
 let uci_core = require("core.uci");
 let common = require("core.common");
+let xrust = require("xrust.binary");
 let connections = require("config.connections");
-let runtime_dns = require("singbox.dns");
-let runtime_constants = require("singbox.constants");
-let subscription_recovery = require("singbox.subscription_recovery");
+let runtime_dns = require("xrust.dns");
+let runtime_constants = require("xrust.constants");
+let subscription_recovery = require("xrust.subscription_recovery");
 
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
 // Test-only config preparation failure injection. Empty in production.
 const SINGBOX_CONFIG_FAIL_PHASE = getenv("FORKOP_SINGBOX_CONFIG_FAIL_PHASE") || "";
 const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
-const TMP_SING_BOX_FOLDER = getenv("TMP_SING_BOX_FOLDER") || "/tmp/sing-box";
+const TMP_SING_BOX_FOLDER = getenv("TMP_SING_BOX_FOLDER") || "/tmp/xrust";
 const TMP_RULESET_FOLDER = getenv("TMP_RULESET_FOLDER") || TMP_SING_BOX_FOLDER + "/rulesets";
 const TMP_SUBSCRIPTION_FOLDER = getenv("TMP_SUBSCRIPTION_FOLDER") || TMP_SING_BOX_FOLDER + "/subscriptions";
 const RUNTIME_STATE_DIR = getenv("FORKOP_RUNTIME_STATE_DIR") || "/var/run/forkop";
@@ -25,7 +26,7 @@ const RUNTIME_CACHE_FORMAT_FILE = getenv("FORKOP_RUNTIME_CACHE_FORMAT_FILE") || 
 const RUNTIME_CACHE_FORMAT = getenv("FORKOP_RUNTIME_CACHE_FORMAT") || "10";
 const PERSISTENT_SUBSCRIPTION_CACHE_DIR = getenv("FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR") || "/etc/forkop/subscription-cache";
 const PERSISTENT_SUBSCRIPTION_CACHE_FORMAT_FILE = getenv("FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_FORMAT_FILE") || PERSISTENT_SUBSCRIPTION_CACHE_DIR + "/cache-format";
-const RULESET_CACHE_UC = LIB_DIR + "/singbox/ruleset_cache.uc";
+const RULESET_CACHE_UC = LIB_DIR + "/xrust/ruleset_cache.uc";
 const PERSISTENT_SUBSCRIPTION_CACHE_FORMAT = getenv("FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_FORMAT") || "9";
 const PENDING_RELOAD_FILE = getenv("FORKOP_PENDING_RELOAD_FILE") || RUNTIME_STATE_DIR + "/reload.pending";
 const SERVICE_INIT = getenv("FORKOP_SERVICE_INIT") || "/etc/init.d/forkop";
@@ -41,10 +42,6 @@ const NFT_LOCALV6_SET_NAME = getenv("NFT_LOCALV6_SET_NAME") || "localv6";
 const NFT_FAKEIP_MARK = getenv("NFT_FAKEIP_MARK") || "0x04000000";
 const SB_SERVICE_MIXED_INBOUND_ADDRESS = getenv("SB_SERVICE_MIXED_INBOUND_ADDRESS") || "127.0.0.1";
 const SB_SERVICE_MIXED_INBOUND_PORT = getenv("SB_SERVICE_MIXED_INBOUND_PORT") || "4534";
-const SB_VARIANT_STATE_FILE = getenv("SB_VARIANT_STATE_FILE") || "/etc/forkop/sing-box-variant";
-const SB_VERSION_STATE_FILE = getenv("SB_VERSION_STATE_FILE") || "/etc/forkop/sing-box-version";
-const SB_MANAGED_SERVICE_MARKER = getenv("SB_MANAGED_SERVICE_MARKER") || "Forkop managed sing-box service for binary variants";
-
 function as_string(value) {
     return value == null ? "" : "" + value;
 }
@@ -96,10 +93,6 @@ function command_exists(name) {
     return command_success_from_args([ "command", "-v", name ]);
 }
 
-function write_file(path, value) {
-    return fs.writefile(as_string(path), as_string(value)) != null;
-}
-
 function remove_file(path) {
     try {
         fs.unlink(as_string(path));
@@ -112,14 +105,6 @@ function remove_files(paths) {
     for (let path in paths)
         if (as_string(path) != "")
             remove_file(path);
-}
-
-function file_first_line(path) {
-    let data = fs.readfile(as_string(path));
-    if (data == null)
-        return "";
-    let newline = index(data, "\n");
-    return trim(newline >= 0 ? substr(data, 0, newline) : data);
 }
 
 function object_or_empty(value) {
@@ -197,155 +182,13 @@ function md5_file(path) {
     return length(line) >= 32 ? substr(line, 0, 32) : "";
 }
 
-function first_line_last_field(value) {
-    value = as_string(value);
-    let newline = index(value, "\n");
-    let line = trim(newline >= 0 ? substr(value, 0, newline) : value);
-    let fields = split(line, /[ \t\r\n]+/);
-    return length(fields) > 0 ? as_string(fields[length(fields) - 1]) : "";
+function xrust_version_output() {
+    return command_exists(xrust.PATH) ? command_output_from_args([ xrust.PATH, "version" ]) : "";
 }
 
-function sing_box_version_output() {
-    return command_exists("sing-box") ? command_output_from_args([ "sing-box", "version" ]) : "";
-}
-
-function sing_box_marker_is(value) {
-    return file_first_line(SB_VARIANT_STATE_FILE) == as_string(value);
-}
-
-function sing_box_compressed_variant_active() {
-    if (!sing_box_marker_is("extended-compressed"))
-        return false;
-    // A manually installed package replaces the unpackaged compressed binary
-    // without updating Forkop's saved variant marker.
-    for (let name in [ "rust-x", "sing-box-x", "sing-box-extended", "sing-box-tiny", "sing-box" ])
-        if (command_success_from_args([ "ucode", "-L", LIB_DIR, LIB_DIR + "/core/packages.uc", "installed", name ]))
-            return false;
-    return true;
-}
-
-function sing_box_version_state() {
-    return file_first_line(SB_VERSION_STATE_FILE);
-}
-
-function sing_box_write_version_state(version) {
-    version = as_string(version);
-    return version != "" && ensure_parent_dir(SB_VERSION_STATE_FILE) && write_file(SB_VERSION_STATE_FILE, version + "\n");
-}
-
-function sing_box_clear_version_state() {
-    remove_file(SB_VERSION_STATE_FILE);
-    return true;
-}
-
-function sing_box_restore_version_state(version) {
-    version = as_string(version);
-    return version != "" ? sing_box_write_version_state(version) : sing_box_clear_version_state();
-}
-
-function sing_box_variant_marker() {
-    return file_first_line(SB_VARIANT_STATE_FILE);
-}
-
-function sing_box_write_variant_marker(variant) {
-    variant = as_string(variant);
-    return variant != "" && ensure_parent_dir(SB_VARIANT_STATE_FILE) && write_file(SB_VARIANT_STATE_FILE, variant + "\n");
-}
-
-function sing_box_clear_variant_marker() {
-    remove_file(SB_VARIANT_STATE_FILE);
-    return true;
-}
-
-function sing_box_restore_variant_marker(variant) {
-    variant = as_string(variant);
-    return variant != "" ? sing_box_write_variant_marker(variant) : sing_box_clear_variant_marker();
-}
-
-function sing_box_version() {
-    if (!command_exists("sing-box"))
-        return "";
-    if (sing_box_compressed_variant_active())
-        return sing_box_version_state();
-    return first_line_last_field(sing_box_version_output());
-}
-
-function sing_box_version_is_extended(value) {
-    return index(as_string(value), "extended") >= 0;
-}
-
-function sing_box_is_extended(value) {
-    value = as_string(value);
-    if (value == "" && command_exists("sing-box") && (sing_box_marker_is("extended-compressed") || sing_box_marker_is("extended")))
-        return true;
-
-    return sing_box_version_is_extended(value != "" ? value : sing_box_version());
-}
-
-function output_has_build_tag(output, tag) {
-    tag = as_string(tag);
-    if (tag == "")
-        return false;
-
-    for (let item in split(trim(replace(as_string(output), /[,: \t\r\n]+/g, " ")), " "))
-        if (as_string(item) == tag)
-            return true;
-    return false;
-}
-
-function output_has_feature(output, feature) {
-    for (let line in split(as_string(output), "\n"))
-        if (substr(trim(line), 0, 9) == "Features:" &&
-            output_has_build_tag(substr(trim(line), 9), feature))
-            return true;
-    return false;
-}
-
-function xray_client_features(version_output) {
-    return join(",", filter(["transport.xhttp.split", "transport.grpc.multi", "tls.xray-pins", "tls.verify-name"],
-        feature => output_has_feature(version_output, feature)));
-}
-
-function sing_box_supports_xhttp(version, version_output) {
-    // Legacy Extended builds predate Features. X must declare the transport;
-    // its package name and upstream version alone do not imply XHTTP support.
-    if (sing_box_is_extended(version))
-        return true;
-    version_output = version_output == null ? sing_box_version_output() : as_string(version_output);
-    return output_has_feature(version_output, "transport.xhttp");
-}
-
-function sing_box_supports_trojan(version, version_output) {
-    // The other cores keep their Trojan client. Xrust releases up to 0.0.27
-    // have none; later builds declare it in Features.
-    if (index(as_string(version), "-rust-x.") < 0)
-        return true;
-    version_output = version_output == null ? sing_box_version_output() : as_string(version_output);
-    return output_has_feature(version_output, "outbound.trojan");
-}
-
-function sing_box_supports_bittorrent_direct(version, version_output) {
-    return match(as_string(version), /-rust-x[.]/) != null &&
-        output_has_feature(version_output, "sniff.bittorrent-extended");
-}
-
-function sing_box_supports_vless_encryption(version, version_output) {
-    if (index(as_string(version), "-rust-x.") < 0)
-        return true;
-    return output_has_feature(version_output, "outbound.vless.encryption");
-}
-
-function sing_box_supports_tailscale(version, version_output) {
-    version = as_string(version);
-    version_output = as_string(version_output);
-
-    if (command_exists("sing-box") && sing_box_compressed_variant_active())
-        return true;
-    if (sing_box_is_extended(version))
-        return true;
-    if (version_output != "")
-        return output_has_build_tag(version_output, "with_tailscale");
-    return output_has_build_tag(sing_box_version_output(), "with_tailscale");
+function xray_client_features(output) {
+    return join(",", filter([ "transport.xhttp.split", "transport.grpc.multi", "tls.xray-pins", "tls.verify-name" ],
+        feature => xrust.has_feature(output, feature)));
 }
 
 function module_command(args) {
@@ -357,50 +200,6 @@ function module_command(args) {
 
 function module_success(args) {
     return command_status(module_command(args)) == 0;
-}
-
-function sing_box_package_installed(name) {
-    return module_success([ LIB_DIR + "/core/packages.uc", "installed", as_string(name) ]);
-}
-
-function sing_box_is_tiny(version, version_output) {
-    version = as_string(version);
-    version_output = as_string(version_output);
-
-    if (sing_box_package_installed("rust-x") || match(version, /-rust-x[.]/) != null)
-        return false;
-    if (sing_box_package_installed("sing-box-x") || match(version, /-x-[0-9]+[.]/) != null)
-        return false;
-
-    if (command_exists("sing-box") && sing_box_compressed_variant_active())
-        return false;
-    if (sing_box_is_extended(version != "" ? version : sing_box_version()))
-        return false;
-    if (sing_box_package_installed("sing-box-tiny"))
-        return true;
-    if (!sing_box_marker_is("tiny"))
-        return false;
-    return !sing_box_supports_tailscale(version, version_output);
-}
-
-function sing_box_variant() {
-    let version = "";
-
-    if (!command_exists("sing-box"))
-        return "not-installed";
-    if (sing_box_compressed_variant_active())
-        return "extended-compressed";
-
-    version = sing_box_version();
-    if (sing_box_package_installed("rust-x") || match(version, /-rust-x[.]/) != null)
-        return "rust-x";
-    if (sing_box_package_installed("sing-box-x") || match(version, /-x-[0-9]+[.]/) != null)
-        return "x";
-    if (sing_box_is_extended(version))
-        return "extended";
-    if (sing_box_is_tiny(version, ""))
-        return "tiny";
-    return "stable";
 }
 
 function log_message(message, level) {
@@ -423,179 +222,39 @@ function uci_settings() {
     return object_or_empty(uci_core.get_all(CONFIG_NAME, "settings"));
 }
 
-function uci_path(config, section, key) {
-    return as_string(config) + "." + as_string(section) + "." + as_string(key);
-}
-
-function uci_get_option(config, section, key) {
-    return trim(uci_core.get(uci_path(config, section, key)));
-}
-
-function ensure_sing_box_main_section() {
-    if (uci_core.exists("sing-box.main"))
-        return true;
-    return uci_core.set_section("sing-box.main", "sing-box");
-}
-
-function uci_set_option(config, section, key, value) {
-    if (!uci_core.exists(as_string(config) + "." + as_string(section)))
-        return false;
-    return uci_core.set(uci_path(config, section, key), value);
-}
-
-function uci_commit(config) {
-    return uci_core.commit(config);
-}
-
-function owner_pid() {
-    let pid = trim(command_output_from_args([ "sh", "-c", "echo $PPID" ]));
-    return match(pid, /^[0-9]+$/) != null ? pid : "0";
-}
-
-function managed_service_installed() {
-    let data = fs.readfile("/etc/init.d/sing-box");
-    return data != null && index(as_string(data), SB_MANAGED_SERVICE_MARKER) >= 0;
-}
-
-function managed_service_text() {
-    return "#!/bin/sh /etc/rc.common\n" +
-        "# " + SB_MANAGED_SERVICE_MARKER + "\n\n" +
-        "USE_PROCD=1\n" +
-        "START=99\n" +
-        "PROG=\"/usr/bin/sing-box\"\n\n" +
-        "start_service() {\n" +
-        "    config_load \"sing-box\"\n" +
-        "    local enabled config_file working_directory\n" +
-        "    local log_stderr\n\n" +
-        "    config_get_bool enabled \"main\" \"enabled\" \"0\"\n" +
-        "    [ \"$enabled\" -eq \"1\" ] || return 0\n\n" +
-        "    config_get config_file \"main\" \"conffile\" \"/etc/sing-box/config.json\"\n" +
-        "    config_get working_directory \"main\" \"workdir\" \"/usr/share/sing-box\"\n" +
-        "    mkdir -p \"$working_directory\" || return 1\n" +
-        "    config_get_bool log_stderr \"main\" \"log_stderr\" \"1\"\n\n" +
-        "    procd_open_instance\n" +
-        "    procd_set_param command \"$PROG\" run -c \"$config_file\" -D \"$working_directory\"\n" +
-        "    procd_set_param stderr \"$log_stderr\"\n" +
-        "    procd_set_param limits core=\"unlimited\"\n" +
-        "    procd_set_param limits nofile=\"1000000 1000000\"\n" +
-        "    procd_set_param respawn\n" +
-        "    procd_close_instance\n" +
-        "}\n\n" +
-        "service_triggers() {\n" +
-        "    procd_add_reload_trigger \"sing-box\"\n" +
-        "}\n";
-}
-
-function sing_box_compressed_marker_set() {
-    return trim(as_string(fs.readfile(SB_VARIANT_STATE_FILE) || "")) == "extended-compressed";
-}
-
-function install_managed_service_script() {
-    let tmp = "/etc/init.d/sing-box.forkop." + owner_pid();
-    if (!write_file(tmp, managed_service_text()))
-        return false;
-    if (!command_success_from_args([ "chmod", "0755", tmp ])) {
-        remove_file(tmp);
-        return false;
-    }
-    return fs.rename(tmp, "/etc/init.d/sing-box");
-}
-
-function remove_managed_service_script() {
-    if (!managed_service_installed())
-        return;
-
-    command_success_from_args([ "/etc/init.d/sing-box", "stop" ]);
-    command_success_from_args([ "/etc/init.d/sing-box", "disable" ]);
-    remove_file("/etc/init.d/sing-box");
-}
-
-function ensure_service_nofile_limit() {
-    let path = "/etc/init.d/sing-box";
-    let data = fs.readfile(path);
-    if (data == null)
-        return false;
-
-    // Keep the package's service implementation (user, triggers and arguments).
-    // Apply the limit last, including when the package already sets a lower one.
-    let limit = "    procd_set_param limits nofile=\"1000000 1000000\"\n";
-    let close = /(^|\n)[ \t]*procd_close_instance[ \t]*(\n|$)/g;
-    let updated = replace(data, close, "\n" + limit + "    procd_close_instance\n");
-    if (updated == data)
-        return index(data, limit + "    procd_close_instance") >= 0;
-
-    // Avoid accumulating the same override on subsequent starts.
-    updated = replace(updated, limit + limit, limit);
-    if (updated == data)
-        return true;
-    let tmp = path + ".forkop." + owner_pid();
-    if (!write_file(tmp, updated) ||
-        !command_success_from_args([ "sh", "-n", tmp ]) ||
-        !command_success_from_args([ "chmod", "0755", tmp ]) ||
-        !fs.rename(tmp, path)) {
-        remove_file(tmp);
-        return false;
-    }
-    return true;
-}
-
 function set_service_config_path(path) {
-    return path != "" && (uci_get_option("sing-box", "main", "conffile") == path ||
-        (uci_set_option("sing-box", "main", "conffile", path) && uci_commit("sing-box")));
+    if (path == "" || index(path, "\n") >= 0)
+        return false;
+    if (split(fs.readfile(xrust.APPLIED_CONFIG_PATH_FILE) || "", "\n")[0] == path)
+        return true;
+
+    if (!ensure_parent_dir(xrust.APPLIED_CONFIG_PATH_FILE))
+        return false;
+    let staging = trim(command_output_from_args([ "mktemp", xrust.APPLIED_CONFIG_PATH_FILE + ".XXXXXX" ]));
+    if (staging == "")
+        return false;
+    let written = common.write_private_file(staging, path + "\n") != null &&
+        fs.rename(staging, xrust.APPLIED_CONFIG_PATH_FILE);
+    if (!written)
+        remove_file(staging);
+    return written;
 }
 
 function configure_service(config_path_override) {
-    let settings = uci_settings();
-
-    if (sing_box_compressed_marker_set() && !install_managed_service_script()) {
-        log_message("Failed to install managed sing-box service for compressed binary. Aborted.", "fatal");
+    let config_path = config_path_override || option(uci_settings(), "config_path", xrust.CONFIG_PATH);
+    // The pinned package still owns the old init script for 2.7.6 rollback.
+    // Forkop's core must never autostart through both procd services.
+    let legacy_init = "/etc/init.d/sing-box";
+    if (file_exists("/etc/rc.d/S99sing-box") &&
+        module_success([ LIB_DIR + "/core/packages.uc", "installed", "rust-x" ]) &&
+        !command_success_from_args([ legacy_init, "disable" ])) {
+        log_message("Failed to disable the Xrust package's legacy boot service", "fatal");
         exit(1);
     }
 
-    if (!ensure_service_nofile_limit()) {
-        log_message("Failed to configure sing-box service file descriptor limit. Aborted.", "fatal");
+    if (!set_service_config_path(config_path)) {
+        log_message("Failed to stage the Xrust service configuration path", "fatal");
         exit(1);
-    }
-
-    if (!ensure_sing_box_main_section())
-        exit(1);
-
-    let workdir = uci_get_option("sing-box", "main", "workdir") || "/usr/share/sing-box";
-    if (!ensure_dir(workdir)) {
-        log_message("Failed to create sing-box working directory: " + workdir, "fatal");
-        exit(1);
-    }
-
-    let changed = false;
-    if (uci_get_option("sing-box", "main", "enabled") != "1") {
-        if (!uci_set_option("sing-box", "main", "enabled", "1"))
-            exit(1);
-        changed = true;
-        log_message("sing-box service has been enabled", "info");
-    }
-
-    if (uci_get_option("sing-box", "main", "user") != "root") {
-        if (!uci_set_option("sing-box", "main", "user", "root"))
-            exit(1);
-        changed = true;
-        log_message("sing-box service user has been changed to root", "info");
-    }
-
-    let config_path = config_path_override || option(settings, "config_path", "");
-    let conffile = uci_get_option("sing-box", "main", "conffile");
-    if (conffile != config_path) {
-        if (!uci_set_option("sing-box", "main", "conffile", config_path))
-            exit(1);
-        changed = true;
-        log_message("sing-box service config path set to " + config_path, "info");
-    }
-
-    if (changed && !uci_commit("sing-box"))
-        exit(1);
-
-    if (file_exists("/etc/rc.d/S99sing-box")) {
-        log_message("Disabling standalone sing-box autostart", "info");
-        command_success_from_args([ "/etc/init.d/sing-box", "disable" ]);
     }
 }
 
@@ -745,7 +404,7 @@ function log_file_lines(path, level, prefix) {
 
 function sing_box_check(config_path, output_path) {
     let status = command_status(
-        command_from_args([ "sing-box", "-c", config_path, "check" ]) +
+        command_from_args([ xrust.PATH, "check", "-c", config_path ]) +
         " >" + shell_quote(output_path) + " 2>&1"
     );
     let reason = status == 0 ? "" : trim(as_string(fs.readfile(output_path) || ""));
@@ -795,10 +454,10 @@ function validate_config_stage(stage_path) {
     }
 
     let result = SINGBOX_CONFIG_FAIL_PHASE == "check"
-        ? { status: 1, reason: "injected sing-box configuration check failure" }
+        ? { status: 1, reason: "injected Xrust configuration check failure" }
         : check_with_subscription_recovery(stage_path, check_log);
     if (result.status != 0)
-        log_message("Staged sing-box configuration is invalid: " + result.reason + ". Aborted.", "fatal");
+        log_message("Staged Xrust configuration is invalid: " + result.reason + ". Aborted.", "fatal");
     remove_file(check_log);
     return result.status == 0;
 }
@@ -821,13 +480,13 @@ function save_config_file(temp_file_path, config_path) {
     let temp_hash = md5_file(temp_file_path);
 
     if (current_hash != temp_hash) {
-        log_message("sing-box configuration changed; updating " + config_path, "info");
+        log_message("Xrust configuration changed; updating " + config_path, "info");
         if (!ensure_parent_dir(config_path))
             return false;
         return command_success_from_args([ "mv", "-f", temp_file_path, config_path ]);
     }
 
-    log_message("sing-box configuration is unchanged", "info");
+    log_message("Xrust configuration is unchanged", "info");
     remove_file(temp_file_path);
     return true;
 }
@@ -932,8 +591,8 @@ function publish_section_cache(temp_config_path, retained_transaction) {
     return true;
 }
 
-function commit_config_stage(stage_path, backup_path) {
-    let config_path = option(uci_settings(), "config_path", "");
+function commit_config_stage(stage_path, backup_path, applied_path) {
+    let config_path = applied_path || option(uci_settings(), "config_path", "");
     stage_path = as_string(stage_path);
     backup_path = as_string(backup_path);
     if (config_path == "" || !file_exists(stage_path) || backup_path == "")
@@ -979,7 +638,7 @@ function patch_dns_config(state_path, prepare_only) {
     let config_path = as_string(applied.config_path || option(uci_settings(), "config_path", ""));
     let config = common.read_json_file(config_path);
     if (config_path == "" || type(config) != "object") {
-        log_message("Cannot read the current sing-box configuration for DNS failover", "error");
+        log_message("Cannot read the current Xrust configuration for DNS failover", "error");
         exit(1);
     }
 
@@ -1019,7 +678,7 @@ function patch_dns_config(state_path, prepare_only) {
         ? { status: 1, reason: "unable to create check output file" }
         : sing_box_check(temp_config, check_log);
     if (check_result.status != 0) {
-        log_message("DNS failover produced an invalid sing-box configuration: " + check_result.reason, "error");
+        log_message("DNS failover produced an invalid Xrust configuration: " + check_result.reason, "error");
         remove_files([ backup_path, temp_config, check_log ]);
         exit(1);
     }
@@ -1054,9 +713,9 @@ function restore_dns_config(backup_path, config_path) {
     return common.copy_private_file_atomic(backup_path, config_path);
 }
 
-function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferred_sections, stage_path, validate_now) {
+function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferred_sections, stage_path, validate_now, applied_path) {
     let settings = uci_settings();
-    let config_path = option(settings, "config_path", "");
+    let config_path = applied_path || option(settings, "config_path", "");
     if (config_path == "") {
         log_message("sing-box config path is empty. Aborted.", "fatal");
         exit(1);
@@ -1085,21 +744,28 @@ function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferre
 
     // This invocation cannot change the installed core; use one capability
     // snapshot for both generator arguments instead of executing version twice.
-    let core_version = sing_box_version();
-    let version_output = sing_box_is_extended(core_version) ? "" : sing_box_version_output();
+    let version_output = xrust_version_output();
+    let core_version = xrust.version_from_output(version_output);
+    if (core_version == "") {
+        log_message("Could not identify the installed Xrust client", "fatal");
+        discard_config_stage(temp_config);
+        remove_file(runtime_log);
+        exit(1);
+    }
     let generate_status = command_status(
+        command_env({ FORKOP_APPLIED_XRUST_CONFIG_PATH: config_path }) + " " +
         module_command([
-            LIB_DIR + "/singbox/generator.uc",
+            LIB_DIR + "/xrust/generator.uc",
             "generate-config",
             temp_config,
             service_listen_address_value(settings),
             mwan3_active ? "1" : "0",
-            sing_box_supports_xhttp(core_version, version_output) ? "1" : "0",
+            xrust.has_feature(version_output, "transport.xhttp") ? "1" : "0",
             deferred_sections,
             core_version,
-            sing_box_supports_trojan(core_version, version_output) ? "1" : "0",
-            sing_box_supports_bittorrent_direct(core_version, version_output) ? "1" : "0",
-            sing_box_supports_vless_encryption(core_version, version_output) ? "1" : "0",
+            xrust.has_feature(version_output, "outbound.trojan") ? "1" : "0",
+            xrust.has_feature(version_output, "sniff.bittorrent-extended") ? "1" : "0",
+            xrust.has_feature(version_output, "outbound.vless.encryption") ? "1" : "0",
             xray_client_features(version_output)
         ]) + " >" + shell_quote(runtime_log) + " 2>&1"
     );
@@ -1108,7 +774,7 @@ function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferre
     if (generate_status != 0) {
         let reason = generator_failure_reason(runtime_log, generate_status);
         let retryable = generate_status == runtime_constants.PROVIDER_DNS_UNAVAILABLE;
-        log_message("Failed to generate sing-box configuration: " + reason, retryable ? "warn" : "fatal");
+        log_message("Failed to generate Xrust configuration: " + reason, retryable ? "warn" : "fatal");
         discard_config_stage(temp_config);
         remove_file(runtime_log);
         exit(retryable ? generate_status : 1);
@@ -1132,10 +798,10 @@ function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferre
 
     if (validate_now !== false) {
         let check_result = SINGBOX_CONFIG_FAIL_PHASE == "check"
-            ? { status: 1, reason: "injected sing-box configuration check failure" }
+            ? { status: 1, reason: "injected Xrust configuration check failure" }
             : check_with_subscription_recovery(temp_config, runtime_log);
         if (check_result.status != 0) {
-            log_message("Generated sing-box configuration is invalid: " + check_result.reason + ". Aborted.", "fatal");
+            log_message("Generated Xrust configuration is invalid: " + check_result.reason + ". Aborted.", "fatal");
             discard_config_stage(temp_config);
             remove_file(runtime_log);
             exit(1);
@@ -1158,7 +824,7 @@ function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferre
         NFT_IP_PORT6_SET_NAME,
         NFT_LOCALV6_SET_NAME
     ])) {
-        log_message("Failed to update nftables runtime sets from the generated sing-box configuration. Aborted.", "fatal");
+        log_message("Failed to update nftables runtime sets from the generated Xrust configuration. Aborted.", "fatal");
         discard_config_stage(temp_config);
         remove_file(runtime_log);
         exit(1);
@@ -1203,13 +869,13 @@ else if (mode == "publish-reload-config") {
     exit(path != "" && ensure_parent_dir(path) && common.copy_private_file_atomic(ARGV[1], path) ? 0 : 1);
 }
 else if (mode == "init-config")
-    init_config(arg_bool(ARGV[1] || "1"), arg_bool(ARGV[2] || "0"), arg_bool(ARGV[3] || "0"), ARGV[4] || "", "", true);
+    init_config(arg_bool(ARGV[1] || "1"), arg_bool(ARGV[2] || "0"), arg_bool(ARGV[3] || "0"), ARGV[4] || "", "", true, ARGV[5]);
 else if (mode == "prepare-config-stage")
     // The lifecycle validates this staged file after stopping the old runtime.
     // That ordering avoids a high transient memory peak on small routers.
-    init_config(arg_bool(ARGV[1] || "0"), arg_bool(ARGV[2] || "0"), arg_bool(ARGV[3] || "0"), ARGV[4] || "", ARGV[5] || "", false);
+    init_config(arg_bool(ARGV[1] || "0"), arg_bool(ARGV[2] || "0"), arg_bool(ARGV[3] || "0"), ARGV[4] || "", ARGV[5] || "", false, ARGV[6]);
 else if (mode == "commit-config-stage")
-    exit(commit_config_stage(ARGV[1] || "", ARGV[2] || "") ? 0 : 1);
+    exit(commit_config_stage(ARGV[1] || "", ARGV[2] || "", ARGV[3]) ? 0 : 1);
 else if (mode == "restore-config-stage")
     exit(restore_config_stage(ARGV[1] || "", ARGV[2]) ? 0 : 1);
 else if (mode == "discard-config-stage")
@@ -1238,10 +904,6 @@ else if (mode == "prepare-dns-config")
     patch_dns_config(ARGV[1] || "", true);
 else if (mode == "restore-dns-config")
     exit(restore_dns_config(ARGV[1] || "", ARGV[2] || "") ? 0 : 1);
-else if (mode == "managed-service-installed")
-    exit(managed_service_installed() ? 0 : 1);
-else if (mode == "remove-managed-service-script")
-    remove_managed_service_script();
 else if (mode == "service-proxy-address")
     print(service_proxy_address(uci_settings(), ARGV[1] || "lists"), "\n");
 else if (mode == "service-listen-address") {
@@ -1259,38 +921,12 @@ else if (mode == "device-ipv4-address") {
 else if (mode == "ip-addr-first-inet4")
     print(ip_addr_first_inet4(fs.readfile("/dev/stdin")), "\n");
 else if (mode == "version")
-    print(sing_box_version(), "\n");
+    print(xrust.version_from_output(xrust_version_output()), "\n");
+else if (mode == "build-version")
+    print(xrust.build_version(xrust.version_from_output(xrust_version_output())), "\n");
 else if (mode == "version-output")
-    print(sing_box_version_output());
-else if (mode == "version-from-output")
-    print(first_line_last_field(fs.readfile("/dev/stdin")), "\n");
-else if (mode == "read-version-state")
-    print(sing_box_version_state(), "\n");
-else if (mode == "write-version-state")
-    exit(sing_box_write_version_state(ARGV[1]) ? 0 : 1);
-else if (mode == "restore-version-state")
-    exit(sing_box_restore_version_state(ARGV[1]) ? 0 : 1);
-else if (mode == "read-variant-marker")
-    print(sing_box_variant_marker(), "\n");
-else if (mode == "write-variant-marker")
-    exit(sing_box_write_variant_marker(ARGV[1]) ? 0 : 1);
-else if (mode == "restore-variant-marker")
-    exit(sing_box_restore_variant_marker(ARGV[1]) ? 0 : 1);
-else if (mode == "marker-is")
-    exit(sing_box_marker_is(ARGV[1]) ? 0 : 1);
-else if (mode == "is-extended")
-    exit(sing_box_is_extended(ARGV[1]) ? 0 : 1);
-else if (mode == "is-tiny")
-    exit(sing_box_is_tiny(ARGV[1], ARGV[2]) ? 0 : 1);
-else if (mode == "supports-tailscale")
-    exit(sing_box_supports_tailscale(ARGV[1], ARGV[2]) ? 0 : 1);
-else if (mode == "supports-bittorrent-direct")
-    exit(sing_box_supports_bittorrent_direct(ARGV[1], ARGV[2]) ? 0 : 1);
-else if (mode == "supports-vless-encryption")
-    exit(sing_box_supports_vless_encryption(ARGV[1], ARGV[2]) ? 0 : 1);
-else if (mode == "variant")
-    print(sing_box_variant(), "\n");
+    print(xrust_version_output());
 else {
-    warn("Usage: singbox/runtime.uc <operation> ...\n");
+    warn("Usage: xrust/runtime.uc <operation> ...\n");
     exit(1);
 }

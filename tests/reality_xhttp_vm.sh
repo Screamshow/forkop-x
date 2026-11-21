@@ -83,7 +83,7 @@ write("fixture.json",{settings:{".name":"settings",".type":"settings",dns_server
     ".name":"probe",".type":"section",enabled:"1",action:"connection",selector_proxy_links:[link]}]});
 EOF
 ucode "$LAB/build.uc" "$LAB"
-FORKOP_LIB="$LIB" ucode -L "$LIB" "$LIB/singbox/generator.uc" generate-config-fixture \
+FORKOP_LIB="$LIB" ucode -L "$LIB" "$LIB/xrust/generator.uc" generate-config-fixture \
     "$LAB/fixture.json" "$LAB/generated.json" 127.0.0.1 0 1 '' 1.14.1-extended-2.7.2
 cat > "$LAB/client.uc" <<'EOF'
 let fs=require("fs");let root=ARGV[0];let c=json(fs.readfile(root+"/generated.json"));

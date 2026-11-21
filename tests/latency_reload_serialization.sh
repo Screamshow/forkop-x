@@ -21,7 +21,7 @@ grep -Fq 'Automatic latency test is deferred until the pending Forkop reload com
   fail "startup must defer automatic latency while reload.pending exists"
 grep -Fq 'post-start list and rule-set pipeline completes' "$LIFECYCLE_UC" ||
   fail "startup must defer automatic latency until its list/rule-set pipeline completes"
-grep -Fq '[ BIN_PATH, "post_start_latency" ]' "$ROOT_DIR/forkop/files/usr/lib/singbox/ruleset_cache.uc" ||
+grep -Fq '[ BIN_PATH, "post_start_latency" ]' "$ROOT_DIR/forkop/files/usr/lib/xrust/ruleset_cache.uc" ||
   fail "post-start ruleset refresh must call the registered CLI command to release the latency barrier"
 grep -Fq 'schedule_automatic_latency_after_runtime' "$LIFECYCLE_UC" ||
   fail "startup and pending reload must share one final-signature latency scheduler"
@@ -75,7 +75,7 @@ grep -Fq 'the final runtime will resume it' "$DIAGNOSTICS_UC" ||
   fail "the worker that handed off a pending reload must yield to its final-runtime replacement"
 grep -Fq 'pending_reload_requested' "$DIAGNOSTICS_UC" ||
   fail "a pending reload must be distinguished from an unrelated reload interruption"
-grep -Fq 'resuming automatically after sing-box is ready' "$DIAGNOSTICS_UC" ||
+grep -Fq 'resuming automatically after Xrust is ready' "$DIAGNOSTICS_UC" ||
   fail "reload-interrupted automatic latency must resume without a manual restart"
 if grep -Fq 'attempt < 20' "$DIAGNOSTICS_UC"; then
   fail "duplicate automatic latency tests must skip instead of queuing"
@@ -88,7 +88,7 @@ grep -Fq 'AUTOMATIC_LATENCY_RETRY_BASE_SECONDS' "$DIAGNOSTICS_UC" ||
   fail "Clash API failures must have a retry pause"
 grep -Fq 'automatic_latency_schedule_resume();' "$DIAGNOSTICS_UC" ||
   fail "reload interruption must schedule its own resume worker"
-grep -Fq 'the pending reload will resume it after sing-box is ready' "$DIAGNOSTICS_UC" ||
+grep -Fq 'the pending reload will resume it after Xrust is ready' "$DIAGNOSTICS_UC" ||
   fail "pending reload must own the single automatic test resume"
 
 # The LuCI/manual bulk action stays available and is intentionally independent

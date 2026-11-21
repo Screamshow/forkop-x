@@ -28,6 +28,8 @@ export FORKOP_MIRROR_BASE_URL=https://test.invalid
 sh "$ROOT/canary-install.sh" --help
 printf '%s\n' --channel canary --help > "$work/expected"
 cmp "$work/expected" "$TEST_RESULT"
+FORKOP_MIRROR_BASE_URL=https://test.invalid/ sh "$ROOT/canary-install.sh" --help
+cmp "$work/expected" "$TEST_RESULT"
 INSTALLER_STATUS=7 sh "$ROOT/canary-install.sh" --help && exit 1 || [ "$?" = 7 ]
 rm "$TEST_RESULT"
 FAIL_DOWNLOAD=1 sh "$ROOT/canary-install.sh" --help && exit 1 || [ "$?" = 22 ]

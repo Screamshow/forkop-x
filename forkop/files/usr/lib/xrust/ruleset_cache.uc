@@ -1,9 +1,10 @@
 #!/usr/bin/env ucode
 
 let fs = require("fs");
+let xrust = require("xrust.binary");
 let common = require("core.common");
 let constants = require("core.constants");
-let rulesets = require("singbox.rulesets");
+let rulesets = require("xrust.rulesets");
 let uci_core = require("core.uci");
 let core_ip = require("core.ip");
 let core_url = require("core.url");
@@ -13,11 +14,11 @@ const BIN_PATH = getenv("FORKOP_BIN") || "/usr/bin/forkop";
 const CACHE_DIR = getenv("FORKOP_RULESET_CACHE_DIR") || "/etc/forkop/ruleset-cache";
 const MANIFEST_PATH = getenv("FORKOP_RULESET_CACHE_MANIFEST") || CACHE_DIR + "/manifest.json";
 const LIST_CACHE_DIR = getenv("FORKOP_PERSISTENT_LIST_CACHE_DIR") || "/etc/forkop/list-cache";
-const RUNTIME_CACHE_DIR = getenv("FORKOP_RULESET_RUNTIME_CACHE_DIR") || "/tmp/sing-box/ruleset-cache";
+const RUNTIME_CACHE_DIR = getenv("FORKOP_RULESET_RUNTIME_CACHE_DIR") || "/tmp/xrust/ruleset-cache";
 const RUNTIME_MANIFEST_PATH = getenv("FORKOP_RULESET_RUNTIME_MANIFEST") || "/var/run/forkop/ruleset-cache-runtime.json";
 const SERVICE_INIT = getenv("FORKOP_SERVICE_INIT") || "/etc/init.d/forkop";
 const SING_BOX_CONFIG_PATH = getenv("FORKOP_SING_BOX_CONFIG_PATH") ||
-    uci_core.get(CONFIG_NAME + ".settings.config_path") || "/etc/sing-box/config.json";
+    uci_core.get(CONFIG_NAME + ".settings.config_path") || "/etc/xrust/config.json";
 const TEMPORARY_FILE_MAX_AGE = int(getenv("FORKOP_RULESET_CACHE_TEMP_MAX_AGE") || "3600");
 const PERSISTENT_CACHE_MAX_BYTES = int(getenv("FORKOP_PERSISTENT_LIST_CACHE_MAX_BYTES") || "8388608");
 const PERSISTENT_CACHE_MIN_FREE_BYTES = int(getenv("FORKOP_PERSISTENT_LIST_CACHE_MIN_FREE_BYTES") || "8388608");
@@ -276,7 +277,7 @@ function valid_binary(path) {
     // before parsing, so a changed file cannot inherit the parser's success.
     let digest = binary_digest(path);
     let ok = digest != "" && command_success([
-        "sing-box", "rule-set", "match", "--format", "binary", path,
+        xrust.PATH, "rule-set", "match", "--format", "binary", path,
         "forkop-validation.invalid"
     ]) && binary_stat_signature(path) == signature && binary_digest(path) == digest;
     if (ok)
@@ -812,6 +813,6 @@ else if (mode == "fallback-urls")
     for (let url in fallback_urls(ARGV[1]))
         print(url, "\n");
 else {
-    warn("Usage: singbox/ruleset_cache.uc <materialize-config|refresh|refresh-for-restart|refresh-and-reload|fallback-urls> ...\n");
+    warn("Usage: xrust/ruleset_cache.uc <materialize-config|refresh|refresh-for-restart|refresh-and-reload|fallback-urls> ...\n");
     exit(1);
 }

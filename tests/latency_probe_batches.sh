@@ -4,7 +4,9 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 RUNTIME="$ROOT/forkop/files/usr/lib/diagnostics/runtime.uc"
 
 extract() {
-  sed -n '/^function latency_probe_concurrency() {/,/^}/p;
+  sed -n '/^function valid_latency_ms(/,/^}/p;
+          /^function parse_clash_latency(/,/^}/p;
+          /^function latency_probe_concurrency() {/,/^}/p;
           /^function latency_curl_args(/,/^}/p;
           /^function latency_probe_command(/,/^}/p;
           /^function probe_proxy_latencies(/,/^}/p' "$RUNTIME"
@@ -28,11 +30,13 @@ function clash_latency_endpoint(base_url, proxy_tag, proxy_type) {
     return as_string(base_url) + (lc(as_string(proxy_type)) == "urltest" ? "/group/" : "/proxies/") +
         as_string(proxy_tag) + "/delay";
 }
-function body_for(tag) { return bodies[tag] != null ? bodies[tag] : '{"delay":42}'; }
+function body_for(tag) {
+    return bodies[tag] != null ? bodies[tag] : (tag == "group" ? '{"a":42}' : '{"delay":42}');
+}
 function tag_of(command) {
     for (let part in split(as_string(command), " "))
         if (index(part, "/delay") >= 0)
-            return replace(replace(replace(part, /.*\/proxies\//, ""), /.*\/group\//, ""), /\/delay.*/, "");
+            return replace(replace(part, /^https?:\/\/[^/]+\/(proxies|group)\//, ""), /\/delay.*/, "");
     return "";
 }
 // A batch runs its probes through the shell; a lone probe is captured directly.
@@ -57,9 +61,6 @@ function command_status(script) {
         temps[path] = body_for(tag);
     }
     return 0;
-}
-function status_capture(args, input) {
-    return { status: index(as_string(input), "delay") >= 0 ? 0 : 1, output: "" };
 }
 function module_success(module_path, args) {
     push(updates, as_string(args[2]) + "/" + as_string(args[3]) + " failed=" + as_string(args[4]));
@@ -142,3 +143,21 @@ UCODE
 } | FORKOP_LATENCY_PROBE_CONCURRENCY=4 ucode -
 
 printf 'latency probe batch tests passed\n'
+
+# Xrust group replies are maps of responding member tags to positive delays.
+{ mocks; extract; cat <<'UCODE'
+for (let invalid in [ "{}", "[]", '"ok"', '{"delay":0}', '{"message":"timeout"}' ])
+    assert(parse_clash_latency(invalid, false) == null, "accepted invalid proxy delay");
+for (let invalid in [ "{}", "[]", '{"a":0}', '{"a":"42"}', '{"error":"failed"}' ])
+    assert(parse_clash_latency(invalid, true) == null, "accepted empty or invalid group delay");
+assert(parse_clash_latency('{"a":42}', true).a == 42, "lost valid member delay");
+bodies = { group: "{}" };
+let progress = probe_proxy_latencies(PLAN, [ "a", "group" ], new_progress(2));
+assert(progress.completed == 2 && progress.failed == 1, "unexpected URLTest mixed-batch progress: " +
+    sprintf("%J", { progress, probed }));
+bodies = {};
+progress = probe_proxy_latencies(PLAN, [ "group" ], new_progress(1));
+assert(progress.completed == 1 && progress.failed == 0, "valid URLTest reply did not pass");
+print("latency API response validation passed\n");
+UCODE
+} | FORKOP_LATENCY_PROBE_CONCURRENCY=2 ucode -

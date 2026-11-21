@@ -1,4 +1,4 @@
-let transport = require("singbox.proxy_transport");
+let transport = require("xrust.proxy_transport");
 let config = {
     outbounds: [
         {type:"direct",tag:"direct-out"},

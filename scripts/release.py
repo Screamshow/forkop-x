@@ -56,6 +56,55 @@ def public_json(url):
     return json.loads(fetch(url))
 
 
+def verify_mirror_asset(url, size, sha256):
+    hasher = hashlib.sha256()
+    remaining = size
+    with urllib.request.urlopen(url, timeout=60) as response:
+        while chunk := response.read(min(1024 * 1024, remaining + 1)):
+            remaining -= len(chunk)
+            if remaining < 0:
+                break
+            hasher.update(chunk)
+    if remaining != 0 or hasher.hexdigest() != sha256:
+        raise ValueError(f'Mirror package size or checksum mismatch: {url.rsplit("/", 1)[-1]}')
+
+
+def verify_xrust_pin(version):
+    """Require the immutable mirror archive to match the public Xrust release."""
+    tag = f'rust-x-v{version}'
+    release = gh('api', f'repos/Screamshow/xrust/releases/tags/{tag}')
+    if release.get('draft') or release.get('prerelease') or release.get('tag_name') != tag:
+        raise ValueError(f'Pinned Xrust {version} must be a public stable release')
+    base = BASE + f'/forkop/rust-x/releases/{version}/'
+    manifest = public_json(base + 'manifest.json')
+    revision = manifest.get('package_revision')
+    if (manifest.get('schema') != 1 or manifest.get('name') != 'rust-x' or manifest.get('apk_signed') is not True or
+            manifest.get('version') != version or manifest.get('minimum_forkop_major') != 3 or
+            type(revision) is not int or revision <= 0):
+        raise ValueError(f'Invalid mirror manifest for pinned Xrust {version}')
+
+    github_packages = {asset['name']: asset for asset in release['assets']
+                       if re.fullmatch(r'rust-x_[A-Za-z0-9_.+-]+\.(apk|ipk)', asset['name'])}
+    seen = set()
+    formats = set()
+    for asset in manifest['assets']:
+        name, fmt, arch = asset['name'], asset['format'], asset['architecture']
+        package_version = version + (f'-r{revision}' if fmt == 'apk' else f'-{revision}')
+        upstream = github_packages.get(name, {})
+        if (fmt not in {'apk', 'ipk'} or name in seen or asset['package'] != 'rust-x' or
+                name != f'rust-x_{package_version}_{arch}.{fmt}' or asset['version'] != package_version or
+                asset['url'] != base + name or type(asset['size']) is not int or asset['size'] <= 0 or
+                not re.fullmatch(r'[a-f0-9]{64}', asset['sha256']) or
+                upstream.get('size') != asset['size'] or upstream.get('digest') != 'sha256:' + asset['sha256']):
+            raise ValueError(f'Pinned Xrust GitHub/mirror asset mismatch: {name}')
+        seen.add(name)
+        formats.add(fmt)
+    if seen != set(github_packages) or formats != {'apk', 'ipk'}:
+        raise ValueError(f'Incomplete mirror archive for pinned Xrust {version}')
+    for asset in manifest['assets']:
+        verify_mirror_asset(asset['url'], asset['size'], asset['sha256'])
+
+
 def version_key(version):
     match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:-canary\.(\d+))?', version)
     if not match:
@@ -113,6 +162,8 @@ class Release:
     def __init__(self, args, project, version):
         self.args, self.project, self.version = args, project, version
         self.xrust_version = args.xrust_version if project == 'forkop' else None
+        forkop_version = getattr(args, 'forkop', None)
+        self.archive_only = project == 'rust-x' and bool(forkop_version and version_key(forkop_version)[0] >= 3)
         self.repo = 'Screamshow/' + ('forkop-x' if project == 'forkop' else 'xrust')
         self.tag = version if project == 'forkop' else 'rust-x-v' + version
         self.directory = (args.output / project / self.tag).resolve()
@@ -153,10 +204,16 @@ class Release:
                 raise ValueError('Existing Forkop tag points to a different commit')
         channel = ('canary' if '-canary.' in self.version else 'stable')
         pointer = BASE + ('/forkop/rust-x/latest.json' if self.project == 'rust-x' else f'/forkop/updates/{channel}.json')
-        current = public_json(pointer)
-        if version_key(current.get('version', current.get('tag_name'))) > version_key(self.version):
-            raise ValueError('Requested release is older than the mirror channel; refusing to move it backward')
+        if not self.archive_only:
+            current = public_json(pointer)
+            if version_key(current.get('version', current.get('tag_name'))) > version_key(self.version):
+                raise ValueError('Requested release is older than the mirror channel; refusing to move it backward')
         self.remote(f'test -x {APK} && test -r {KEY} && test -r {PUBLIC_KEY}')
+        if self.project == 'forkop' and version_key(self.version)[0] >= 3:
+            publisher = 'sync-forkop-canary' if channel == 'canary' else 'publish-forkop-feed'
+            self.remote('test -r /usr/local/lib/forkop/write-channel-manifest.sh && '
+                        f'grep -Fq write-channel-manifest.sh /usr/local/sbin/{publisher} && '
+                        'grep -Fq xrust_version /usr/local/lib/forkop/write-release-catalog.py')
 
     def build(self):
         if self.existing:
@@ -262,49 +319,67 @@ class Release:
                     raise ValueError('Public source/version mismatch')
                 if self.xrust_version is not None and manifest.get('xrust_version') != self.xrust_version:
                     raise ValueError('Published Forkop release has a different Xrust pin')
+                if version_key(self.version)[0] >= 3:
+                    verify_xrust_pin(manifest['xrust_version'])
             else:
                 manifest = load(XRUST_FINALIZE).validate(self.directory, self.version, signed=True)
                 if manifest['binary_source_commit'] != self.source:
                     raise ValueError('Public source mismatch')
+                self.archive_only |= manifest.get('minimum_forkop_major') == 3
             names = [a['file'] for a in manifest['assets']] + [filename, 'forkop-apk.pem', 'SHA256SUMS']
             verify_uploaded(self.current(), self.directory, names)
             self.verify_signatures()
             return
         if self.project == 'forkop':
+            if version_key(self.version)[0] >= 3:
+                verify_xrust_pin(self.xrust_version)
             self.finalize_forkop()
         else:
             run(sys.executable, XRUST_FINALIZE, '--tag', self.tag,
                 '--ssh-key', self.args.ssh_key, '--output', self.directory)
+            manifest = json.loads((self.directory / 'openwrt-manifest.json').read_text())
+            self.archive_only |= manifest.get('minimum_forkop_major') == 3
         self.verify_signatures()
-        run('gh', 'release', 'edit', self.tag, '-R', self.repo, '--draft=false')
+        args = ['gh', 'release', 'edit', self.tag, '-R', self.repo, '--draft=false']
+        if self.archive_only:
+            args.append('--latest=false')
+        run(*args)
 
     def sync(self):
         if self.project == 'rust-x':
-            previous = public_json(BASE + '/forkop/rust-x/latest.json')
-            if version_key(previous['version']) > version_key(self.version):
-                raise ValueError('Refusing to downgrade the Xrust mirror pointer')
+            manifest = json.loads((self.directory / 'openwrt-manifest.json').read_text())
+            native_xrust = manifest.get('minimum_forkop_major') == 3
+            self.archive_only |= native_xrust
+            if not self.archive_only:
+                previous = public_json(BASE + '/forkop/rust-x/latest.json')
+                if version_key(previous['version']) > version_key(self.version):
+                    raise ValueError('Refusing to downgrade the Xrust mirror pointer')
             remote = f'/srv/mirror/build/rust-x-publish/{self.tag}-{self.source[:12]}'
             self.remote(f'umask 077; mkdir -p {remote}')
-            manifest = json.loads((self.directory / 'openwrt-manifest.json').read_text())
             names = [a['file'] for a in manifest['assets']] + ['openwrt-manifest.json', 'forkop-apk.pem', 'SHA256SUMS']
             run(*self.scp, ROOT / 'mirror/publish-rust-x.py', *[self.directory / n for n in names], f'{HOST}:{remote}/')
-            print(self.remote(f'python3 {remote}/publish-rust-x.py {remote} /srv/mirror/public/forkop/rust-x --latest'), flush=True)
-            url = BASE + '/forkop/rust-x/latest.json'
-            latest = wait_mirror(url, self.version, self.args.timeout)
+            pointer_option = '' if self.archive_only else ' --latest'
+            print(self.remote(f'python3 {remote}/publish-rust-x.py {remote} /srv/mirror/public/forkop/rust-x{pointer_option}'), flush=True)
             archived = public_json(BASE + f'/forkop/rust-x/releases/{self.version}/manifest.json')
-            if latest != archived or latest['binary_source_commit'] != self.source:
+            if archived['binary_source_commit'] != self.source:
                 raise ValueError('Xrust mirror manifest mismatch')
-            catalog = public_json(BASE + '/forkop/rust-x/releases.json')
-            entry = next(r for r in catalog['releases'] if r['version'] == self.version)
-            if entry['assets'] != latest['assets']:
-                raise ValueError('Xrust release catalog mismatch')
+            if not self.archive_only:
+                latest = wait_mirror(BASE + '/forkop/rust-x/latest.json', self.version, self.args.timeout)
+                if latest != archived:
+                    raise ValueError('Xrust latest pointer differs from the archived manifest')
+            if native_xrust:
+                if archived.get('minimum_forkop_major') != 3:
+                    raise ValueError('Xrust archive lost its minimum Forkop version')
+            else:
+                catalog = public_json(BASE + '/forkop/rust-x/releases.json')
+                entry = next(r for r in catalog['releases'] if r['version'] == self.version)
+                if entry['assets'] != archived['assets']:
+                    raise ValueError('Xrust release catalog mismatch')
             local = {a['file']: a for a in manifest['assets']}
-            for asset in latest['assets']:
+            for asset in archived['assets']:
                 if asset['sha256'] != local[asset['file']]['sha256'] or asset['size'] != local[asset['file']]['size']:
                     raise ValueError('Xrust mirror differs from signed release')
-                data = fetch(asset['url'])
-                if len(data) != asset['size'] or hashlib.sha256(data).hexdigest() != asset['sha256']:
-                    raise ValueError('Xrust mirror package mismatch')
+                verify_mirror_asset(asset['url'], asset['size'], asset['sha256'])
         else:
             canary = '-canary.' in self.version
             service = 'forkop-canary-mirror.service' if canary else 'forkop-mirror.service'
@@ -359,16 +434,21 @@ def main():
         parser.error('Specify --forkop and/or --rust')
     if args.timeout <= 0:
         parser.error('--timeout must be positive')
-    releases = []
-    for project, version in (('forkop', args.forkop), ('rust-x', args.rust)):
+    projects = [('forkop', args.forkop), ('rust-x', args.rust)]
+    for project, version in projects:
         if version:
             pattern = r'\d+\.\d+\.\d+(-canary\.\d+)?' if project == 'forkop' else r'\d+\.\d+\.\d+'
             if not re.fullmatch(pattern, version):
                 parser.error(f'Invalid {project} version')
-            releases.append(Release(args, project, version))
     if args.xrust_version is not None and (not args.forkop or version_key(args.forkop)[0] < 3 or
             not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', args.xrust_version)):
         parser.error('--xrust-version requires Forkop 3.x and an exact x.y.z Xrust release')
+    if args.forkop and version_key(args.forkop)[0] >= 3 and args.rust:
+        if args.xrust_version is not None and args.xrust_version != args.rust:
+            parser.error('--rust must match the Xrust pin when publishing both projects together')
+        args.xrust_version = args.rust
+        projects.reverse()
+    releases = [Release(args, project, version) for project, version in projects if version]
     if args.rust and not XRUST_FINALIZE.is_file():
         parser.error('Xrust main checkout required at artifacts/xrust')
     for release in releases:

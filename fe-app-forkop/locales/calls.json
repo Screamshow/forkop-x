@@ -621,13 +621,6 @@
     ]
   },
   {
-    "call": "Choose Xrust version",
-    "key": "Choose Xrust version",
-    "places": [
-      "src/forkop/tabs/updates/releaseSelector.ts:22"
-    ]
-  },
-  {
     "call": "CIDR must be between 0 and 32 for IPv4 or 0 and 128 for IPv6",
     "key": "CIDR must be between 0 and 32 for IPv4 or 0 and 128 for IPv6",
     "places": [
@@ -853,13 +846,6 @@
     "key": "Could not confirm completion. Check the removal log before retrying.",
     "places": [
       "src/forkop/tabs/updates/fullUninstall.ts:78"
-    ]
-  },
-  {
-    "call": "Could not confirm the sing-box process state. Check the logs before trying again.",
-    "key": "Could not confirm the sing-box process state. Check the logs before trying again.",
-    "places": [
-      "src/forkop/tabs/diagnostic/partials/renderAvailableActions.ts:76"
     ]
   },
   {
@@ -1555,13 +1541,6 @@
     ]
   },
   {
-    "call": "Enter a complete sing-box outbound object",
-    "key": "Enter a complete sing-box outbound object",
-    "places": [
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3183"
-    ]
-  },
-  {
     "call": "Enter a display name",
     "key": "Enter a display name",
     "places": [
@@ -2095,13 +2074,6 @@
       "src/forkop/tabs/updates/initController.ts:797",
       "src/forkop/tabs/updates/initController.ts:1095",
       "src/forkop/tabs/updates/releaseSelector.ts:82"
-    ]
-  },
-  {
-    "call": "Install another build:",
-    "key": "Install another build:",
-    "places": [
-      "src/forkop/tabs/updates/initController.ts:1193"
     ]
   },
   {
@@ -3007,13 +2979,6 @@
     ]
   },
   {
-    "call": "Not enough storage for sing-box installation. Required reserve: %s KiB; available: %s KiB.",
-    "key": "Not enough storage for sing-box installation. Required reserve: %s KiB; available: %s KiB.",
-    "places": [
-      "src/forkop/services/logErrorMessage.service.ts:15"
-    ]
-  },
-  {
     "call": "Not enough temporary memory. Required: %s KiB; available: %s KiB.",
     "key": "Not enough temporary memory. Required: %s KiB; available: %s KiB.",
     "places": [
@@ -3052,13 +3017,6 @@
     "places": [
       "src/forkop/tabs/diagnostic/diagnostic.store.ts:109",
       "src/forkop/tabs/diagnostic/initController.ts:96"
-    ]
-  },
-  {
-    "call": "Older Xrust versions may not support all current settings. If the installation fails, the previous core is restored.",
-    "key": "Older Xrust versions may not support all current settings. If the installation fails, the previous core is restored.",
-    "places": [
-      "src/forkop/tabs/updates/releaseSelector.ts:25"
     ]
   },
   {
@@ -3471,13 +3429,6 @@
     ]
   },
   {
-    "call": "Remove matching nodes from every current and future subscription before sing-box, URLTest, Priority, and the dashboard are generated.",
-    "key": "Remove matching nodes from every current and future subscription before sing-box, URLTest, Priority, and the dashboard are generated.",
-    "places": [
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:659"
-    ]
-  },
-  {
     "call": "Remove permanently",
     "key": "Remove permanently",
     "places": [
@@ -3575,13 +3526,6 @@
     "key": "Resident memory (RSS) of the Forkop service and its own workers.",
     "places": [
       "src/forkop/tabs/dashboard/initController.ts:1873"
-    ]
-  },
-  {
-    "call": "Resolve domain names before routing so sing-box can use real destination IPs.",
-    "key": "Resolve domain names before routing so sing-box can use real destination IPs.",
-    "places": [
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:5290"
     ]
   },
   {
@@ -3862,32 +3806,11 @@
     ]
   },
   {
-    "call": "Select or enter path for sing-box cache file. Change this ONLY if you know what you are doing",
-    "key": "Select or enter path for sing-box cache file. Change this ONLY if you know what you are doing",
-    "places": [
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:724"
-    ]
-  },
-  {
-    "call": "Select path for sing-box config file. Change this ONLY if you know what you are doing",
-    "key": "Select path for sing-box config file. Change this ONLY if you know what you are doing",
-    "places": [
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:711"
-    ]
-  },
-  {
     "call": "Select the fastest node",
     "key": "Select the fastest node",
     "places": [
       "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:2558",
       "src/forkop/tabs/dashboard/initController.ts:1287"
-    ]
-  },
-  {
-    "call": "Select the log level for sing-box",
-    "key": "Select the log level for sing-box",
-    "places": [
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:760"
     ]
   },
   {
@@ -4017,70 +3940,6 @@
     ]
   },
   {
-    "call": "Show sing-box config",
-    "key": "Show sing-box config",
-    "places": [
-      "src/forkop/tabs/diagnostic/initController.ts:649",
-      "src/forkop/tabs/diagnostic/partials/renderAvailableActions.ts:158"
-    ]
-  },
-  {
-    "call": "Sing-box autostart disabled",
-    "key": "Sing-box autostart disabled",
-    "places": [
-      "src/forkop/tabs/diagnostic/checks/runSingBoxCheck.ts:81"
-    ]
-  },
-  {
-    "call": "Sing-box FakeIP DNS does not work",
-    "key": "Sing-box FakeIP DNS does not work",
-    "places": [
-      "src/forkop/tabs/diagnostic/checks/runFakeIPCheck.ts:87"
-    ]
-  },
-  {
-    "call": "Sing-box FakeIP DNS works",
-    "key": "Sing-box FakeIP DNS works",
-    "places": [
-      "src/forkop/tabs/diagnostic/checks/runFakeIPCheck.ts:86"
-    ]
-  },
-  {
-    "call": "Sing-box installed",
-    "key": "Sing-box installed",
-    "places": [
-      "src/forkop/tabs/diagnostic/checks/runSingBoxCheck.ts:64"
-    ]
-  },
-  {
-    "call": "Sing-box listening ports",
-    "key": "Sing-box listening ports",
-    "places": [
-      "src/forkop/tabs/diagnostic/checks/runSingBoxCheck.ts:91"
-    ]
-  },
-  {
-    "call": "Sing-box process running",
-    "key": "Sing-box process running",
-    "places": [
-      "src/forkop/tabs/diagnostic/checks/runSingBoxCheck.ts:86"
-    ]
-  },
-  {
-    "call": "Sing-box service exist",
-    "key": "Sing-box service exist",
-    "places": [
-      "src/forkop/tabs/diagnostic/checks/runSingBoxCheck.ts:76"
-    ]
-  },
-  {
-    "call": "Sing-box version is compatible (newer than 1.12.4)",
-    "key": "Sing-box version is compatible (newer than 1.12.4)",
-    "places": [
-      "src/forkop/tabs/diagnostic/checks/runSingBoxCheck.ts:71"
-    ]
-  },
-  {
     "call": "Sort by latency",
     "key": "Sort by latency",
     "places": [
@@ -4121,13 +3980,6 @@
     "key": "Startup phase %s failed (exit code %s).",
     "places": [
       "src/forkop/services/logErrorMessage.service.ts:28"
-    ]
-  },
-  {
-    "call": "Stop checking when URLTest group is not used. Use sing-box duration format like 1d, 12h or 30m.",
-    "key": "Stop checking when URLTest group is not used. Use sing-box duration format like 1d, 12h or 30m.",
-    "places": [
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:2097"
     ]
   },
   {
@@ -4322,13 +4174,6 @@
     "key": "The core did not confirm the updated configuration.",
     "places": [
       "src/forkop/services/subscriptionApplyAlert.service.ts:9"
-    ]
-  },
-  {
-    "call": "The generated sing-box configuration is invalid. See technical details for the validation error.",
-    "key": "The generated sing-box configuration is invalid. See technical details for the validation error.",
-    "places": [
-      "src/forkop/services/logErrorMessage.service.ts:24"
     ]
   },
   {
@@ -4699,30 +4544,6 @@
     ]
   },
   {
-    "call": "Use sing-box duration format like 10s, 1m or 2m30s",
-    "key": "Use sing-box duration format like 10s, 1m or 2m30s",
-    "places": [
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:180"
-    ]
-  },
-  {
-    "call": "Use sing-box duration format like 1d, 12h or 30m",
-    "key": "Use sing-box duration format like 1d, 12h or 30m",
-    "places": [
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:1924",
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:2058",
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:2581",
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3723",
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3730",
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3737",
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:563",
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:585",
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:592",
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:608",
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:636"
-    ]
-  },
-  {
     "call": "Use source values",
     "key": "Use source values",
     "places": [
@@ -4846,25 +4667,10 @@
     ]
   },
   {
-    "call": "Xrust (experimental)",
-    "key": "Xrust (experimental)",
+    "call": "Xrust version recognized",
+    "key": "Xrust version recognized",
     "places": [
-      "src/forkop/tabs/updates/initController.ts:768",
-      "src/forkop/tabs/updates/initController.ts:1121"
-    ]
-  },
-  {
-    "call": "Xrust configuration compatibility confirmed",
-    "key": "Xrust configuration compatibility confirmed",
-    "places": [
-      "src/forkop/tabs/diagnostic/checks/runSingBoxCheck.ts:70"
-    ]
-  },
-  {
-    "call": "Xrust version",
-    "key": "Xrust version",
-    "places": [
-      "src/forkop/tabs/updates/initController.ts:1112"
+      "src/forkop/tabs/diagnostic/checks/runXrustCheck.ts:67"
     ]
   },
   {
@@ -4886,6 +4692,186 @@
     "key": "You can select Output Network Interface, by default autodetect",
     "places": [
       "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:380"
+    ]
+  },
+  {
+    "call": "Update Forkop X to enable this setting",
+    "key": "Update Forkop X to enable this setting",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:624"
+    ]
+  },
+  {
+    "call": "Native Tailscale is unavailable",
+    "key": "Native Tailscale is unavailable",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/tailscale.js:19",
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/tailscale.js:63"
+    ]
+  },
+  {
+    "call": "Exit Node is unavailable.",
+    "key": "Exit Node is unavailable.",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/tailscale.js:111"
+    ]
+  },
+  {
+    "call": "Show Xrust config",
+    "key": "Show Xrust config",
+    "places": [
+      "src/forkop/tabs/diagnostic/initController.ts:631",
+      "src/forkop/tabs/diagnostic/partials/renderAvailableActions.ts:152"
+    ]
+  },
+  {
+    "call": "Could not confirm the Xrust process state. Check the logs before trying again.",
+    "key": "Could not confirm the Xrust process state. Check the logs before trying again.",
+    "places": [
+      "src/forkop/tabs/diagnostic/partials/renderAvailableActions.ts:73"
+    ]
+  },
+  {
+    "call": "Enter a complete Xrust outbound object",
+    "key": "Enter a complete Xrust outbound object",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3336"
+    ]
+  },
+  {
+    "call": "Remove matching nodes from every current and future subscription before Xrust, URLTest, Priority, and the dashboard are generated.",
+    "key": "Remove matching nodes from every current and future subscription before Xrust, URLTest, Priority, and the dashboard are generated.",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:759"
+    ]
+  },
+  {
+    "call": "Resolve domain names before routing so Xrust can use real destination IPs.",
+    "key": "Resolve domain names before routing so Xrust can use real destination IPs.",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:5724"
+    ]
+  },
+  {
+    "call": "Select or enter path for Xrust cache file. Change this ONLY if you know what you are doing",
+    "key": "Select or enter path for Xrust cache file. Change this ONLY if you know what you are doing",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:833"
+    ]
+  },
+  {
+    "call": "Select path for Xrust config file. Change this ONLY if you know what you are doing",
+    "key": "Select path for Xrust config file. Change this ONLY if you know what you are doing",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:811"
+    ]
+  },
+  {
+    "call": "Select the log level for Xrust",
+    "key": "Select the log level for Xrust",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:869"
+    ]
+  },
+  {
+    "call": "Xrust autostart disabled",
+    "key": "Xrust autostart disabled",
+    "places": [
+      "src/forkop/tabs/diagnostic/checks/runXrustCheck.ts:77"
+    ]
+  },
+  {
+    "call": "Xrust FakeIP DNS does not work",
+    "key": "Xrust FakeIP DNS does not work",
+    "places": [
+      "src/forkop/tabs/diagnostic/checks/runFakeIPCheck.ts:87"
+    ]
+  },
+  {
+    "call": "Xrust FakeIP DNS works",
+    "key": "Xrust FakeIP DNS works",
+    "places": [
+      "src/forkop/tabs/diagnostic/checks/runFakeIPCheck.ts:86"
+    ]
+  },
+  {
+    "call": "Xrust installed",
+    "key": "Xrust installed",
+    "places": [
+      "src/forkop/tabs/diagnostic/checks/runXrustCheck.ts:62"
+    ]
+  },
+  {
+    "call": "Xrust listening ports",
+    "key": "Xrust listening ports",
+    "places": [
+      "src/forkop/tabs/diagnostic/checks/runXrustCheck.ts:87"
+    ]
+  },
+  {
+    "call": "Xrust process running",
+    "key": "Xrust process running",
+    "places": [
+      "src/forkop/tabs/diagnostic/checks/runXrustCheck.ts:82"
+    ]
+  },
+  {
+    "call": "Xrust service exists",
+    "key": "Xrust service exists",
+    "places": [
+      "src/forkop/tabs/diagnostic/checks/runXrustCheck.ts:72"
+    ]
+  },
+  {
+    "call": "Stop checking when URLTest group is not used. Use Xrust duration format like 1d, 12h or 30m.",
+    "key": "Stop checking when URLTest group is not used. Use Xrust duration format like 1d, 12h or 30m.",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:2249"
+    ]
+  },
+  {
+    "call": "The generated Xrust configuration is invalid. See technical details for the validation error.",
+    "key": "The generated Xrust configuration is invalid. See technical details for the validation error.",
+    "places": [
+      "src/forkop/services/logErrorMessage.service.ts:39"
+    ]
+  },
+  {
+    "call": "Use Xrust duration format like 10s, 1m or 2m30s",
+    "key": "Use Xrust duration format like 10s, 1m or 2m30s",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:181"
+    ]
+  },
+  {
+    "call": "Use Xrust duration format like 1d, 12h or 30m",
+    "key": "Use Xrust duration format like 1d, 12h or 30m",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:2076",
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:2210",
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:2733",
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3973",
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3980",
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3987",
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:663",
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:685",
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:692",
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:708",
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:736"
+    ]
+  },
+  {
+    "call": "Settings saved to UCI. See Diagnostics for the Forkop runtime result.",
+    "key": "Settings saved to UCI. See Diagnostics for the Forkop runtime result.",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/forkop.js:55"
+    ]
+  },
+  {
+    "call": "Forkop settings were not applied",
+    "key": "Forkop settings were not applied",
+    "places": [
+      "src/forkop/services/core.service.ts:146"
     ]
   }
 ]

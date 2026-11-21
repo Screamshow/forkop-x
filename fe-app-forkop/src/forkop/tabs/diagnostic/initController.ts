@@ -1,7 +1,7 @@
 import { onMount, preserveScrollForPage } from '../../../helpers';
 import { showToast } from '../../../helpers/showToast';
 import { runDnsCheck } from './checks/runDnsCheck';
-import { runSingBoxCheck } from './checks/runSingBoxCheck';
+import { runXrustCheck } from './checks/runXrustCheck';
 import { runNftCheck } from './checks/runNftCheck';
 import { runFakeIPCheck } from './checks/runFakeIPCheck';
 import {
@@ -51,21 +51,15 @@ import {
 } from './serviceTransition';
 import { isActiveLuciTab } from '../../helpers/isActiveLuciTab';
 import {
-  formatSingBoxVersion,
-  formatCoreLabel,
-  getSingBoxName,
-  normalizeSingBoxVariantFields,
-} from '../../helpers/singBoxVariant';
-import {
   clearPersistedDiagnosticRun,
   PersistedDiagnosticRun,
   readPersistedDiagnosticRun,
   savePersistedDiagnosticRun,
 } from './diagnosticRunPersistence';
 import {
-  formatMaskedSingBoxConfig,
+  formatMaskedXrustConfig,
   maskGlobalCheckText,
-  stringifySingBoxConfig,
+  stringifyXrustConfig,
 } from './helpers/maskDiagnostics';
 
 const SERVICE_STATUS_REFRESH_INTERVAL_MS = 2000;
@@ -358,23 +352,14 @@ async function fetchDiagnosticsProviderInfo({
   const requestId = ++latestProviderInfoRequestId;
 
   try {
-    const uiState = await refreshRuntimeUiState({ force: true });
+    await refreshRuntimeUiState({ force: true });
 
     if (requestId !== latestProviderInfoRequestId) {
       return;
     }
 
     const currentSystemInfo = store.get().diagnosticsSystemInfo;
-    const nextSystemInfo = uiState
-      ? normalizeSingBoxVariantFields({
-          ...currentSystemInfo,
-          providerInfoLoaded: true,
-          sing_box_extended: uiState.capabilities.sing_box_extended,
-          sing_box_tiny: uiState.capabilities.sing_box_tiny,
-          sing_box_compressed: uiState.capabilities.sing_box_compressed,
-          sing_box_tailscale: uiState.capabilities.sing_box_tailscale,
-        })
-      : { ...currentSystemInfo, providerInfoLoaded: true };
+    const nextSystemInfo = { ...currentSystemInfo, providerInfoLoaded: true };
 
     const nextState: Partial<StoreType> = {
       diagnosticsSystemInfo: nextSystemInfo,
@@ -630,27 +615,22 @@ async function handleViewLogs() {
   }
 }
 
-async function handleShowSingBoxConfig() {
-  setDiagnosticActionLoading('showSingBoxConfig', true);
+async function handleShowXrustConfig() {
+  setDiagnosticActionLoading('showXrustConfig', true);
 
   try {
-    const showSingBoxConfig = await ForkopShellMethods.showSingBoxConfig(false);
+    const showXrustConfig = await ForkopShellMethods.showXrustConfig(false);
 
-    if (showSingBoxConfig.success) {
-      const rawSingBoxConfigText = stringifySingBoxConfig(
-        showSingBoxConfig.data,
-      );
-      const maskedSingBoxConfigText = formatMaskedSingBoxConfig(
-        showSingBoxConfig.data,
+    if (showXrustConfig.success) {
+      const rawXrustConfigText = stringifyXrustConfig(showXrustConfig.data);
+      const maskedXrustConfigText = formatMaskedXrustConfig(
+        showXrustConfig.data,
       );
 
       ui.showModal(
-        formatCoreLabel(
-          _('Show sing-box config'),
-          store.get().diagnosticsSystemInfo,
-        ),
-        renderModal(rawSingBoxConfigText, 'show_sing_box_config', {
-          maskText: () => maskedSingBoxConfigText,
+        _('Show Xrust config'),
+        renderModal(rawXrustConfigText, 'show_xrust_config', {
+          maskText: () => maskedXrustConfigText,
           initialAutoRefresh: false,
           showMaskValuesToggle: true,
         }),
@@ -658,14 +638,14 @@ async function handleShowSingBoxConfig() {
     } else {
       logger.error(
         '[DIAGNOSTIC]',
-        'handleShowSingBoxConfig - e',
-        showSingBoxConfig,
+        'handleShowXrustConfig - e',
+        showXrustConfig,
       );
     }
   } catch (e) {
-    logger.error('[DIAGNOSTIC]', 'handleShowSingBoxConfig - e', e);
+    logger.error('[DIAGNOSTIC]', 'handleShowXrustConfig - e', e);
   } finally {
-    setDiagnosticActionLoading('showSingBoxConfig', false);
+    setDiagnosticActionLoading('showXrustConfig', false);
   }
 }
 
@@ -799,15 +779,15 @@ function renderDiagnosticAvailableActionsWidget() {
       onClick: handleViewLogs,
       disabled: viewLogsDisabled,
     },
-    showSingBoxConfig: {
-      loading: diagnosticsActions.showSingBoxConfig.loading,
+    showXrustConfig: {
+      loading: diagnosticsActions.showXrustConfig.loading,
       visible: true,
-      onClick: handleShowSingBoxConfig,
+      onClick: handleShowXrustConfig,
       disabled: utilityActionsDisabled,
     },
     supportReport: {
       loading: diagnosticsActions.supportReport.loading,
-      visible: true,
+      visible: L.hasViewPermission() === true,
       onClick: () => void handleDownloadSupportReport(),
       disabled: utilityActionsDisabled,
     },
@@ -834,8 +814,8 @@ function renderDiagnosticSystemInfoWidget() {
       value: normalizeCompiledVersion(FORKOP_LUCI_APP_VERSION),
     },
     {
-      key: getSingBoxName(diagnosticsSystemInfo),
-      value: formatSingBoxVersion(diagnosticsSystemInfo),
+      key: 'Xrust',
+      value: diagnosticsSystemInfo.xrust_version || _('unknown'),
     },
   ];
 
@@ -921,7 +901,7 @@ function setDiagnosticCheckLoading(code: DIAGNOSTICS_CHECKS) {
 function getDiagnosticRunners(): DiagnosticRunner[] {
   return [
     { code: DIAGNOSTICS_CHECKS.DNS, run: runDnsCheck },
-    { code: DIAGNOSTICS_CHECKS.SINGBOX, run: runSingBoxCheck },
+    { code: DIAGNOSTICS_CHECKS.XRUST, run: runXrustCheck },
     { code: DIAGNOSTICS_CHECKS.NFT, run: runNftCheck },
     { code: DIAGNOSTICS_CHECKS.OUTBOUNDS, run: runSectionsCheck },
     { code: DIAGNOSTICS_CHECKS.FAKEIP, run: runFakeIPCheck },

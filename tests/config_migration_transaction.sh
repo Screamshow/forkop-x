@@ -76,11 +76,13 @@ UC
     cat <<'UC'
 let uci_core = {
     load, add: () => failure == "add" ? "" : "cfgImported",
+    get: () => null,
     set, set_section, delete: delete_path, commit,
 };
 UC
     sed -n '/^function apply_operations(/,/^}/p; /^function runtime_cursor(/,/^}/p;
-            /^function commit_cursor(/,/^}/p; /^function migrate_runtime(/,/^}/p' "$SCRIPT"
+            /^function commit_cursor(/,/^}/p; /^function prepare_xrust_cache_copy(/,/^}/p;
+            /^function migrate_runtime(/,/^}/p' "$SCRIPT"
     cat <<'UC'
 for (let phase in ["load", "add", "set", "delete", "commit", ""]) {
     failure = phase;

@@ -163,6 +163,6 @@ else if (mode == "remote-format")
 else if (mode == "community-url")
     print(community_url(ARGV[1]), "\n");
 else {
-    warn("Usage: singbox/rulesets.uc <file-extension|is-community|community-kind|kind-from-reference-hint|remote-format|community-url> ...\n");
+    warn("Usage: xrust/rulesets.uc <file-extension|is-community|community-kind|kind-from-reference-hint|remote-format|community-url> ...\n");
     exit(1);
 }

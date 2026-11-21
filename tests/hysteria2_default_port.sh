@@ -30,8 +30,8 @@ ucode -e '
 cat >"$WORK/fixture.json" <<'JSON'
 {"settings":{".name":"settings",".type":"settings","dns_server":"1.1.1.1"},"section":[{".name":"hy2",".type":"section","enabled":"1","action":"connection","selector_proxy_links":["hy2://pw@default-short.example/?sni=localhost","hysteria2://pw@default-long.example/?sni=localhost","hy2://pw@explicit.example:8443/?sni=localhost","hysteria2://pw@override.example/?sni=localhost&mport=9443","hy2://pw@hopping.example:2443,2444-2445/?sni=localhost"]}]}
 JSON
-ucode -L "$LIB" "$LIB/singbox/generator.uc" generate-config-fixture \
-    "$WORK/fixture.json" "$WORK/runtime.json" 127.0.0.1 0 1 '' 1.14.2-rust-x.0.0.43
+ucode -L "$LIB" "$LIB/xrust/generator.uc" generate-config-fixture \
+    "$WORK/fixture.json" "$WORK/runtime.json" 127.0.0.1 0 1 '' 0.0.43
 ucode -e '
     let config = json(require("fs").readfile(ARGV[0]));
     let ports = {};

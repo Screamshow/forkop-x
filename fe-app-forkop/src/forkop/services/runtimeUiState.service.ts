@@ -1,4 +1,4 @@
-import { ForkopShellMethods } from '../methods';
+import { ForkopShellMethods } from '../methods/shell';
 import { Forkop } from '../types';
 import { logger } from './logger.service';
 import { applyUiStateToStore } from './uiState.service';

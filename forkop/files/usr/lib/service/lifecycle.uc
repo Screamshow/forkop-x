@@ -1,9 +1,10 @@
 #!/usr/bin/env ucode
 
 let fs = require("fs");
+let xrust = require("xrust.binary");
 let common = require("core.common");
 let constants = require("core.constants");
-let runtime_constants = require("singbox.constants");
+let runtime_constants = require("xrust.constants");
 let uci_core = require("core.uci");
 
 function as_string(value) {
@@ -71,7 +72,7 @@ const NFT_POPULATE_ENABLED_DEFAULT = int(getenv("FORKOP_NFT_POPULATE_ENABLED") |
 
 let permanent_start_failure = false;
 
-const TMP_SING_BOX_FOLDER = getenv("TMP_SING_BOX_FOLDER") || constant_value("TMP_SING_BOX_FOLDER", "/tmp/sing-box");
+const TMP_SING_BOX_FOLDER = getenv("TMP_SING_BOX_FOLDER") || constant_value("TMP_SING_BOX_FOLDER", "/tmp/xrust");
 const TMP_RULESET_FOLDER = getenv("TMP_RULESET_FOLDER") || constant_value("TMP_RULESET_FOLDER", TMP_SING_BOX_FOLDER + "/rulesets");
 const TMP_SUBSCRIPTION_FOLDER = getenv("TMP_SUBSCRIPTION_FOLDER") || constant_value("TMP_SUBSCRIPTION_FOLDER", TMP_SING_BOX_FOLDER + "/subscriptions");
 
@@ -97,17 +98,15 @@ const SB_TPROXY_INBOUND6_ADDRESS = constant_value("SB_TPROXY_INBOUND6_ADDRESS", 
 const SB_TPROXY_INBOUND_PORT = constant_value("SB_TPROXY_INBOUND_PORT", "1602");
 const SB_SERVICE_MIXED_INBOUND_ADDRESS = constant_value("SB_SERVICE_MIXED_INBOUND_ADDRESS", "127.0.0.1");
 const SB_SERVICE_MIXED_INBOUND_PORT = constant_value("SB_SERVICE_MIXED_INBOUND_PORT", "4534");
-const SB_VARIANT_STATE_FILE = constant_value("SB_VARIANT_STATE_FILE", "/etc/forkop/sing-box-variant");
-const SB_VERSION_STATE_FILE = constant_value("SB_VERSION_STATE_FILE", "/etc/forkop/sing-box-version");
 
 const DNS_APPLY_UC = LIB_DIR + "/dns/apply.uc";
 const VALIDATOR_UC = LIB_DIR + "/config/validator.uc";
 const NFT_UC = LIB_DIR + "/nft/apply.uc";
-const SINGBOX_UC = LIB_DIR + "/singbox/runtime.uc";
-const PRIORITY_UC = LIB_DIR + "/singbox/priority.uc";
-const DNS_FAILOVER_UC = LIB_DIR + "/singbox/dns_failover.uc";
+const SINGBOX_UC = LIB_DIR + "/xrust/runtime.uc";
+const PRIORITY_UC = LIB_DIR + "/xrust/priority.uc";
+const DNS_FAILOVER_UC = LIB_DIR + "/xrust/dns_failover.uc";
 const SUBSCRIPTION_CACHE_UC = LIB_DIR + "/subscription/cache.uc";
-const RULESET_CACHE_UC = LIB_DIR + "/singbox/ruleset_cache.uc";
+const RULESET_CACHE_UC = LIB_DIR + "/xrust/ruleset_cache.uc";
 const UPDATES_UC = LIB_DIR + "/components/updates.uc";
 const STATE_UC = LIB_DIR + "/service/state.uc";
 const RELOAD_UC = LIB_DIR + "/service/reload.uc";
@@ -298,8 +297,6 @@ function lifecycle_env() {
         TMP_SUBSCRIPTION_FOLDER: TMP_SUBSCRIPTION_FOLDER,
         SB_SERVICE_MIXED_INBOUND_ADDRESS: SB_SERVICE_MIXED_INBOUND_ADDRESS,
         SB_SERVICE_MIXED_INBOUND_PORT: SB_SERVICE_MIXED_INBOUND_PORT,
-        SB_VARIANT_STATE_FILE: SB_VARIANT_STATE_FILE,
-        SB_VERSION_STATE_FILE: SB_VERSION_STATE_FILE,
         FORKOP_RULE_CONDITION_CACHE_ENABLED: as_string(rule_condition_cache_enabled)
     };
 
@@ -1054,7 +1051,7 @@ function start_main() {
 
     status = start_sing_box_and_wait();
     if (status != 0) {
-        log_message("sing-box did not reach a stable running state after start. Aborted.", "fatal");
+        log_message("Xrust did not reach a stable running state after start. Aborted.", "fatal");
         return status;
     }
 
@@ -1148,11 +1145,11 @@ function stop_main(allow_process_conflict) {
     // Reload must preserve the working dataplane until process ownership is
     // settled. An explicit Stop removes interception and every sing-box.
     if (process_conflict && !allow_process_conflict) {
-        log_message("Refusing Forkop stop: sing-box process ownership is ambiguous; preserving the existing runtime", "fatal");
+        log_message("Refusing Forkop stop: Xrust process ownership is ambiguous; preserving the existing runtime", "fatal");
         return 2;
     }
     if (process_conflict)
-        log_message("Additional sing-box process detected; explicit Stop will terminate all sing-box runtimes", "warn");
+        log_message("Additional sing-box process detected; explicit Stop will terminate all Xrust runtimes", "warn");
 
     remove_file(WATCHDOG_READY_FILE);
     log_message("Stopping Forkop", "info");
@@ -1279,7 +1276,57 @@ function discard_reload_config_backup(backup_path) {
     if (as_string(backup_path) != "") {
         remove_file(backup_path);
         remove_file(backup_path + ".destination");
+        if (!reload_core_transaction?.keep_dns_backup)
+            remove_file(backup_path + ".dns-failover");
     }
+}
+
+function start_candidate_reload_workers(config_path, backup_path) {
+    if (fs.stat(DNS_FAILOVER_STATE_FILE) != null &&
+        !common.copy_private_file_atomic(DNS_FAILOVER_STATE_FILE, backup_path + ".dns-failover")) {
+        log_message("Could not back up the applied DNS failover state", "error");
+        return 1;
+    }
+    reload_core_transaction.dns_snapshot_taken = true;
+    reload_core_transaction.candidate_workers_started = true;
+    let status = module_status(PRIORITY_UC, [ "start-runtime" ]);
+    if (status != 0) {
+        log_message("Failed to start Priority runtime with the new Xrust configuration", "error");
+        return status;
+    }
+    status = module_status(DNS_FAILOVER_UC, [ "start-runtime", "", config_path ]);
+    if (status != 0)
+        log_message("Failed to start DNS failover runtime with the new Xrust configuration", "error");
+    return status;
+}
+
+function stop_candidate_reload_workers() {
+    if (!reload_core_transaction?.candidate_workers_started)
+        return;
+    module_success(DNS_FAILOVER_UC, [ "stop-runtime" ]);
+    module_success(PRIORITY_UC, [ "stop-runtime" ]);
+    reload_core_transaction.candidate_workers_started = false;
+}
+
+function restore_reload_workers(backup_path) {
+    if (!module_success(PRIORITY_UC, [ "start-runtime" ]))
+        log_message("The previous Xrust runtime is active; its Priority worker could not be restarted", "warn");
+    if (reload_core_transaction?.dns_snapshot_taken) {
+        let dns_backup = backup_path + ".dns-failover";
+        let had_state = fs.stat(dns_backup) != null;
+        let restored = had_state
+            ? common.copy_private_file_atomic(dns_backup, DNS_FAILOVER_STATE_FILE)
+            : fs.unlink(DNS_FAILOVER_STATE_FILE) || fs.stat(DNS_FAILOVER_STATE_FILE) == null;
+        if (!restored) {
+            reload_core_transaction.keep_dns_backup = had_state;
+            log_message(had_state
+                ? "Could not restore the previous DNS failover state; backup retained at " + dns_backup
+                : "Could not remove the unused DNS failover state after rollback", "error");
+            return;
+        }
+    }
+    if (!module_success(DNS_FAILOVER_UC, [ "start-runtime", "applied" ]))
+        log_message("The previous Xrust runtime is active; its DNS failover worker could not be restarted", "warn");
 }
 
 function abort_reload(status, runtime_changed, stage_path, backup_path) {
@@ -1299,6 +1346,7 @@ function abort_reload(status, runtime_changed, stage_path, backup_path) {
 }
 
 function abort_guarded_transition(status, stage_path, backup_path, guard_active) {
+    stop_candidate_reload_workers();
     nft_candidate_finish(false);
     discard_singbox_config_stage(stage_path);
     if (!guard_active)
@@ -1313,9 +1361,8 @@ function abort_guarded_transition(status, stage_path, backup_path, guard_active)
         return abort_reload(status, false);
 
     if (fs.stat(backup_path) != null && restore_guarded_singbox_runtime(backup_path, true)) {
+        restore_reload_workers(backup_path);
         discard_reload_config_backup(backup_path);
-        module_success(PRIORITY_UC, [ "start-runtime" ]);
-        module_success(DNS_FAILOVER_UC, [ "start-runtime", "applied" ]);
         log_message("Configuration apply failed; previous runtime restored", "warn");
         return abort_reload(status, false);
     }
@@ -1336,6 +1383,7 @@ function abort_hot_to_guarded(status, stage_path, backup_path) {
 }
 
 function abort_hot_transition(status, stage_path, backup_path) {
+    stop_candidate_reload_workers();
     nft_candidate_finish(false);
     if (!finish_list_change_files(true) || !finish_reload_section_cache(true))
         return abort_hot_to_guarded(status, stage_path, backup_path);
@@ -1347,10 +1395,9 @@ function abort_hot_transition(status, stage_path, backup_path) {
         ]));
     if (restored && module_success(STATE_UC, [ "single-ready-sing-box-runtime" ]) &&
         module_success(NFT_UC, [ "remove-transition-guard", NFT_TABLE_NAME, NFT_FAKEIP_MARK ])) {
+        restore_reload_workers(backup_path);
         discard_singbox_config_stage(stage_path);
         discard_reload_config_backup(backup_path);
-        module_success(PRIORITY_UC, [ "start-runtime" ]);
-        module_success(DNS_FAILOVER_UC, [ "start-runtime", "applied" ]);
         log_message("Hot reload failed; previous core configuration and nft policy restored", "warn");
         return abort_reload(status, false);
     }
@@ -1368,7 +1415,7 @@ function start() {
             as_string(MANAGED_UPGRADE_SING_BOX_WAIT_SECONDS),
             as_string(MANAGED_UPGRADE_SING_BOX_MARKER_MAX_AGE_SECONDS)
         ])) {
-        log_message("Refusing Forkop start: managed upgrade sing-box provenance did not resolve safely", "fatal");
+        log_message("Refusing Forkop start: managed upgrade Xrust provenance did not resolve safely", "fatal");
         release_start_subscription_update_lock();
         return 1;
     }
@@ -1377,7 +1424,7 @@ function start() {
     // Do not turn this detection into a stop/restart cycle: that could remove
     // the old working nft policy while an orphan remains alive.
     if (module_success(STATE_UC, [ "sing-box-process-conflict" ])) {
-        log_message("Refusing Forkop start: sing-box process ownership is ambiguous; preserving the existing runtime", "fatal");
+        log_message("Refusing Forkop start: Xrust process ownership is ambiguous; preserving the existing runtime", "fatal");
         release_start_subscription_update_lock();
         return 1;
     }
@@ -1617,7 +1664,11 @@ function wait_dns_failover_state(candidate_state_path, attempts, required_succes
     return 1;
 }
 
-// Returns 3 only when the core explicitly requires the legacy cold path.
+function applied_xrust_config_path(fallback) {
+    return split(as_string(fs.readfile(xrust.APPLIED_CONFIG_PATH_FILE) || ""), "\n")[0] || fallback;
+}
+
+// Returns 3 when the core requires a restart.
 function dns_failover_hot_apply(candidate_state_path, config_path) {
     let prepared = module_capture(SINGBOX_UC, [ "prepare-dns-config", candidate_state_path ]);
     if (prepared.status != 0) return prepared.status == 3 ? 1 : prepared.status;
@@ -1684,7 +1735,7 @@ function dns_failover_apply(candidate_state_path) {
     // watching it. Its watcher is outside Forkop's ownership and can otherwise
     // race our controlled replacement with a second procd start.
     let transition_timeout = as_string(getenv("FORKOP_SING_BOX_RELOAD_PID_TIMEOUT") || "15");
-    if (config_path != config_get("sing-box.main.conffile", config_path)) {
+    if (config_path != applied_xrust_config_path(config_path)) {
         log_message("DNS failover cannot restart the core while its configured path differs from the applied path", "warn");
         release_reload_lock();
         return 1;
@@ -1713,7 +1764,7 @@ function dns_failover_apply(candidate_state_path) {
 
     let keep_backup = false;
     if (status != 0 && backup_path != "") {
-        log_message("DNS failover apply failed; restoring the previous sing-box configuration", "warn");
+        log_message("DNS failover apply failed; restoring the previous Xrust configuration", "warn");
         keep_backup = !module_success(STATE_UC, [ "stop-managed-sing-box-runtime", transition_timeout ]) ||
             !module_success(SINGBOX_UC, [ "restore-dns-config", backup_path, config_path ]) ||
             !module_success(STATE_UC, [ "start-managed-sing-box-runtime", transition_timeout ]);
@@ -1770,7 +1821,7 @@ function reload(reason, cold_restart) {
     // later sing-box transition notices that procd ownership is unsettled.
     // Preserve the coherent runtime until ownership has converged instead.
     if (module_success(STATE_UC, [ "sing-box-process-conflict" ])) {
-        log_message("Reload refused: multiple or non-procd sing-box processes were detected; preserving the existing runtime", "fatal");
+        log_message("Reload refused: multiple or non-procd Xrust processes were detected; preserving the existing runtime", "fatal");
         return finish_reload_status(1, reload_config_fingerprint, reason == "pending");
     }
 
@@ -1922,7 +1973,7 @@ function reload(reason, cold_restart) {
     let sing_box_config_path = "";
     if (needs_singbox_transition) {
         sing_box_config_path = config_get(CONFIG_NAME + ".settings.config_path", "");
-        let previous_path = config_get("sing-box.main.conffile", "/etc/sing-box/config.json");
+        let previous_path = applied_xrust_config_path(xrust.CONFIG_PATH);
         if (sing_box_config_path == "" || previous_path == "")
             return abort_reload(1, false);
         reload_core_transaction = { path: sing_box_config_path, previous_path, published: false };
@@ -2031,7 +2082,7 @@ function reload(reason, cold_restart) {
             // still resident. On 256 MiB routers their combined peak can trigger
             // the OOM killer even though either process runs safely on its own.
             if (!module_success(SINGBOX_UC, [ "validate-config-stage", staged_singbox_config ])) {
-                set_runtime_config_error("The generated sing-box configuration is invalid. Previous configuration recovery was requested. Correct the settings and apply them again; see the system log for details.");
+                set_runtime_config_error("The generated Xrust configuration is invalid. Previous configuration recovery was requested. Correct the settings and apply them again; see the system log for details.");
                 return abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, transition_guard_active);
             }
             clear_runtime_config_error();
@@ -2056,13 +2107,19 @@ function reload(reason, cold_restart) {
             as_string(SING_BOX_START_VERIFY_TIMEOUT)
         ]);
         if (status != 0) {
-            log_message("Reload verification failed after sing-box was reloaded; restoring the previous coherent runtime", "fatal");
+            log_message("Reload verification failed after Xrust was reloaded; restoring the previous coherent runtime", "fatal");
             return hot_reload ? abort_hot_transition(status, staged_singbox_config, staged_singbox_backup) : abort_guarded_transition(status, staged_singbox_config, staged_singbox_backup, transition_guard_active);
         }
         let cache_transaction = SECTION_CACHE_DIR + ".reload." + owner_pid();
         if (!module_success(SINGBOX_UC, [ "publish-section-cache", staged_singbox_config, cache_transaction ]))
             return hot_reload ? abort_hot_transition(1, staged_singbox_config, staged_singbox_backup) : abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, transition_guard_active);
         reload_core_transaction.section_cache = cache_transaction;
+
+        // Both workers consume the candidate's published section cache. Start
+        // them while the previous policy and all recovery files remain intact.
+        status = start_candidate_reload_workers(sing_box_config_path, staged_singbox_backup);
+        if (status != 0)
+            return hot_reload ? abort_hot_transition(status, staged_singbox_config, staged_singbox_backup) : abort_guarded_transition(status, staged_singbox_config, staged_singbox_backup, transition_guard_active);
 
         let replacing_nft = nft_candidate_batch_file != "";
         if (replacing_nft && !nft_candidate_finish(true, true))
@@ -2081,18 +2138,6 @@ function reload(reason, cold_restart) {
         discard_singbox_config_stage(staged_singbox_config);
         discard_reload_config_backup(staged_singbox_backup);
         finish_list_change_files(false);
-        status = module_status(PRIORITY_UC, [ "start-runtime" ]);
-        if (status != 0) {
-            log_message("Failed to start Priority runtime after sing-box reload", "fatal");
-            cleanup_failed_runtime();
-            return status;
-        }
-        status = module_status(DNS_FAILOVER_UC, [ "start-runtime", "", sing_box_config_path ]);
-        if (status != 0) {
-            log_message("Failed to restart DNS failover runtime after sing-box reload", "fatal");
-            cleanup_failed_runtime();
-            return status;
-        }
     }
 
     let dns_status = 0;
@@ -2177,7 +2222,7 @@ function restart() {
     // start. In particular, delayed startup recovery must never stop an
     // unknown runtime merely to make room for Forkop.
     if (module_success(STATE_UC, [ "sing-box-process-conflict" ])) {
-        log_message("Refusing Forkop restart: sing-box process ownership is ambiguous; preserving the existing runtime", "fatal");
+        log_message("Refusing Forkop restart: Xrust process ownership is ambiguous; preserving the existing runtime", "fatal");
         return 1;
     }
 
@@ -2316,12 +2361,6 @@ function uninstall() {
 
     package_manager_remove_if_installed("luci-i18n-forkop-ru");
     package_manager_remove_if_installed("luci-app-forkop");
-
-    if (module_success(SINGBOX_UC, [ "managed-service-installed" ])) {
-        module_success(SINGBOX_UC, [ "remove-managed-service-script" ]);
-        remove_file("/usr/bin/sing-box");
-        remove_file("/usr/lib/libcronet.so");
-    }
 
     command_success_from_args([ "rm", "-rf", "/usr/lib/forkop" ]);
     // The precompiled copy of the library the sources above fed.  It can no

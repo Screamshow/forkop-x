@@ -60,13 +60,13 @@ function createTailscaleContent(section) {
     const lanStatus = E("p", { style: helpStyle });
     const exitNode = E("input", { type: "checkbox" });
     const exitStatus = E("p", { style: helpStyle });
-    const labels = { disconnected: _("Tailscale is disconnected"), connecting: _("Connecting to Tailscale…"), reconnecting: _("Reconnecting to Tailscale…"), connected: _("Router is connected to Tailscale"), error: _("Connection error"), unavailable: _("Update Xrust to use native Tailscale") };
+    const labels = { disconnected: _("Tailscale is disconnected"), connecting: _("Connecting to Tailscale…"), reconnecting: _("Reconnecting to Tailscale…"), connected: _("Router is connected to Tailscale"), error: _("Connection error"), unavailable: _("Native Tailscale is unavailable") };
     function render(data) {
       latest = data;
       const entries = Array.isArray(data.events) ? data.events : [];
       const text = entries.length ? entries.map(entry => "[" + new Date(entry.time * 1000).toLocaleString() + "] " + nativeMessage(entry.message)).join("\n") : _("No events yet.");
       if (logs.textContent !== text) { logs.textContent = text; logs.scrollTop = logs.scrollHeight; }
-      setStatus(data.available ? (labels[data.state] || _("Unknown status")) : data.version_supported === false ? _("Forkop 2.3.4 or later is required") : data.rust_selected === false ? _("Available only when Xrust is selected") : labels.unavailable, data.available ? data.state : "unavailable");
+      setStatus(data.available ? (labels[data.state] || _("Unknown status")) : labels.unavailable, data.available ? data.state : "unavailable");
       details.textContent = nativeMessage(data.message) || (data.ip ? _("Router Tailscale address: ") + data.ip : "");
       const network = data.transport && data.transport.network;
       const paths = data.transport && data.transport.peers || [];
@@ -108,7 +108,7 @@ function createTailscaleContent(section) {
       lanStatus.style.display = lanStatus.textContent ? "" : "none";
       exitNode.disabled = busy || !data.exit_available;
       exitNode.checked = Boolean(data.exit_enabled);
-      exitStatus.textContent = !data.exit_enabled ? "" : !data.exit_available ? _("Exit Node: update Xrust to continue.") : data.state !== "connected" ? _("Exit Node: waiting for connection.") : !data.exit_ready ? _("Exit Node: failed to configure access.") : !data.exit_approved ? _("Exit Node: awaiting approval. In the Tailscale admin console: this router → Edit route settings → Use as exit node.") : "";
+      exitStatus.textContent = !data.exit_enabled ? "" : !data.exit_available ? _("Exit Node is unavailable.") : data.state !== "connected" ? _("Exit Node: waiting for connection.") : !data.exit_ready ? _("Exit Node: failed to configure access.") : !data.exit_approved ? _("Exit Node: awaiting approval. In the Tailscale admin console: this router → Edit route settings → Use as exit node.") : "";
       exitStatus.style.display = exitStatus.textContent ? "" : "none";
     }
     async function request(action, args = []) {

@@ -27,12 +27,12 @@ for(let suffix in ["url","user_agent","hwid"])
 let output=work+"/generated.json";
 function generate(fixture,version,supports_encryption){
  fs.writefile(work+"/fixture.json",sprintf("%J",fixture));
- let args=["env","TMP_SUBSCRIPTION_FOLDER="+work+"/cache","FORKOP_RUNTIME_STATE_DIR="+work+"/state","TMP_SING_BOX_FOLDER="+work+"/singbox","FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR="+work+"/persistent","FORKOP_LIB="+lib,"ucode","-L",lib,lib+"/singbox/generator.uc","generate-config-fixture",work+"/fixture.json",output,"127.0.0.1","0","1","",version,"0","0",supports_encryption ? "1" : "0"];
+ let args=["env","TMP_SUBSCRIPTION_FOLDER="+work+"/cache","FORKOP_RUNTIME_STATE_DIR="+work+"/state","TMP_SING_BOX_FOLDER="+work+"/singbox","FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR="+work+"/persistent","FORKOP_LIB="+lib,"ucode","-L",lib,lib+"/xrust/generator.uc","generate-config-fixture",work+"/fixture.json",output,"127.0.0.1","0","1","",version,"0","0",supports_encryption ? "1" : "0"];
  return system(join(" ",map(args,quote))+" >"+quote(work+"/generation.log")+" 2>&1");
 }
 function vless_tags(){let tags={};for(let o in json(fs.readfile(output)).outbounds)if(o.type=="vless")tags[o.tag]=o.encryption??"";return tags;}
 let fixture={settings,section:[section]};
-let rust=["1.14.2-rust-x.0.0.26"];
+let rust=["0.0.26"];
 
 // Mixed subscription: absent and "none" stay, the encrypted node is skipped.
 fs.writefile(work+"/cache/probe-subscription-1.json",sprintf("%J",{outbounds:[node("Plain",null),node("None","none"),node("Encrypted",enc)]}));
@@ -46,11 +46,8 @@ for(let version in rust){
  expect(has_log("skipped incompatible subscription outbound for rule 'probe': Encrypted (VLESS encryption mlkem768x25519plus is not supported by Xrust)"),version+": skip not reported: "+log_text());
  expect(fs.readfile(work+"/cache/probe-subscription-1.json")==cached,version+": subscription cache changed");
 }
-// A Go core keeps the node as before.
-expect(generate(fixture,"1.14.2-rust-x.0.0.33",true)==0,"capable Xrust: mixed subscription failed: "+log_text());
+expect(generate(fixture,"0.0.33",true)==0,"capable Xrust: mixed subscription failed: "+log_text());
 expect(vless_tags()["Encrypted"]==enc,"capable Xrust lost VLESS encryption");
-expect(generate(fixture,"1.14.2-x-1.0.4")==0,"Go X: mixed subscription failed: "+log_text());
-expect(vless_tags()["Encrypted"]==enc,"Go X lost the encrypted node");
 
 // Only encrypted nodes: generation fails with the reason and leaves the
 // previous configuration in place; nothing falls back to Direct.
@@ -65,18 +62,18 @@ for(let version in rust){
 // Manual link and JSON outbound: explicit error.
 let manual={settings,section:[{".name":"manual",".type":"section",enabled:"1",action:"connection",
  selector_proxy_links:["vless://"+uuid+"@127.0.0.1:443?security=tls&sni=localhost&encryption="+enc+"#Manual%20Encrypted"]}]};
-expect(generate(manual,"1.14.2-rust-x.0.0.26")!=0,"manual encrypted link was applied");
+expect(generate(manual,"0.0.26")!=0,"manual encrypted link was applied");
 expect(has_log("manual outbound 'Manual Encrypted' uses VLESS encryption mlkem768x25519plus, which Xrust does not support; use a link with encryption=none"),"manual link error missing: "+log_text());
 let json_section={settings,section:[{".name":"json",".type":"section",enabled:"1",action:"connection",
  outbound_jsons:[sprintf("%J",node("JSON Encrypted",enc))]}]};
-expect(generate(json_section,"1.14.2-rust-x.0.0.26")!=0,"JSON encrypted outbound was applied");
+expect(generate(json_section,"0.0.26")!=0,"JSON encrypted outbound was applied");
 expect(has_log("JSON outbound 'JSON Encrypted' uses VLESS encryption mlkem768x25519plus"),"JSON outbound error missing: "+log_text());
-expect(generate(manual,"1.14.2-rust-x.0.0.33",true)==0,"capable Xrust refused manual encrypted link: "+log_text());
-expect(generate(json_section,"1.14.2-rust-x.0.0.33",true)==0,"capable Xrust refused JSON encrypted outbound: "+log_text());
+expect(generate(manual,"0.0.33",true)==0,"capable Xrust refused manual encrypted link: "+log_text());
+expect(generate(json_section,"0.0.33",true)==0,"capable Xrust refused JSON encrypted outbound: "+log_text());
 let plain={settings,section:[{".name":"manual",".type":"section",enabled:"1",action:"connection",
  selector_proxy_links:["vless://"+uuid+"@127.0.0.1:443?security=tls&sni=localhost&encryption=none#Manual%20None"]}]};
-expect(generate(plain,"1.14.2-rust-x.0.0.26")==0,"manual link with encryption=none failed: "+log_text());
+expect(generate(plain,"0.0.26")==0,"manual link with encryption=none failed: "+log_text());
 expect(vless_tags()["Manual None"]!=null||length(keys(vless_tags()))==1,"manual link with encryption=none not generated");
-print("Xrust VLESS encryption: older builds retain rejection; capable builds preserve encryption for subscription, manual and JSON nodes; Go X unchanged\n");
+print("Xrust VLESS encryption checks passed\n");
 UC
 ucode -L "$LIB" "$WORK/check.uc" "$WORK" "$LIB"

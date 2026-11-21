@@ -28,8 +28,6 @@ const LOG_WATCHER_START_DELAY_MS = 5000;
 function componentDisplayName(component: string) {
   const names: Record<string, string> = {
     forkop: 'Forkop X',
-    sing_box: 'sing-box',
-    rust_x: 'Xrust',
     zapret_manager: 'Zapret-Manager',
   };
 
@@ -134,8 +132,25 @@ function showLogNotification(notification: ForkopLogNotification) {
 }
 
 export function coreService(options: CoreServiceOptions = {}) {
+  let lastConfigError = '';
   let lastSubscriptionError = '';
   subscribeRuntimeUiState((state) => {
+    const configError = state.config_error || '';
+    if (configError !== lastConfigError) {
+      lastConfigError = configError;
+      if (typeof document !== 'undefined') {
+        document.querySelector('.fkp-config-apply-error')?.remove();
+      }
+      if (configError) {
+        ui.addNotification(
+          _('Forkop settings were not applied'),
+          E('div', {}, configError),
+          'error',
+          'fkp-config-apply-error',
+        );
+      }
+    }
+
     const key = state.subscription_error
       ? JSON.stringify(state.subscription_error)
       : '';
@@ -167,7 +182,11 @@ export function coreService(options: CoreServiceOptions = {}) {
   const watcher = ForkopLogWatcher.getInstance();
   const logNotificationDeduper = new LogNotificationDeduper();
   const startRecoveryNotifications = new StartRecoveryNotificationController(
-    showLogNotification,
+    (notification) => {
+      if (logNotificationDeduper.shouldNotify(notification.line)) {
+        showLogNotification(notification);
+      }
+    },
   );
 
   watcher.init(

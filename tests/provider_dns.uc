@@ -1,4 +1,4 @@
-let provider = require('singbox.provider_dns');
+let provider = require('xrust.provider_dns');
 function check(value, message) { if (!value) die(message + '\n'); }
 let dump = { interface: [
     { interface:'lan', up:true, l3_device:'br-lan', 'dns-server':['192.168.1.1'], route:[] },
@@ -44,7 +44,7 @@ fs.readfile = function(path) {
     if (index(path,'iface_state/wan') >= 0) return 'online\n';
     return null;
 };
-let dns=require('singbox.dns');
+let dns=require('xrust.dns');
 let settings={ dns_use_provider:'1',dns_type:'doh',dns_server:['8.8.8.8'],
     bootstrap_dns_server:['1.1.1.1'],dns_detour_enabled:'1',dns_detour_section:'proxy' };
 let config=dns.config(settings);

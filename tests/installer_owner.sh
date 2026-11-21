@@ -138,6 +138,7 @@ sed -n '/^select_sing_box_installation()/,/^}/p' "$INSTALLER" > "$select_sing_bo
 # A: an absent core must select Xrust without an interactive build chooser.
 fresh_variant="$(
   sing_box_is_present() { return 1; }
+  pkg_is_installed() { return 1; }
   msg() { :; }
   SING_BOX_INSTALL_VARIANT=""
   . "$select_sing_box_block"
@@ -170,6 +171,7 @@ grep -Fq 'rust-x)
 # B: a supported installed package must be preserved and its component action skipped.
 existing_variant="$(
   sing_box_is_present() { return 0; }
+  pkg_is_installed() { [ "$1" = sing-box-x ]; }
   msg() { :; }
   SING_BOX_INSTALL_VARIANT="unexpected"
   . "$select_sing_box_block"

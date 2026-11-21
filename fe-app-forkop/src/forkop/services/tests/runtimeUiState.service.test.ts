@@ -28,17 +28,14 @@ function createUiState(
         status,
         dns_configured: running,
       },
-      sing_box: {
+      xrust: {
         running,
         enabled: 0,
         status: running ? 'running but disabled' : 'stopped & disabled',
       },
     },
     capabilities: {
-      sing_box_extended: 1,
-      sing_box_tiny: 0,
-      sing_box_compressed: 0,
-      sing_box_tailscale: 1,
+      xrust_tailscale: 1,
     },
     actions: {
       service: [],

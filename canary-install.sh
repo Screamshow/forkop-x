@@ -5,6 +5,7 @@ set -eu
 installer=$(mktemp /tmp/forkop-canary-install.XXXXXX)
 trap 'rm -f "$installer"' EXIT HUP INT TERM
 base=${FORKOP_MIRROR_BASE_URL:-https://mirror.51343.ru}
+base=${base%/}
 
 if command -v curl >/dev/null 2>&1; then
     curl -fsSL --retry 3 "$base/forkop/install.sh" -o "$installer"

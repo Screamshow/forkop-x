@@ -20,6 +20,8 @@ ops/deployed-nginx/
 /tests/
 !/tests/
 /tests/*
+!/tests/xrust_path_migration.sh
+!/tests/forkop_upgrade_recovery.sh
 !/tests/vless_encryption_capabilities.sh
 !/tests/subscription_recovery.uc
 !/tests/subscription_recovery.sh

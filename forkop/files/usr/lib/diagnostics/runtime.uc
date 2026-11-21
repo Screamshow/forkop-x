@@ -1,13 +1,14 @@
 #!/usr/bin/env ucode
 
 let fs = require("fs");
+let xrust = require("xrust.binary");
 let mark_rules = require("diagnostics.mark_rules");
 let common = require("core.common");
 let process_memory = require("core.process_memory");
 let constants = require("core.constants");
 let core_ip = require("core.ip");
 let uci_core = require("core.uci");
-let runtime_dns = require("singbox.dns");
+let runtime_dns = require("xrust.dns");
 let netstat = require("core.netstat");
 
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || constants.FORKOP_CONFIG_NAME || "forkop";
@@ -18,13 +19,13 @@ const FORKOP_SERVICE_NAME = getenv("FORKOP_SERVICE_NAME") || constants.FORKOP_SE
 // The core's resident memory is spread over two procd services: forkop-tailscale
 // runs the very same core binary. Forkop's own workers likewise sit in more than
 // one service. A name procd does not know is a component that is not installed.
-const CORE_SERVICE_NAMES = [ "sing-box", "forkop-tailscale" ];
+const CORE_SERVICE_NAMES = [ xrust.SERVICE_NAME, "forkop-tailscale" ];
 const FORKOP_SERVICE_NAMES = [ FORKOP_SERVICE_NAME, "forkop-torrserver-direct" ];
 const FORKOP_LUCI_VIEW_DIR = getenv("FORKOP_LUCI_VIEW_DIR") || constants.FORKOP_LUCI_VIEW_DIR || "/www/luci-static/resources/view/forkop";
 const RUNTIME_STATE_DIR = getenv("FORKOP_RUNTIME_STATE_DIR") || "/var/run/forkop";
-const SYSTEM_INFO_CACHE_FILE = getenv("FORKOP_SYSTEM_INFO_CACHE_FILE") || RUNTIME_STATE_DIR + "/system-info.json";
+const SYSTEM_INFO_CACHE_FILE = getenv("FORKOP_SYSTEM_INFO_CACHE_FILE") || RUNTIME_STATE_DIR + "/system-info-xrust.json";
 const SYSTEM_INFO_CACHE_TTL = int(getenv("FORKOP_SYSTEM_INFO_CACHE_TTL") || "3600");
-const TMP_SING_BOX_FOLDER = getenv("TMP_SING_BOX_FOLDER") || constants.TMP_SING_BOX_FOLDER || "/tmp/sing-box";
+const TMP_SING_BOX_FOLDER = getenv("TMP_SING_BOX_FOLDER") || constants.TMP_SING_BOX_FOLDER || "/tmp/xrust";
 const SECTION_CACHE_DIR = getenv("FORKOP_SECTION_CACHE_DIR") || RUNTIME_STATE_DIR + "/section-cache";
 const CHECK_PROXY_IP_DOMAIN = getenv("CHECK_PROXY_IP_DOMAIN") || constants.CHECK_PROXY_IP_DOMAIN || "ip.podkop.fyi";
 const FAKEIP_TEST_DOMAIN = getenv("FAKEIP_TEST_DOMAIN") || constants.FAKEIP_TEST_DOMAIN || "fakeip.podkop.fyi";
@@ -41,10 +42,10 @@ const SB_DNS_INBOUND_ADDRESS = getenv("SB_DNS_INBOUND_ADDRESS") || constants.SB_
 const SB_TPROXY_INBOUND6_ADDRESS = getenv("SB_TPROXY_INBOUND6_ADDRESS") || constants.SB_TPROXY_INBOUND6_ADDRESS || "::1";
 const SB_TPROXY_INBOUND_PORT = getenv("SB_TPROXY_INBOUND_PORT") || constants.SB_TPROXY_INBOUND_PORT || "1602";
 const SB_CLASH_API_CONTROLLER_PORT = getenv("SB_CLASH_API_CONTROLLER_PORT") || constants.SB_CLASH_API_CONTROLLER_PORT || "9090";
-const SING_BOX_BIN_PATH = getenv("FORKOP_DIAGNOSTICS_SING_BOX_BIN_PATH") || "/usr/bin/sing-box";
 const CLOUDFLARE_OCTETS = getenv("CLOUDFLARE_OCTETS") || constants.CLOUDFLARE_OCTETS || "8.47 162.159 188.114";
 const DEFAULT_LATENCY_TEST_URL = getenv("DEFAULT_LATENCY_TEST_URL") || "https://www.gstatic.com/generate_204";
 const CLASH_PROXY_LIST_TIMEOUT_SECONDS = "5";
+const CLASH_BATCH_PROXY_LIST_TIMEOUT_SECONDS = "10";
 const RUNTIME_STABLE_MIN_AGE = getenv("FORKOP_RUNTIME_STABLE_MIN_AGE") || "2";
 const AUTOMATIC_LATENCY_TEST_LOCK_DIR = getenv("FORKOP_AUTOMATIC_LATENCY_TEST_LOCK_DIR") || RUNTIME_STATE_DIR + "/automatic-latency-test.lock";
 const AUTOMATIC_LATENCY_RETRY_LOCK_DIR = AUTOMATIC_LATENCY_TEST_LOCK_DIR + ".retry";
@@ -66,7 +67,7 @@ const SERVICE_STATE_UC = getenv("FORKOP_SERVICE_STATE_UC") || LIB_DIR + "/servic
 const DIAGNOSTICS_RUNTIME_UC = getenv("FORKOP_DIAGNOSTICS_RUNTIME_UC") || LIB_DIR + "/diagnostics/runtime.uc";
 const SERVICE_UI_UC = LIB_DIR + "/service/ui.uc";
 const SUBSCRIPTION_CACHE_UC = LIB_DIR + "/subscription/cache.uc";
-const SINGBOX_RUNTIME_UC = LIB_DIR + "/singbox/runtime.uc";
+const XRUST_RUNTIME_UC = LIB_DIR + "/xrust/runtime.uc";
 
 function as_string(value) {
     return value == null ? "" : "" + value;
@@ -161,11 +162,6 @@ function module_capture_stdin(module_path, args, input) {
 
 function module_output(module_path, args) {
     let result = module_capture(module_path, args);
-    return result.status == 0 ? result.output : "";
-}
-
-function module_output_stdin(module_path, args, input) {
-    let result = module_capture_stdin(module_path, args, input);
     return result.status == 0 ? result.output : "";
 }
 
@@ -410,8 +406,8 @@ function cleanup_check_proxy_dir(dir) {
 
 function check_proxy() {
     let sing_box_config_path = option(settings(), "config_path", "");
-    if (!command_exists("sing-box")) {
-        nolog("sing-box is not installed");
+    if (!file_executable(xrust.PATH)) {
+        nolog("Xrust is not installed");
         return 1;
     }
     if (!file_exists(sing_box_config_path)) {
@@ -419,8 +415,8 @@ function check_proxy() {
         return 1;
     }
 
-    nolog("Checking sing-box configuration...");
-    if (!command_success_from_args([ "sing-box", "-c", sing_box_config_path, "check" ])) {
+    nolog("Checking Xrust configuration...");
+    if (!command_success_from_args([ xrust.PATH, "check", "-c", sing_box_config_path ])) {
         nolog("Invalid configuration");
         return 1;
     }
@@ -447,7 +443,7 @@ function check_proxy() {
 
     let response = "";
     for (let attempt = 1; attempt <= 5; attempt++) {
-        let args = [ "sing-box", "tools", "fetch", "ifconfig.me", "-c", check_proxy_config, "-D", check_proxy_dir, "--disable-color" ];
+        let args = [ xrust.PATH, "tools", "fetch", "ifconfig.me", "-c", check_proxy_config, "-D", check_proxy_dir, "--disable-color" ];
         if (outbound_tag != "") {
             push(args, "-o");
             push(args, outbound_tag);
@@ -547,25 +543,25 @@ function check_logs() {
     return 0;
 }
 
-function check_sing_box_logs() {
+function check_xrust_logs() {
     if (!command_exists("logread")) {
         nolog("Error: logread command not found");
         return 1;
     }
-    let rendered = status_capture([ "matching-log-tail", "sing-box", "100" ], command_output_from_args([ "logread" ]));
+    let rendered = status_capture([ "matching-log-tail", "xrust", "100" ], command_output_from_args([ "logread" ]));
     if (rendered.output != "")
         print(rendered.output);
     if (rendered.status != 0) {
-        nolog("sing-box logs not found");
+        nolog("Xrust logs not found");
         return 1;
     }
     return 0;
 }
 
-function show_sing_box_config(visibility) {
+function show_xrust_config(visibility) {
     visibility = as_string(visibility || "masked");
     let sing_box_config_path = option(settings(), "config_path", "");
-    nolog("Current sing-box configuration:");
+    nolog("Current Xrust configuration:");
     if (!file_exists(sing_box_config_path)) {
         nolog("Configuration file not found");
         return 1;
@@ -595,8 +591,8 @@ function show_version() {
     return 0;
 }
 
-function show_sing_box_version() {
-    print(replace(module_output(SINGBOX_RUNTIME_UC, [ "version" ]), /[\r\n]+$/g, ""), "\n");
+function show_xrust_version() {
+    print(replace(module_output(XRUST_RUNTIME_UC, [ "build-version" ]), /[\r\n]+$/g, ""), "\n");
     return 0;
 }
 
@@ -614,8 +610,8 @@ function get_luci_app_version() {
     return "";
 }
 
-function sing_box_binary_signature() {
-    let stat = fs.stat(SING_BOX_BIN_PATH);
+function xrust_binary_signature() {
+    let stat = fs.stat(xrust.PATH);
     return stat == null ? "" : join(":", [ stat.inode, stat.size, stat.mtime, stat.ctime ]);
 }
 
@@ -654,47 +650,11 @@ function write_system_info_cache(value) {
     return true;
 }
 
-function sing_box_marker_is(expected) {
-    return module_success(SINGBOX_RUNTIME_UC, [ "marker-is", expected ]);
-}
-
-function sing_box_component_action_running() {
-    return module_success(SERVICE_UI_UC, [ "component-action-running-for", "sing_box" ]);
-}
-
-function sing_box_package_installed_exact(package_name) {
-    let installed = command_exists("apk") ? command_output_from_args([ "apk", "list", "--installed", "--manifest" ]) : "";
-    for (let line in split(installed, "\n")) {
-        let fields = split(trim(as_string(line)), /[ \t]+/);
-        if (as_string(fields[0]) == as_string(package_name))
-            return true;
-    }
-
-    installed = command_exists("opkg") ? command_output_from_args([ "opkg", "list-installed" ]) : "";
-    for (let line in split(installed, "\n"))
-        if (split(trim(as_string(line)), /[ \t]+/)[0] == as_string(package_name))
-            return true;
-
-    return false;
-}
-
-function sing_box_installed_package_name() {
-    for (let package_name in [ "rust-x", "sing-box-x", "sing-box-extended", "sing-box-tiny", "sing-box" ])
-        if (sing_box_package_installed_exact(package_name))
-            return package_name;
-
-    return "";
-}
-
 function system_info_cache_is_valid() {
     let cache = read_json_file(SYSTEM_INFO_CACHE_FILE);
     if (type(cache) != "object")
         return false;
-    if (cache.sing_box_binary_signature != sing_box_binary_signature())
-        return false;
-    // Package hooks may populate the cache while opkg still marks the new
-    // core as unpacked. Recheck identity after the transaction completes.
-    if (as_string(cache.sing_box_package) != sing_box_installed_package_name())
+    if (cache.xrust_binary_signature != xrust_binary_signature())
         return false;
     let now = int(clock()[0]);
     let generated_at = arg_number(cache.generated_at || 0);
@@ -704,49 +664,6 @@ function system_info_cache_is_valid() {
         return false;
 
     return int(cache.zapret_manager_installed || 0) == (zapret_manager_is_installed() ? 1 : 0);
-}
-
-function sing_box_compressed_binary() {
-    // Managed compressed installs remove all sing-box packages. A package
-    // installed manually supersedes the old variant marker.
-    return sing_box_marker_is("extended-compressed") && sing_box_installed_package_name() == "";
-}
-
-function sing_box_live_probe_disabled() {
-    // Never launch a binary while a component transaction may replace it.
-    return sing_box_component_action_running() || sing_box_compressed_binary();
-}
-
-function sing_box_tiny_package_installed() {
-    return sing_box_package_installed_exact("sing-box-tiny");
-}
-
-function sing_box_capability_flags(sing_box_version, sing_box_version_output) {
-    let extended = 0;
-    let tiny = 0;
-    let tailscale = 0;
-    let package_name = sing_box_installed_package_name();
-    let unpackaged = package_name == "";
-
-    if (package_name == "sing-box-extended" || (unpackaged && (sing_box_marker_is("extended") ||
-        sing_box_marker_is("extended-compressed"))) ||
-        module_success(SINGBOX_RUNTIME_UC, [ "is-extended", sing_box_version ]))
-        extended = 1;
-
-    if (package_name == "sing-box-tiny" || (unpackaged && extended == 0 &&
-        (sing_box_marker_is("tiny") || sing_box_tiny_package_installed())))
-        tiny = 1;
-
-    if (extended == 1)
-        tailscale = 1;
-    else if (as_string(sing_box_version_output) != "") {
-        if (module_success(SINGBOX_RUNTIME_UC, [ "supports-tailscale", sing_box_version, sing_box_version_output ]))
-            tailscale = 1;
-    }
-    else if (package_name != "sing-box-x" && tiny == 0 && sing_box_component_action_running())
-        tailscale = 1;
-
-    return { extended, tiny, tailscale, package_name };
 }
 
 function openwrt_release() {
@@ -770,28 +687,8 @@ function openwrt_release() {
 function build_system_info() {
     let forkop_latest_version = first_line_value("/tmp/forkop.latest-version.cache", "unknown");
     let luci_app_version = get_luci_app_version();
-    let sing_box_version = "";
-    let sing_box_version_output = "";
-
-    if (command_exists("sing-box")) {
-        if (sing_box_live_probe_disabled()) {
-            sing_box_version = replace(module_output(SINGBOX_RUNTIME_UC, [ "read-version-state" ]), /[\r\n]+$/g, "");
-            sing_box_version_output = "";
-        }
-        else {
-            sing_box_version_output = module_output(SINGBOX_RUNTIME_UC, [ "version-output" ]);
-            sing_box_version = replace(module_output_stdin(SINGBOX_RUNTIME_UC, [ "version-from-output" ], sing_box_version_output), /[\r\n]+$/g, "");
-        }
-        if (sing_box_version == "")
-            sing_box_version = "unknown";
-    }
-    else {
-        sing_box_version = "not installed";
-        sing_box_version_output = "";
-    }
-
-    let flags = sing_box_capability_flags(sing_box_version, sing_box_version_output);
-    let sing_box_compressed = flags.extended == 1 && sing_box_compressed_binary() ? 1 : 0;
+    let version_output = file_executable(xrust.PATH) ? module_output(XRUST_RUNTIME_UC, [ "version-output" ]) : "";
+    let xrust_version = xrust.build_version(xrust.version_from_output(version_output));
 
     let zapret_manager_installed = zapret_manager_is_installed() ? 1 : 0;
     let device_model = first_line_value("/tmp/sysinfo/model", "unknown");
@@ -799,7 +696,7 @@ function build_system_info() {
     let direct_proxy_enabled = bool_option(settings(), "direct_proxy_enabled", false) ? 1 : 0;
     let direct_proxy_port = option(settings(), "direct_proxy_port", "2080");
     let direct_proxy_address = direct_proxy_enabled
-        ? trim(module_output(SINGBOX_RUNTIME_UC, [ "service-listen-address" ]))
+        ? trim(module_output(XRUST_RUNTIME_UC, [ "service-listen-address" ]))
         : "";
     let torrserver_direct_status = parse_json_or_null(module_output(LIB_DIR + "/torrserver/direct.uc", [ "status" ]));
     if (type(torrserver_direct_status) != "object")
@@ -809,15 +706,10 @@ function build_system_info() {
         forkop_version: FORKOP_VERSION,
         forkop_latest_version: forkop_latest_version || "unknown",
         luci_app_version,
-        sing_box_version,
-        sing_box_binary_signature: sing_box_binary_signature(),
-        sing_box_bittorrent_direct: module_success(SINGBOX_RUNTIME_UC,
-            [ "supports-bittorrent-direct", sing_box_version, sing_box_version_output ]) ? 1 : 0,
-        sing_box_extended: flags.extended,
-        sing_box_tiny: flags.tiny,
-        sing_box_compressed,
-        sing_box_tailscale: flags.tailscale,
-        sing_box_package: flags.package_name,
+        xrust_version,
+        xrust_binary_signature: xrust_binary_signature(),
+        xrust_bittorrent_direct: xrust.has_feature(version_output, "sniff.bittorrent-extended") ? 1 : 0,
+        xrust_tailscale: xrust.tailscale_supported(version_output) ? 1 : 0,
         zapret_manager_installed,
         packet_steering_mode,
         direct_proxy_enabled,
@@ -847,7 +739,7 @@ function get_system_info() {
 
 function sing_box_process_is_running() {
     // procd owns the service PID; verify its executable instead of argv[0].
-    // Xrust's wrapper execs /usr/lib/rust-x/sing-box and may rename threads.
+    // The /usr/bin/xrust process may rename its threads.
     return module_success(SERVICE_STATE_UC, [ "sing-box-service-running" ]);
 }
 
@@ -871,12 +763,12 @@ function dnsmasq_has_forkop_dns() {
     return module_success(DNS_APPLY_UC, [ "has-forkop-dns" ]);
 }
 
-function get_sing_box_status() {
+function get_xrust_status() {
     let running = module_success(SERVICE_STATE_UC, [
         "sing-box-service-stable",
         RUNTIME_STABLE_MIN_AGE
     ]) ? 1 : 0;
-    let enabled = file_executable("/etc/rc.d/S99sing-box") ? 1 : 0;
+    let enabled = file_executable("/etc/rc.d/S99" + xrust.SERVICE_NAME) ? 1 : 0;
     let dns_configured = dnsmasq_has_forkop_dns() ? 1 : 0;
     write_service_status(running, enabled, dns_configured, CORE_SERVICE_NAMES);
     return 0;
@@ -964,7 +856,7 @@ function dns_check_resolve_host(host, resolver, timeout_seconds) {
 }
 
 function device_ipv4_address(interface) {
-    let value = replace(module_output(SINGBOX_RUNTIME_UC, [ "device-ipv4-address", interface ]), /[\r\n]+$/g, "");
+    let value = replace(module_output(XRUST_RUNTIME_UC, [ "device-ipv4-address", interface ]), /[\r\n]+$/g, "");
     if (value != "")
         return value;
 
@@ -984,7 +876,7 @@ function dns_check_router_resolver_available(domain) {
             return true;
     }
 
-    let listen_address = replace(module_output(SINGBOX_RUNTIME_UC, [ "service-listen-address" ]), /[\r\n]+$/g, "");
+    let listen_address = replace(module_output(XRUST_RUNTIME_UC, [ "service-listen-address" ]), /[\r\n]+$/g, "");
     if (listen_address != "" && command_success_from_args([ "dig", "@" + listen_address, domain, "+timeout=2", "+tries=1" ]))
         return true;
 
@@ -1103,10 +995,13 @@ function nft_chain_counter_status(chain) {
 
 function nft_table_has_other_mark_rules(family, table_name) {
     let output = command_output_from_args([ "nft", "list", "table", family, table_name ]);
+    let chain_name = "";
     for (let line in split(output, "\n")) {
+        let chain = match(line, /^\s*chain ([^ ]+) \{/);
+        if (chain != null)
+            chain_name = chain[1];
         if (index(line, "meta mark set") >= 0 &&
-            !mark_rules.is_native_tailscale_mark(family, table_name, line) &&
-            !mark_rules.is_proxy_transport_mark(family, table_name, line))
+            !mark_rules.is_forkop_mark(family, table_name, chain_name, line))
             return true;
     }
     return false;
@@ -1174,11 +1069,6 @@ function check_nft_rules() {
     return 0;
 }
 
-function strip_leading_v(value) {
-    value = as_string(value);
-    return substr(value, 0, 1) == "v" ? substr(value, 1) : value;
-}
-
 function sing_box_standard_ports_listening(netstat_data) {
     return netstat.sing_box_standard_ports_listening(
         netstat_data,
@@ -1188,48 +1078,18 @@ function sing_box_standard_ports_listening(netstat_data) {
     );
 }
 
-function check_sing_box() {
-    let sing_box_installed = 0;
-    let sing_box_version_ok = 0;
-    let sing_box_extended = 0;
-    let sing_box_service_exist = 0;
-    let sing_box_autostart_disabled = 0;
-    let sing_box_process_running = 0;
-    let sing_box_ports_listening = 0;
-
-    if (command_exists("sing-box")) {
-        sing_box_installed = 1;
-        let version = strip_leading_v(replace(module_output(SINGBOX_RUNTIME_UC, [ "version" ]), /[\r\n]+$/g, ""));
-        if (version != "") {
-            if (sing_box_marker_is("extended-compressed") || module_success(SINGBOX_RUNTIME_UC, [ "is-extended", version ]))
-                sing_box_extended = 1;
-            if (module_success(HELPERS_UC, [ "version-at-least", version, "1.12.4" ]))
-                sing_box_version_ok = 1;
-        }
-        else if (sing_box_marker_is("extended-compressed"))
-            sing_box_extended = 1;
-    }
-
-    if (file_exists("/etc/init.d/sing-box")) {
-        sing_box_service_exist = 1;
-        if (!command_success_from_args([ "/etc/init.d/sing-box", "enabled" ]))
-            sing_box_autostart_disabled = 1;
-    }
-
-    if (sing_box_process_is_running())
-        sing_box_process_running = 1;
-
-    if (sing_box_standard_ports_listening(command_output_from_args([ "netstat", "-ln" ])))
-        sing_box_ports_listening = 1;
-
+function check_xrust() {
+    let installed = file_executable(xrust.PATH);
+    let version = installed ? trim(module_output(XRUST_RUNTIME_UC, [ "build-version" ])) : "";
+    let service_exists = file_executable(xrust.INIT);
+    let autostart_disabled = service_exists && !command_success_from_args([ xrust.INIT, "enabled" ]);
     write_json({
-        sing_box_installed,
-        sing_box_version_ok,
-        sing_box_extended,
-        sing_box_service_exist,
-        sing_box_autostart_disabled,
-        sing_box_process_running,
-        sing_box_ports_listening
+        xrust_installed: installed ? 1 : 0,
+        xrust_version_ok: version != "" ? 1 : 0,
+        xrust_service_exist: service_exists ? 1 : 0,
+        xrust_autostart_disabled: autostart_disabled ? 1 : 0,
+        xrust_process_running: sing_box_process_is_running() ? 1 : 0,
+        xrust_ports_listening: sing_box_standard_ports_listening(command_output_from_args([ "netstat", "-ln" ])) ? 1 : 0
     });
     return 0;
 }
@@ -1322,7 +1182,7 @@ function clash_json_output(args) {
 }
 
 function clash_api_url() {
-    let address = replace(module_output(SINGBOX_RUNTIME_UC, [ "service-listen-address" ]), /[\r\n]+$/g, "");
+    let address = replace(module_output(XRUST_RUNTIME_UC, [ "service-listen-address" ]), /[\r\n]+$/g, "");
     if (address == "")
         address = "127.0.0.1";
     return address + ":" + SB_CLASH_API_CONTROLLER_PORT;
@@ -1348,16 +1208,39 @@ function clash_json_error(message) {
     return 1;
 }
 
-function clash_latency_output(args) {
-    let result = status_capture([ "stdin-json" ], command_output(command_from_args(args)));
-    if (result.status != 0)
-        return clash_json_error("Clash API latency probe failed");
-    print(result.output);
+function valid_latency_ms(value) {
+    return type(value) == "int" && value > 0;
+}
+
+function parse_clash_latency(output, group) {
+    let value;
+    try {
+        value = json(output);
+    }
+    catch (e) {
+        return null;
+    }
+    if (type(value) != "object")
+        return null;
+    if (!group)
+        return valid_latency_ms(value.delay) ? value : null;
+    for (let _, delay in value)
+        if (valid_latency_ms(delay))
+            return value;
+    return null;
+}
+
+function clash_latency_output(args, group) {
+    let output = command_output(command_from_args(args));
+    let result = parse_clash_latency(output, group);
+    if (result == null)
+        return clash_json_error(group && output != "" ? "No group nodes returned latency" : "Clash API latency probe failed");
+    write_json(result);
     return 0;
 }
 
-function clash_proxy_entries(base_url, auth) {
-    let args = [ "curl", "--max-time", CLASH_PROXY_LIST_TIMEOUT_SECONDS, "-s" ];
+function clash_proxy_entries(base_url, auth, timeout_seconds) {
+    let args = [ "curl", "--max-time", timeout_seconds || CLASH_PROXY_LIST_TIMEOUT_SECONDS, "-fs" ];
     for (let item in auth) push(args, item);
     push(args, base_url + "/proxies");
 
@@ -1375,8 +1258,8 @@ function clash_proxy_entries(base_url, auth) {
     return object_or_empty(value.proxies);
 }
 
-function clash_proxy_type_map(base_url, auth) {
-    let entries = clash_proxy_entries(base_url, auth);
+function clash_proxy_type_map(base_url, auth, timeout_seconds) {
+    let entries = clash_proxy_entries(base_url, auth, timeout_seconds);
     if (entries == null)
         return null;
 
@@ -1672,10 +1555,10 @@ function probe_proxy_latencies(plan, proxy_tags, progress) {
             if (path == "") {
                 // Alone in its batch, or without a temporary file: capture it
                 // directly, which is what the sequential sweep always did.
-                push(probes, { path: "", output: command_output(command) });
+                push(probes, { path: "", output: command_output(command), tag: proxy_tag });
                 continue;
             }
-            push(probes, { path, output: "" });
+            push(probes, { path, output: "", tag: proxy_tag });
             let output_path = shell_quote(path);
             script += "( " + command + " >" + output_path + " 2>/dev/null || : >" + output_path + " ) & ";
         }
@@ -1688,7 +1571,8 @@ function probe_proxy_latencies(plan, proxy_tags, progress) {
                 output = as_string(fs.readfile(probe.path));
                 fs.unlink(probe.path);
             }
-            if (status_capture([ "stdin-json" ], output).status != 0)
+            let group = lc(as_string(plan.proxy_types[probe.tag])) == "urltest";
+            if (parse_clash_latency(output, group) == null)
                 progress.failed++;
             progress.completed++;
             if (progress.path != "")
@@ -1732,7 +1616,7 @@ function clash_api(action, arg1, arg2, arg3) {
         push(args, "url=" + url);
         push(args, "--data-urlencode");
         push(args, "timeout=" + timeout);
-        return clash_latency_output(args);
+        return clash_latency_output(args, false);
     }
 
     if (action == "get_proxy_latencies") {
@@ -1755,7 +1639,11 @@ function clash_api(action, arg1, arg2, arg3) {
         if (progress_path != "")
             module_success(SERVICE_UI_UC, [ "latency-progress-state", progress_path, count, total, failed ]);
 
-        let proxy_types = clash_proxy_type_map(base_url, auth);
+        // A requested batch can wait longer than a readiness or polling request.
+        let proxy_types = clash_proxy_type_map(base_url, auth, CLASH_BATCH_PROXY_LIST_TIMEOUT_SECONDS);
+        if (proxy_types == null)
+            return clash_json_error("Could not read proxy list from Clash API");
+
         let member_proxy_tags = [];
         let urltest_proxy_tags = [];
         for (let proxy_tag in proxy_tags)
@@ -1791,7 +1679,7 @@ function clash_api(action, arg1, arg2, arg3) {
         push(args, "url=" + test_url);
         push(args, "--data-urlencode");
         push(args, "timeout=" + timeout);
-        return clash_latency_output(args);
+        return clash_latency_output(args, true);
     }
 
     if (action == "set_group_proxy") {
@@ -1835,7 +1723,7 @@ function clash_api(action, arg1, arg2, arg3) {
 }
 
 function automatic_latency_sweep(start_kind, proxy_tags, pending_signature,
-    pending_generation, config_path, owner_pid, sing_box_pid_before, progress_path) {
+    pending_generation, config_path, owner_pid, xrust_pid_before, progress_path) {
     log_message((as_string(start_kind) == "resume" ? "Resuming interrupted" : "Starting new") +
         " automatic latency test for " + length(proxy_tags) + " independent proxy outbounds", "info");
     let completed = 0;
@@ -1876,15 +1764,15 @@ function automatic_latency_sweep(start_kind, proxy_tags, pending_signature,
                 "acquire-runtime-dir-lock-wait-until-package-upgrade", RELOAD_LOCK_DIR, owner_pid, "300"
             ]);
             if (!reacquired || !module_success(SERVICE_STATE_UC, [ "single-ready-sing-box-runtime" ]) ||
-                sing_box_pid_before != trim(module_output(SERVICE_STATE_UC, [ "sing-box-service-runtime-pid" ]))) {
+                xrust_pid_before != trim(module_output(SERVICE_STATE_UC, [ "sing-box-service-runtime-pid" ]))) {
                 if (reacquired)
                     module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
                 module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
                 if (pending_reload_requested) {
-                    log_message("Automatic latency test was interrupted by reload; the pending reload will resume it after sing-box is ready", "info");
+                    log_message("Automatic latency test was interrupted by reload; the pending reload will resume it after Xrust is ready", "info");
                 }
                 else {
-                    log_message("Automatic latency test was interrupted by reload; resuming automatically after sing-box is ready", "info");
+                    log_message("Automatic latency test was interrupted by reload; resuming automatically after Xrust is ready", "info");
                     automatic_latency_schedule_resume();
                 }
                 return 0;
@@ -1940,7 +1828,7 @@ function automatic_latency_test(start_kind) {
         return 0;
     }
 
-    // A pending reload is a hard barrier: measuring the old sing-box process
+    // A pending reload is a hard barrier: measuring the old Xrust process
     // before it restarts only guarantees a PID-change interruption. Hand the
     // reload off first. Its completion schedules exactly one worker against
     // the final generated proxy set, so this worker must not race it.
@@ -2001,11 +1889,11 @@ function automatic_latency_test(start_kind) {
     if (!module_success(SERVICE_STATE_UC, [ "single-ready-sing-box-runtime" ])) {
         module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", AUTOMATIC_LATENCY_TEST_LOCK_DIR ]);
         module_success(SERVICE_STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
-        log_message("Automatic latency test deferred because sing-box is not ready or multiple processes are running; the pending marker was retained", "info");
+        log_message("Automatic latency test deferred because Xrust is not ready or multiple processes are running; the pending marker was retained", "info");
         return 0;
     }
 
-    let sing_box_pid_before = trim(module_output(SERVICE_STATE_UC, [ "sing-box-service-runtime-pid" ]));
+    let xrust_pid_before = trim(module_output(SERVICE_STATE_UC, [ "sing-box-service-runtime-pid" ]));
     let proxy_entries = null;
     let readiness_attempts = AUTOMATIC_LATENCY_CLASH_READY_ATTEMPTS > 0 ? AUTOMATIC_LATENCY_CLASH_READY_ATTEMPTS : 15;
     for (let readiness_attempt = 0; readiness_attempt < readiness_attempts; readiness_attempt++) {
@@ -2040,7 +1928,7 @@ function automatic_latency_test(start_kind) {
         "automatic-latency-start", owner_pid, sprintf("%J", proxy_tags)
     ]));
     let result = automatic_latency_sweep(start_kind, proxy_tags, pending_signature,
-        pending_generation, config_path, owner_pid, sing_box_pid_before, progress_path);
+        pending_generation, config_path, owner_pid, xrust_pid_before, progress_path);
     if (progress_path != "")
         module_success(SERVICE_UI_UC, [ "automatic-latency-finish", progress_path, result ]);
     return result;
@@ -2092,11 +1980,11 @@ function global_check(arg1, arg2) {
 
     print_global("━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     print_global("📦 Sing-box status");
-    let singbox_check_json = command_capture(command_from_args(module_args(LIB_DIR + "/diagnostics/runtime.uc", [ "check-sing-box" ]))).output;
+    let singbox_check_json = command_capture(command_from_args(module_args(LIB_DIR + "/diagnostics/runtime.uc", [ "check-xrust" ]))).output;
     if (singbox_check_json != "")
-        render_or_fail([ "global-sing-box-check" ], singbox_check_json, "❌ Failed to parse sing-box info", [ 0 ]);
+        render_or_fail([ "global-xrust-check" ], singbox_check_json, "❌ Failed to parse Xrust info", [ 0 ]);
     else
-        print_global("❌ Failed to get sing-box info");
+        print_global("❌ Failed to get Xrust info");
 
     print_global("━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     print_global("🧱 NFT rules status");
@@ -2207,8 +2095,8 @@ function support_report() {
     support_report_heading("Global check (raw)");
     global_check("raw", "raw");
 
-    support_report_heading("Generated sing-box configuration (raw)");
-    show_sing_box_config("raw");
+    support_report_heading("Generated Xrust configuration (raw)");
+    show_xrust_config("raw");
 
     support_report_command("System uptime", [ "uptime" ]);
     support_report_command("Memory", [ "free" ]);
@@ -2245,14 +2133,14 @@ else if (mode == "check-nft")
     exit(check_nft());
 else if (mode == "check-nft-rules")
     exit(check_nft_rules());
-else if (mode == "check-sing-box")
-    exit(check_sing_box());
+else if (mode == "check-xrust")
+    exit(check_xrust());
 else if (mode == "automatic-latency-proxy-tags-fixture")
     automatic_latency_proxy_tags_fixture();
 else if (mode == "check-logs")
     exit(check_logs());
-else if (mode == "check-sing-box-logs")
-    exit(check_sing_box_logs());
+else if (mode == "check-xrust-logs")
+    exit(check_xrust_logs());
 else if (mode == "check-fakeip")
     exit(check_fakeip());
 else if (mode == "fakeip-public-ip-comparison-available-fixture")
@@ -2271,18 +2159,18 @@ else if (mode == "show-config")
     exit(show_config(ARGV[1] || "masked"));
 else if (mode == "show-version")
     exit(show_version());
-else if (mode == "show-sing-box-config")
-    exit(show_sing_box_config(ARGV[1] || "masked"));
-else if (mode == "show-sing-box-version")
-    exit(show_sing_box_version());
+else if (mode == "show-xrust-config")
+    exit(show_xrust_config(ARGV[1] || "masked"));
+else if (mode == "show-xrust-version")
+    exit(show_xrust_version());
 else if (mode == "get-status")
     exit(get_status());
 else if (mode == "get-outbound-metadata")
     exit(get_outbound_metadata(ARGV[1]));
 else if (mode == "get-subscription-metadata")
     exit(get_subscription_metadata(ARGV[1]));
-else if (mode == "get-sing-box-status")
-    exit(get_sing_box_status());
+else if (mode == "get-xrust-status")
+    exit(get_xrust_status());
 else if (mode == "get-system-info")
     exit(get_system_info());
 else if (mode == "check-dns-available")

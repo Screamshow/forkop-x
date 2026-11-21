@@ -34,9 +34,9 @@ export async function fetchServicesInfo() {
     return uiState;
   }
 
-  const [forkopResult, singboxResult] = await Promise.allSettled([
+  const [forkopResult, xrustResult] = await Promise.allSettled([
     ForkopShellMethods.getStatus(),
-    ForkopShellMethods.getSingBoxStatus(),
+    ForkopShellMethods.getXrustStatus(),
   ]);
 
   if (requestId !== latestServicesInfoRequestId) {
@@ -44,16 +44,16 @@ export async function fetchServicesInfo() {
   }
 
   const forkop = getSettledMethodResponse('getStatus', forkopResult);
-  const singbox = getSettledMethodResponse('getSingBoxStatus', singboxResult);
+  const xrust = getSettledMethodResponse('getXrustStatus', xrustResult);
   const previousData = store.get().servicesInfoWidget.data;
 
   store.set({
     servicesInfoWidget: {
       loading: false,
-      failed: !forkop.success || !singbox.success,
+      failed: !forkop.success || !xrust.success,
       data: {
-        singboxMemoryBytes: singbox.success
-          ? singbox.data.memory_rss_bytes
+        xrustMemoryBytes: xrust.success
+          ? xrust.data.memory_rss_bytes
           : undefined,
         forkopMemoryBytes: forkop.success
           ? forkop.data.memory_rss_bytes
@@ -62,7 +62,7 @@ export async function fetchServicesInfo() {
         // the last runtime state reported instead of dropping their rows.
         tailscale: previousData.tailscale,
         torrserverDirect: previousData.torrserverDirect,
-        singbox: singbox.success ? singbox.data.running : previousData.singbox,
+        xrust: xrust.success ? xrust.data.running : previousData.xrust,
         forkopRunning: forkop.success
           ? forkop.data.running
           : previousData.forkopRunning,

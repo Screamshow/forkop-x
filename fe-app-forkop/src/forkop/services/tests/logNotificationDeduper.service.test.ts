@@ -42,12 +42,12 @@ describe('LogNotificationDeduper', () => {
     expect(isErrorLogLine('forkop: [fatal] failed')).toBe(true);
     expect(
       isErrorLogLine(
-        'daemon.err sing-box[123]: FATAL[0000] start service: initialize rule-set[0]: download failed',
+        'daemon.err forkop-xrust[123]: FATAL[0000] start service: initialize rule-set[0]: download failed',
       ),
     ).toBe(true);
     expect(
       isErrorLogLine(
-        'daemon.err sing-box[123]: ERROR[0000] connection: dial failed',
+        'daemon.err forkop-xrust[123]: ERROR[0000] connection: dial failed',
       ),
     ).toBe(false);
     expect(
@@ -149,12 +149,8 @@ it('classifies a rejected list apply as a warning notification', () => {
   });
 });
 
-it('recognizes Xrust update identity separately from sing-box', () => {
+it('ignores stale standalone core update messages', () => {
   expect(
     getForkopLogNotification('forkop: [info] [component-update] rust_x 0.0.17'),
-  ).toMatchObject({
-    kind: 'component-update',
-    component: 'rust_x',
-    version: '0.0.17',
-  });
+  ).toBeNull();
 });

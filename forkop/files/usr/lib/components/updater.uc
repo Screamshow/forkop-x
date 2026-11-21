@@ -188,31 +188,6 @@ function openwrt_release_value(path, key) {
     }
 }
 
-function first_version_token(value) {
-    value = as_string(value);
-    for (let i = 0; i < length(value); i++) {
-        let chr = substr(value, i, 1);
-        if (chr == " " || chr == "\t" || chr == "\r" || chr == "\n")
-            return substr(value, 0, i);
-    }
-
-    return value;
-}
-
-function strip_plus_metadata(value) {
-    value = as_string(value);
-    let plus = index(value, "+");
-    return plus >= 0 ? substr(value, 0, plus) : value;
-}
-
-function updates_normalize_sing_box_version(value) {
-    value = as_string(value);
-    if (str_startswith(value, "v"))
-        value = substr(value, 1);
-
-    print(first_version_token(strip_plus_metadata(value)), "\n");
-}
-
 function forkop_normalized_release_version(value) {
     return as_string(value);
 }
@@ -321,8 +296,6 @@ else if (mode == "openwrt-release-value")
     openwrt_release_value(ARGV[1], ARGV[2]);
 else if (mode == "stdin-first-line-last-field")
     stdin_first_line_last_field();
-else if (mode == "updates-normalize-sing-box-version")
-    updates_normalize_sing_box_version(ARGV[1]);
 else if (mode == "forkop-release-version-valid")
     exit(forkop_release_version_valid(ARGV[1]) ? 0 : 1);
 else if (mode == "forkop-release-version-compare")

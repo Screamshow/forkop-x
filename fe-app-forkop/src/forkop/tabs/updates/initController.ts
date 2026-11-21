@@ -16,13 +16,6 @@ import { isTransientRpcError } from '../../helpers/isTransientRpcError';
 import { isActiveLuciTab } from '../../helpers/isActiveLuciTab';
 import { shouldShowLoadingForRestoredAction } from '../../helpers/restoredActionLoading';
 import {
-  formatSingBoxVersion,
-  getSingBoxName,
-  getSingBoxXVersion,
-  getRustXVersion,
-  normalizeSingBoxVariantFields,
-} from '../../helpers/singBoxVariant';
-import {
   hasLocalMutatingServiceActionLoading,
   isServiceTransitionStatus,
 } from '../diagnostic/serviceTransition';
@@ -51,10 +44,7 @@ import {
 import { Forkop } from '../../types';
 import { renderFullUninstall } from './fullUninstall';
 import { renderLanguage } from './language';
-import {
-  RUST_X_RELEASE_SELECTOR,
-  showReleaseSelector,
-} from './releaseSelector';
+import { showReleaseSelector } from './releaseSelector';
 
 type UpdateStatus = StoreType['updatesChecks'][Forkop.ComponentName]['status'];
 
@@ -70,7 +60,7 @@ interface ComponentActionButton {
 
 interface ComponentCard {
   description?: string;
-  component: Forkop.ComponentName;
+  component?: Forkop.ComponentName;
   column: 0 | 1 | 2;
   title: string;
   version: string;
@@ -223,7 +213,13 @@ function applyCachedCheckResults(results: Forkop.ComponentActionResult[]) {
   results.forEach((result) => {
     const status = result.status || null;
 
-    if (status === 'latest' || status === 'outdated' || status === 'dev') {
+    if (
+      Object.prototype.hasOwnProperty.call(
+        store.get().updatesChecks,
+        result.component,
+      ) &&
+      (status === 'latest' || status === 'outdated' || status === 'dev')
+    ) {
       setCheckResult(
         result.component,
         status,
@@ -324,28 +320,6 @@ function patchSystemInfoAfterMutation(result: Forkop.ComponentActionResult) {
     nextSystemInfo.forkop_version = version;
   }
 
-  if (result.component === 'sing_box') {
-    nextSystemInfo.sing_box_version = version;
-
-    if (
-      result.action === 'install_stable' ||
-      result.action === 'install_x' ||
-      result.action === 'install_rust_x'
-    ) {
-      nextSystemInfo.sing_box_extended = 0;
-      nextSystemInfo.sing_box_tiny = 0;
-      nextSystemInfo.sing_box_compressed = 0;
-      nextSystemInfo.sing_box_tailscale = result.action === 'install_x' ? 0 : 1;
-    }
-
-    if (result.action === 'install_tiny') {
-      nextSystemInfo.sing_box_extended = 0;
-      nextSystemInfo.sing_box_tiny = 1;
-      nextSystemInfo.sing_box_compressed = 0;
-      nextSystemInfo.sing_box_tailscale = 0;
-    }
-  }
-
   if (result.component === 'zapret_manager') {
     nextSystemInfo.zapret_manager_installed =
       result.action === 'remove' ? 0 : 1;
@@ -362,7 +336,7 @@ function patchSystemInfoAfterMutation(result: Forkop.ComponentActionResult) {
   }
 
   store.set({
-    diagnosticsSystemInfo: normalizeSingBoxVariantFields(nextSystemInfo),
+    diagnosticsSystemInfo: nextSystemInfo,
   });
 }
 
@@ -408,7 +382,7 @@ async function applyCompletedComponentAction({
     return;
   }
 
-  if (result.action === 'install' || result.action.startsWith('install_')) {
+  if (result.action === 'install') {
     setCheckResult(result.component, 'latest', result.latest_version || '');
   } else {
     resetCheckResult(result.component);
@@ -728,9 +702,7 @@ function getInstalledUpdateActions(
 }
 
 function getComponentCards(): ComponentCard[] {
-  const systemInfo = normalizeSingBoxVariantFields(
-    store.get().diagnosticsSystemInfo,
-  );
+  const systemInfo = store.get().diagnosticsSystemInfo;
   const systemInfoLoading = isSystemInfoLoading();
   const zapretManagerInstalled = Boolean(systemInfo.zapret_manager_installed);
   const packetSteeringEnabled = systemInfo.packet_steering_mode === '2';
@@ -744,43 +716,12 @@ function getComponentCards(): ComponentCard[] {
   );
   const torrserverDirectEnabled = Boolean(systemInfo.torrserver_direct_enabled);
   const torrserverDirectActive = Boolean(systemInfo.torrserver_direct_active);
-  const singBoxTiny = Boolean(systemInfo.sing_box_tiny);
-  const rustX = Boolean(getRustXVersion(systemInfo.sing_box_version));
-  const singBoxX = Boolean(getSingBoxXVersion(systemInfo.sing_box_version));
 
   const forkopActions = getInstalledUpdateActions(
     'forkop',
     'forkopCheck',
     'forkopInstall',
   );
-  // A manually installed sing-box-extended (packaged or compressed) keeps
-  // working, but Forkop neither installs nor updates it.
-  const singBoxActions = getInstalledUpdateActions(
-    'sing_box',
-    'singBoxCheck',
-    'singBoxInstall',
-    rustX || singBoxX || singBoxTiny,
-  );
-
-  if (!rustX) {
-    singBoxActions.push({
-      key: 'singBoxInstallRustX',
-      text: _('Xrust (experimental)'),
-      icon: renderDownloadIcon24,
-      component: 'sing_box',
-      action: 'install_rust_x',
-    });
-  }
-  if (!singBoxX) {
-    singBoxActions.push({
-      key: 'singBoxInstallX',
-      text: 'Sing-Box X',
-      icon: renderDownloadIcon24,
-      component: 'sing_box',
-      action: 'install_x',
-    });
-  }
-
   const zapretManagerActions: ComponentActionButton[] = zapretManagerInstalled
     ? [
         {
@@ -814,15 +755,12 @@ function getComponentCards(): ComponentCard[] {
       actions: forkopActions,
     },
     {
-      component: 'sing_box',
       column: 0,
-      title: getSingBoxName(systemInfo),
+      title: 'Xrust',
       version: systemInfoLoading
         ? _('Loading...')
-        : formatSingBoxVersion(systemInfo),
-      latestVersion: getLatestVersion('sing_box'),
-      releaseUrl: getGitHubReleaseUrl('sing_box'),
-      actions: singBoxActions,
+        : systemInfo.xrust_version || _('unknown'),
+      actions: [],
     },
     {
       component: 'zapret_manager',
@@ -953,7 +891,9 @@ function renderComponentCard(card: ComponentCard) {
 
   // 2. Details (renders status messages for check results)
   const detailsChildren: Node[] = [];
-  const checkResult = getVisibleCheckResult(card.component);
+  const checkResult = card.component
+    ? getVisibleCheckResult(card.component)
+    : null;
 
   if (checkResult && checkResult.status) {
     let labelText = '';
@@ -1047,13 +987,10 @@ function renderComponentCard(card: ComponentCard) {
   // 3. Actions classification
   const primaryActions: ComponentActionButton[] = [];
   const dangerActions: ComponentActionButton[] = [];
-  const variantActions: ComponentActionButton[] = [];
 
   card.actions.forEach((action) => {
     if (action.action === 'remove') {
       dangerActions.push(action);
-    } else if (action.action.startsWith('install_')) {
-      variantActions.push(action);
     } else {
       primaryActions.push(action);
     }
@@ -1101,34 +1038,6 @@ function renderComponentCard(card: ComponentCard) {
     );
   }
 
-  if (card.component === 'sing_box') {
-    // Any Xrust release published on the mirror, also from another core.
-    const rustXVersion =
-      getRustXVersion(store.get().diagnosticsSystemInfo.sing_box_version) || '';
-    primaryButtons.push(
-      renderButton({
-        text: _('Xrust version'),
-        disabled:
-          systemInfoLoading || serviceRuntimeActionLoading || anyActionLoading,
-        onClick: () =>
-          void showReleaseSelector(
-            rustXVersion,
-            (version) => {
-              void handleComponentAction({
-                key: 'singBoxInstallRustX',
-                text: _('Xrust (experimental)'),
-                icon: renderDownloadIcon24,
-                component: 'sing_box',
-                action: 'install_rust_x',
-                version,
-              });
-            },
-            RUST_X_RELEASE_SELECTOR,
-          ),
-      }),
-    );
-  }
-
   const dangerButtons = dangerActions.map((action) => {
     const loading = updatesActions[action.key].loading;
 
@@ -1167,38 +1076,6 @@ function renderComponentCard(card: ComponentCard) {
     );
   }
 
-  // Render variant buttons if any
-  if (variantActions.length > 0) {
-    const variantButtons = variantActions.map((action) => {
-      const loading = updatesActions[action.key].loading;
-      return renderButton({
-        text: action.text,
-        icon: action.icon,
-        loading,
-        disabled:
-          systemInfoLoading ||
-          serviceRuntimeActionLoading ||
-          (anyActionLoading && !loading),
-        onClick: () => void handleComponentAction(action),
-      });
-    });
-
-    actionElements.push(
-      E('div', { class: 'fkp_updates-page__component__variants' }, [
-        E(
-          'div',
-          { class: 'fkp_updates-page__component__variants-title' },
-          _('Install another build:'),
-        ),
-        E(
-          'div',
-          { class: 'fkp_updates-page__component__variants-buttons' },
-          variantButtons,
-        ),
-      ]),
-    );
-  }
-
   const actionsContainer = E(
     'div',
     {
@@ -1218,7 +1095,9 @@ function renderComponentCard(card: ComponentCard) {
   if (detailsContainer) {
     cardChildren.push(detailsContainer);
   }
-  cardChildren.push(actionsContainer);
+  if (actionElements.length) {
+    cardChildren.push(actionsContainer);
+  }
 
   return E('div', { class: 'fkp_updates-page__component' }, cardChildren);
 }

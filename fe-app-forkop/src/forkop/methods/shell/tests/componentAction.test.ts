@@ -111,7 +111,7 @@ describe('ForkopShellMethods.componentAction', () => {
     });
 
     await expect(
-      ForkopShellMethods.componentActionStart('sing_box', 'install'),
+      ForkopShellMethods.componentActionStart('forkop', 'install'),
     ).resolves.toEqual({
       success: false,
       error: 'Another component action is already running',
@@ -128,7 +128,7 @@ describe('ForkopShellMethods.componentAction', () => {
             ? {
                 success: true,
                 running: true,
-                component: 'sing_box',
+                component: 'forkop',
                 action: 'check_update',
                 message: 'Component action is running',
                 job_id: 'job-1',
@@ -136,11 +136,11 @@ describe('ForkopShellMethods.componentAction', () => {
             : {
                 success: true,
                 running: false,
-                component: 'sing_box',
+                component: 'forkop',
                 action: 'check_update',
-                message: 'sing-box is up to date',
-                current_version: '1.13.12-extended-2.3.2',
-                latest_version: '1.13.12-extended-2.3.2',
+                message: 'Forkop X is up to date',
+                current_version: '3.0.0',
+                latest_version: '3.0.0',
                 changed: false,
                 status: 'latest',
               },
@@ -154,7 +154,7 @@ describe('ForkopShellMethods.componentAction', () => {
           stdout: JSON.stringify({
             success: true,
             running: true,
-            component: 'sing_box',
+            component: 'forkop',
             action: 'check_update',
             message: 'Component action is running',
             job_id: 'job-1',
@@ -173,7 +173,7 @@ describe('ForkopShellMethods.componentAction', () => {
 
     const responsePromise = ForkopShellMethods.waitComponentActionJob(
       'job-1',
-      'sing_box',
+      'forkop',
       'check_update',
     );
 
@@ -184,11 +184,11 @@ describe('ForkopShellMethods.componentAction', () => {
       data: {
         success: true,
         running: false,
-        component: 'sing_box',
+        component: 'forkop',
         action: 'check_update',
-        message: 'sing-box is up to date',
-        current_version: '1.13.12-extended-2.3.2',
-        latest_version: '1.13.12-extended-2.3.2',
+        message: 'Forkop X is up to date',
+        current_version: '3.0.0',
+        latest_version: '3.0.0',
         changed: false,
         status: 'latest',
       },
@@ -202,11 +202,11 @@ describe('ForkopShellMethods.componentAction', () => {
         JSON.stringify({
           success: true,
           running: false,
-          component: 'sing_box',
-          action: 'install_rust_x',
-          message: 'Xrust has been installed',
-          current_version: '1.13.12-extended-2.3.2',
-          latest_version: '1.13.12-extended-2.3.2',
+          component: 'forkop',
+          action: 'install',
+          message: 'Forkop X has been installed',
+          current_version: '3.0.0',
+          latest_version: '3.0.0',
           changed: true,
           status: 'latest',
         }),
@@ -231,17 +231,14 @@ describe('ForkopShellMethods.componentAction', () => {
                 status: 'stopped but enabled',
                 dns_configured: 0,
               },
-              sing_box: {
+              xrust: {
                 running: 0,
                 enabled: 1,
                 status: 'stopped but enabled',
               },
             },
             capabilities: {
-              sing_box_extended: 0,
-              sing_box_tiny: 1,
-              sing_box_compressed: 0,
-              sing_box_tailscale: 0,
+              xrust_tailscale: 0,
             },
             actions: {
               service: [],
@@ -250,8 +247,8 @@ describe('ForkopShellMethods.componentAction', () => {
                 {
                   success: true,
                   running: true,
-                  component: 'sing_box',
-                  action: 'install_rust_x',
+                  component: 'forkop',
+                  action: 'install',
                   message: 'Component action is running',
                   job_id: 'job-1',
                 },
@@ -273,8 +270,8 @@ describe('ForkopShellMethods.componentAction', () => {
 
     const responsePromise = ForkopShellMethods.waitComponentActionJob(
       'job-1',
-      'sing_box',
-      'install_rust_x',
+      'forkop',
+      'install',
     );
 
     await vi.advanceTimersByTimeAsync(3000);
@@ -284,11 +281,11 @@ describe('ForkopShellMethods.componentAction', () => {
       data: {
         success: true,
         running: false,
-        component: 'sing_box',
-        action: 'install_rust_x',
-        message: 'Xrust has been installed',
-        current_version: '1.13.12-extended-2.3.2',
-        latest_version: '1.13.12-extended-2.3.2',
+        component: 'forkop',
+        action: 'install',
+        message: 'Forkop X has been installed',
+        current_version: '3.0.0',
+        latest_version: '3.0.0',
         changed: true,
         status: 'latest',
       },
@@ -307,9 +304,9 @@ describe('ForkopShellMethods.componentAction', () => {
         JSON.stringify({
           success: true,
           running: false,
-          component: 'sing_box',
+          component: 'forkop',
           action: 'check_update',
-          message: 'sing-box is up to date',
+          message: 'Forkop X is up to date',
           current_version: '70.2',
           latest_version: '70.2',
           changed: false,
@@ -343,7 +340,7 @@ describe('ForkopShellMethods.componentAction', () => {
 
     const responsePromise = ForkopShellMethods.waitComponentActionJob(
       'job-1',
-      'sing_box',
+      'forkop',
       'check_update',
     );
 
@@ -354,9 +351,9 @@ describe('ForkopShellMethods.componentAction', () => {
       data: {
         success: true,
         running: false,
-        component: 'sing_box',
+        component: 'forkop',
         action: 'check_update',
-        message: 'sing-box is up to date',
+        message: 'Forkop X is up to date',
         current_version: '70.2',
         latest_version: '70.2',
         changed: false,

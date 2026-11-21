@@ -14,4 +14,19 @@ function is_proxy_transport_mark(family, table_name, line) {
         line == "ct direction original meta mark & 0x08000000 != 0x00000000 meta mark & 0x02000000 == 0x00000000 ct mark set ct mark & 0xfdffffff" ||
         match(line, /^meta mark & 0x02000000 != 0x00000000 counter packets [0-9]+ bytes [0-9]+ drop comment "Forkop proxy transport upgrade hold"$/) != null;
 }
-return { is_native_tailscale_mark, is_proxy_transport_mark };
+
+function is_torrserver_direct_mark(family, table_name, chain_name, line) {
+    if (family != "inet" || table_name != "ForkopTorrServerDirect" || chain_name != "output")
+        return false;
+    // The worker selects a dedicated cgroup and uses its first two components.
+    line = replace(trim(line), /\s+/g, " ");
+    return match(line, /^socket cgroupv2 level 2 "[A-Za-z0-9_.@:-]+\/[A-Za-z0-9_.@:-]+" meta mark set 0x0?8000000 counter packets [0-9]+ bytes [0-9]+ comment "Forkop TorrServer Direct"$/) != null;
+}
+
+function is_forkop_mark(family, table_name, chain_name, line) {
+    return is_native_tailscale_mark(family, table_name, line) ||
+        is_proxy_transport_mark(family, table_name, line) ||
+        is_torrserver_direct_mark(family, table_name, chain_name, line);
+}
+
+return { is_native_tailscale_mark, is_proxy_transport_mark, is_forkop_mark };

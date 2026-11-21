@@ -779,12 +779,6 @@ function reload_finish_value(reason, job_id, status, retry_attempt) {
     return { status, sync };
 }
 
-function reload_finish(reason, job_id, status) {
-    let plan = reload_finish_value(reason, job_id, status);
-    shell_assignment("INITD_SYNC_SERVICE_TRIGGERS", plan.sync ? "1" : "0");
-    return plan.status;
-}
-
 function reload_service(reason, owner_pid) {
     let retry = match(as_string(reason), /^pending-retry-([1-3])$/);
     if (retry != null)
@@ -795,7 +789,7 @@ function reload_service(reason, owner_pid) {
     // Queueing must never report success for ambiguous process ownership.
     // Preserve the active policy and the lifecycle's public rejection contract.
     if (module_status(LIB_DIR + "/service/state.uc", [ "sing-box-process-conflict" ]) == 0) {
-        command_success_from_args([ "logger", "-t", SERVICE_NAME, "[fatal] Refusing Forkop reload: sing-box process ownership is ambiguous; preserving the existing runtime" ]);
+        command_success_from_args([ "logger", "-t", SERVICE_NAME, "[fatal] Refusing Forkop reload: Xrust process ownership is ambiguous; preserving the existing runtime" ]);
         return 1;
     }
     let plan = reload_begin_value(reason, owner_pid, null, null);

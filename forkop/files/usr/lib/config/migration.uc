@@ -8,7 +8,8 @@ let common = require("core.common");
 let uci_core = require("core.uci");
 let core_url = require("core.url");
 let constants_module = require("core.constants");
-let singbox_constants_module = require("singbox.constants");
+let xrust_constants = require("xrust.constants");
+let cache_identity = require("xrust.cache_identity");
 let domain_config = require("config.domain");
 let subscription_share_link = require("subscription.share_link");
 
@@ -21,7 +22,7 @@ let bool_option = common.bool_option;
 let object_or_empty = common.object_or_empty;
 
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
-const TMP_SUBSCRIPTION_FOLDER = getenv("TMP_SUBSCRIPTION_FOLDER") || "/tmp/sing-box/subscriptions";
+const TMP_SUBSCRIPTION_FOLDER = getenv("TMP_SUBSCRIPTION_FOLDER") || "/tmp/xrust/subscriptions";
 const FORKOP_RUNTIME_STATE_DIR = getenv("FORKOP_RUNTIME_STATE_DIR") || "/var/run/forkop";
 const FORKOP_SUBSCRIPTION_LINKS_DIR = getenv("FORKOP_SUBSCRIPTION_LINKS_DIR") || FORKOP_RUNTIME_STATE_DIR + "/subscription-links";
 const FORKOP_SUBSCRIPTION_METADATA_DIR = getenv("FORKOP_SUBSCRIPTION_METADATA_DIR") || FORKOP_RUNTIME_STATE_DIR + "/subscription-metadata";
@@ -93,7 +94,7 @@ function run(command) {
 function constants_context() {
     let constants = object_or_empty(constants_module);
     return {
-        urltest_default_idle_timeout: as_string(object_or_empty(singbox_constants_module).URLTEST_DEFAULT_IDLE_TIMEOUT || "30m")
+        urltest_default_idle_timeout: as_string(object_or_empty(xrust_constants).URLTEST_DEFAULT_IDLE_TIMEOUT || "30m")
     };
 }
 
@@ -187,6 +188,7 @@ function migration_context(model) {
         model,
         operations: [],
         removed_caches: [],
+        xrust_cache_copy: null,
         added_lists: {},
         changed: false
     };
@@ -784,7 +786,7 @@ function migrate_legacy_outbound_json_detour(ctx, section, legacy_connection_kin
         return;
 
     if (as_string(outbound.detour || "") == "")
-        outbound.detour = singbox_constants_module.outbound_tag(detour_section);
+        outbound.detour = xrust_constants.outbound_tag(detour_section);
     set_option(ctx, section, "outbound_json", sprintf("%J", outbound));
     delete_option(ctx, section, "outbound_detour_enabled");
     delete_option(ctx, section, "outbound_detour_section");
@@ -817,7 +819,7 @@ function migrate_outbound_json_list(ctx, section, legacy_connection_kind) {
                 }
             }
 
-            let base = singbox_constants_module.outbound_tag(
+            let base = xrust_constants.outbound_tag(
                 section_name(section) + "-json-" + (length(existing) + 1)
             );
             let tag_name = base;
@@ -1463,6 +1465,31 @@ function migrate_retired_zapret(ctx) {
     }
 }
 
+function migrate_xrust_paths(ctx) {
+    ctx.xrust_paths_migrated = true;
+    let settings = ctx.model.settings;
+    let old_config = option(settings, "config_path", "");
+    let config_paths = {
+        "/etc/sing-box/config.json": "/etc/xrust/config.json",
+        "/tmp/sing-box/config.json": "/tmp/xrust/config.json"
+    };
+    if (config_paths[old_config] != null)
+        set_option(ctx, settings, "config_path", config_paths[old_config]);
+
+    // The old generator used this cache even with no explicit UCI option.
+    let old_cache = option(settings, "cache_path", "/tmp/sing-box/cache.db");
+    let cache_paths = {
+        "/tmp/sing-box/cache.db": "/tmp/xrust/cache.db",
+        "/usr/share/sing-box/cache.db": "/usr/share/xrust/cache.db"
+    };
+    let cache = cache_paths[old_cache];
+    if (cache != null) {
+        ctx.xrust_cache_copy = { from: cache_identity.path(old_cache), to: cache_identity.path(cache) };
+        if (option_exists(settings, "cache_path"))
+            set_option(ctx, settings, "cache_path", cache);
+    }
+}
+
 const MIGRATIONS = [
     { id: "interface_sections", run: migrate_interface_sections },
     { id: "enable_component_checks", run: migrate_enable_component_checks },
@@ -1471,7 +1498,8 @@ const MIGRATIONS = [
     { id: "retired_secondary_rulesets", run: migrate_retired_secondary_rulesets },
     { id: "secondary_rulesets_mirror_v1", run: migrate_secondary_rulesets_to_mirror },
     { id: "default_subscription_exclude_regex_v1", run: migrate_default_subscription_exclude_regex },
-    { id: "support_operator_ip_v1", run: migrate_support_operator_ip }
+    { id: "support_operator_ip_v1", run: migrate_support_operator_ip },
+    { id: "xrust_paths_v1", run: migrate_xrust_paths }
 ];
 
 function apply_migrations(ctx) {
@@ -1723,12 +1751,36 @@ function migrate_model(model, source) {
         : migrate_forkop_model(model);
 }
 
+function prepare_xrust_cache_copy(copy) {
+    if (copy == null || fs.stat(copy.from) == null || fs.stat(copy.to) != null)
+        return true;
+
+    // Only the Xrust-format sibling is copied. Keep the original database for
+    // rollback and preserve an existing new store after interrupted upgrades.
+    let directory = substr(copy.to, 0, rindex(copy.to, "/"));
+    let directory_stat = fs.stat(directory);
+    if (directory_stat != null && directory_stat.type != "directory")
+        return false;
+    return fs.stat(copy.from)?.type == "file" &&
+        (directory_stat != null || system([ "mkdir", "-p", directory ]) == 0) &&
+        common.copy_private_file_atomic(copy.from, copy.to);
+}
+
 function migrate_runtime(source) {
     let cursor = runtime_cursor();
     if (!cursor.load(CONFIG_NAME))
         return false;
 
     let ctx = migrate_model(model_from_uci(cursor), source);
+    if (ctx.xrust_paths_migrated) {
+        let workdir = as_string(uci_core.get("sing-box.main.workdir"));
+        if (workdir != "" && workdir != "/usr/share/sing-box")
+            set_option_if_missing(ctx, ctx.model.settings, "xrust_workdir", workdir);
+    }
+    if (!prepare_xrust_cache_copy(ctx.xrust_cache_copy)) {
+        warn("Could not migrate the Xrust cache. Forkop settings were kept unchanged.\n");
+        return false;
+    }
     if (ctx.changed && (!apply_operations(cursor, ctx.operations) || !commit_cursor(cursor)))
         return false;
 
@@ -1755,7 +1807,8 @@ function migrate_fixture(path, source) {
         changed: ctx.changed,
         config: export_model(ctx.model),
         operations: ctx.operations,
-        removed_caches: ctx.removed_caches
+        removed_caches: ctx.removed_caches,
+        xrust_cache_copy: ctx.xrust_cache_copy
     });
 }
 

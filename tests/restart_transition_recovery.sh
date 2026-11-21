@@ -11,6 +11,7 @@ let calls = [];
 let fs = { stat: function(path) { return {}; } };
 let PRIORITY_UC = "priority", DNS_FAILOVER_UC = "dns";
 let RELOAD_STATE_SNAPSHOT_FILE = "snapshot";
+let reload_core_transaction = null;
 function discard_reload_config_backup(path) {}
 function finish_reload_section_cache(restore) { return true; }
 function nft_candidate_finish(commit) { push(calls, "discard-nft"); }
@@ -25,7 +26,9 @@ function cleanup_failed_runtime() { push(calls, "direct-access"); }
 function remove_file(path) {}
 function abort_reload(status, changed) { push(calls, "abort"); return status || 1; }
 UC
-sed -n '/^function abort_guarded_transition(/,/^\/\/ The cold fallback/p' "$SOURCE" | sed '$d' >> "$WORK/recovery.uc"
+sed -n '/^function stop_candidate_reload_workers(/,/^}/p;
+        /^function restore_reload_workers(/,/^}/p;
+        /^function abort_guarded_transition(/,/^}/p' "$SOURCE" >> "$WORK/recovery.uc"
 cat >> "$WORK/recovery.uc" <<'UC'
 let rc = abort_guarded_transition(7, "stage", "backup", true);
 if (rc != 7) die("failure status lost\n");
@@ -40,7 +43,8 @@ for scenario in recovered core-failed lists-failed; do
 done
 echo 'restart transition recovery checks passed'
 
-# Reject candidate configurations while both existing workers are still alive.
+# Reject candidates before disturbing the old workers and roll back if a
+# candidate worker or the final nft commit fails.
 {
 cat <<'UC'
 const CONFIG_NAME = "forkop", SUBSCRIPTION_CACHE_UC = "cache", STATE_UC = "state", RELOAD_UC = "reload";
@@ -53,23 +57,63 @@ let common = require("core.common");
 let reload_core_transaction;
 let work = getenv("FORKOP_TEST_WORK");
 let current = work + "/current.json";
+let xrust = { CONFIG_PATH: current, APPLIED_CONFIG_PATH_FILE: work + "/applied-config-path" };
+let DNS_FAILOVER_STATE_FILE = work + "/dns-failover.json";
+const SING_BOX_START_STABLE_MIN_AGE = 0, SING_BOX_START_VERIFY_TIMEOUT = 0;
+let cache_generation;
 let rule_condition_cache_enabled, nft_candidate_batch_file, scenario, calls, temporary;
 function as_string(value) { return value == null ? "" : "" + value; }
 function finish_list_change_files() { return true; }
 function remove_file(path) { if (as_string(path) != "") fs.unlink(path); }
-function cleanup_failed_runtime() { die("candidate failure removed live runtime\n"); }
+function cleanup_failed_runtime() { die("recoverable candidate failure removed live runtime\n"); }
 function log_message() {}
 function external_config_fingerprint() { return "config"; }
 function validate_start_config() { return 0; }
 function module_status(module, args) {
     push(calls, args[0]);
+    if (module == PRIORITY_UC && args[0] == "start-runtime" && cache_generation == "new") {
+        push(calls, "candidate-priority");
+        return scenario == "priority-worker" ? 7 : 0;
+    }
+    if (module == DNS_FAILOVER_UC && args[0] == "start-runtime" && args[1] != "applied") {
+        push(calls, "candidate-dns");
+        fs.writefile(DNS_FAILOVER_STATE_FILE, "candidate DNS state");
+        return index(scenario, "dns-worker") >= 0 ? 7 : 0;
+    }
     return 0;
 }
 function module_success(module, args) {
     push(calls, args[0]);
-    return args[0] == "forkop-running";
+    switch (args[0]) {
+    case "configure-service": return scenario != "configure";
+    case "install-transition-guard": return scenario != "guard";
+    case "validate-config-stage":
+    case "single-ready-sing-box-runtime":
+    case "remove-transition-guard":
+    case "forkop-running":
+    case "stop-runtime": return true;
+    case "publish-reload-config": return fs.writefile(args[2], fs.readfile(args[1])) != null;
+    case "restore-config-stage": return fs.writefile(args[2], fs.readfile(args[1])) != null;
+    case "restore": return fs.writefile(current, fs.readfile(args[2])) != null;
+    case "publish-section-cache":
+        cache_generation = "new";
+        return true;
+    case "finish-section-cache":
+        if (args[2] == "restore")
+            cache_generation = "old";
+        return true;
+    case "start-runtime":
+        assert(cache_generation == "old", "rollback started a worker with the candidate cache");
+        push(calls, "restored-" + module);
+        if (module == DNS_FAILOVER_UC)
+            assert(fs.readfile(DNS_FAILOVER_STATE_FILE) == "old DNS state", "DNS started with the candidate state");
+        return scenario != "dns-worker-still-failing" || module != DNS_FAILOVER_UC;
+    default: return false;
+    }
 }
-function module_capture() { return { status: 0, output: scenario == "configure" ? "hot" : "cold" }; }
+function module_capture(module, args) {
+    return { status: 0, output: args[0] == "plan" && scenario != "cold-dns-worker" ? "hot" : "cold" };
+}
 function command_output_from_args() {
     let path = work + "/candidate." + length(temporary);
     push(temporary, path);
@@ -84,6 +128,8 @@ function parse_reload_plan() {
 function write_service_trigger_sync_state() {}
 function reload_actions_summary() { return ""; }
 function config_get() { return current; }
+function owner_pid() { return 123; }
+function clear_runtime_config_error() {}
 function singbox_prepare_config_stage(path) {
     fs.writefile(path, "candidate");
     return scenario == "stage" ? 7 : 0;
@@ -93,9 +139,26 @@ function nft_candidate_begin() { nft_candidate_batch_file = "candidate.nft"; ret
 function nft_rebuild_runtime() { return scenario == "nft-build" ? 7 : 0; }
 function nft_populate_runtime_sets() { return 0; }
 function nft_candidate_validate() { return scenario != "nft"; }
-function nft_candidate_finish() { nft_candidate_batch_file = ""; return true; }
+function nft_candidate_finish(commit) {
+    if (commit)
+        push(calls, "commit-nft");
+    nft_candidate_batch_file = "";
+    return !commit || scenario != "nft-commit";
+}
 UC
-sed -n '/^function finish_reload_section_cache(/,/^}/p; /^function discard_reload_config_backup(/,/^}/p; /^function abort_reload(/,/^}/p; /^function abort_guarded_transition(/,/^}/p; /^function reload(/,/^}/p' "$SOURCE"
+sed -n '/^function finish_reload_section_cache(/,/^}/p;
+        /^function restore_reload_config(/,/^}/p;
+        /^function restore_guarded_singbox_runtime(/,/^}/p;
+        /^function discard_reload_config_backup(/,/^}/p;
+        /^function start_candidate_reload_workers(/,/^}/p;
+        /^function stop_candidate_reload_workers(/,/^}/p;
+        /^function restore_reload_workers(/,/^}/p;
+        /^function abort_reload(/,/^}/p;
+        /^function abort_guarded_transition(/,/^}/p;
+        /^function abort_hot_to_guarded(/,/^}/p;
+        /^function abort_hot_transition(/,/^}/p;
+        /^function applied_xrust_config_path(/,/^}/p;
+        /^function reload(/,/^}/p' "$SOURCE"
 cat <<'UC'
 fs.writefile(current, "old config");
 for (scenario in ["configure", "stage", "nft-build", "nft", "guard"]) {
@@ -113,6 +176,28 @@ for (scenario in ["configure", "stage", "nft-build", "nft", "guard"]) {
     assert(fs.readfile(current) == "old config");
 }
 print("Reload candidate failures preserve running DNS and Priority workers and remove temporary configs\n");
+
+for (scenario in ["priority-worker", "dns-worker", "cold-dns-worker", "dns-worker-still-failing", "nft-commit"]) {
+    calls = [];
+    temporary = [];
+    nft_candidate_batch_file = "";
+    cache_generation = "old";
+    fs.writefile(DNS_FAILOVER_STATE_FILE, "old DNS state");
+    assert(reload("on_config_change", false) == (scenario == "nft-commit" ? 1 : 7), scenario + ": status");
+    assert(index(calls, "candidate-priority") >= 0, scenario + ": candidate worker not attempted");
+    assert(index(calls, "restored-priority") >= 0 && index(calls, "restored-dns") >= 0,
+        scenario + ": previous workers not recovered");
+    assert(length(filter(calls, call => call == "stop-runtime")) == 4,
+        scenario + ": candidate workers were not stopped during rollback");
+    assert((index(calls, "commit-nft") >= 0) == (scenario == "nft-commit"),
+        scenario + ": nft policy committed before both workers were ready");
+    assert(cache_generation == "old" && fs.readfile(current) == "old config" &&
+        fs.readfile(DNS_FAILOVER_STATE_FILE) == "old DNS state", scenario + ": previous state lost");
+    for (let path in temporary)
+        assert(fs.stat(path) == null && fs.stat(path + ".dns-failover") == null,
+            scenario + ": recovery artifact retained after successful rollback");
+}
+print("Late hot and cold candidate failures restore previous core, nft policy, cache and workers\n");
 UC
 } > "$WORK/prepare.uc"
 FORKOP_TEST_WORK="$WORK" ucode -L "$ROOT/forkop/files/usr/lib" "$WORK/prepare.uc"
@@ -180,3 +265,23 @@ if FORKOP_UCI_STATE_FILE="$WORK/phase-c" ucode -L "$LIB" "$STATE" refresh-reload
 fi
 test ! -e "$WORK/incomplete.dnsmasq"
 echo 'Post-dnsmasq refresh preserves concurrent DNS, nft, cron and trigger edits for the next reload'
+
+# Schedule changes affect the due-check worker and do not change the core.
+cat >"$WORK/subscription.json" <<'JSON'
+{"settings":{},"section":[{".name":"proxy","action":"connection","subscription_urls":["https://example.test/feed"],"subscription_update_enabled":"1","subscription_update_interval":"4h"}]}
+JSON
+sed 's/"4h"/"8h"/' "$WORK/subscription.json" >"$WORK/new-interval.json"
+sed 's/"subscription_update_enabled":"1"/"subscription_update_enabled":"0"/' "$WORK/subscription.json" >"$WORK/disabled.json"
+sed 's|/feed|/new-feed|' "$WORK/subscription.json" >"$WORK/new-source.json"
+for fixture in subscription new-interval disabled new-source; do
+    ucode -L "$LIB" "$STATE" reload-state-text-fixture "$WORK/$fixture.json" >"$WORK/$fixture.state"
+done
+for fixture in new-interval disabled; do
+    plan="$(ucode -L "$LIB" "$LIB/service/reload.uc" plan-state-files "$WORK/subscription.state" "$WORK/$fixture.state" 0 0 0 0 0)"
+    printf '%s\n' "$plan" | grep -Eq '^needs_cron_refresh[[:space:]]+1$'
+    printf '%s\n' "$plan" | grep -Eq '^needs_sing_box_reload[[:space:]]+0$'
+    printf '%s\n' "$plan" | grep -Eq '^needs_nft_rebuild[[:space:]]+0$'
+done
+plan="$(ucode -L "$LIB" "$LIB/service/reload.uc" plan-state-files "$WORK/subscription.state" "$WORK/new-source.state" 0 0 0 0 0)"
+printf '%s\n' "$plan" | grep -Eq '^needs_sing_box_reload[[:space:]]+1$'
+echo 'Changing subscription cadence refreshes only cron; changing its source still applies Xrust'

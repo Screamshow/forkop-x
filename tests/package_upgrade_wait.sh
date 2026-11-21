@@ -7,6 +7,7 @@ FORKOP_INIT="${FORKOP_INIT:-/etc/init.d/forkop}"
 FORKOP_CONFIG_SOURCE="${FORKOP_CONFIG_SOURCE:-/etc/config/forkop}"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/forkop-package-upgrade-wait-test.XXXXXX")"
 WAS_RUNNING=0
+export FORKOP_XRUST_BIN="$WORK_DIR/xrust"
 
 fail() {
     printf 'FAIL: %s\n' "$1" >&2
@@ -14,7 +15,7 @@ fail() {
 }
 
 cleanup() {
-    pkill -f "$WORK_DIR/sing-box" >/dev/null 2>&1 || true
+    pkill -f "$FORKOP_XRUST_BIN" >/dev/null 2>&1 || true
     if [ "${FORKOP_TEST_KEEP_WORK_DIR:-0}" = 1 ]; then
         printf 'Retained test directory: %s\n' "$WORK_DIR" >&2
         return
@@ -37,11 +38,17 @@ if "$FORKOP_INIT" status >/dev/null 2>&1; then
 fi
 
 mkdir -p "$WORK_DIR/cache"
-cp "$UCODE_BIN" "$WORK_DIR/sing-box"
-chmod 0755 "$WORK_DIR/sing-box"
+cp "$UCODE_BIN" "$FORKOP_XRUST_BIN"
+chmod 0755 "$FORKOP_XRUST_BIN"
 cp "$FORKOP_CONFIG_SOURCE" "$WORK_DIR/forkop.conf"
 printf 'forkop.settings=settings\n' >"$WORK_DIR/uci.state"
 export FORKOP_UCI_STATE_FILE="$WORK_DIR/uci.state"
+export FORKOP_RUNTIME_STATE_DIR="$WORK_DIR/runtime"
+export FORKOP_BYTECODE_CACHE_DIR="$WORK_DIR/bytecode"
+export FORKOP_RT_TABLES="$WORK_DIR/rt_tables"
+export FORKOP_UI_STATE_DIR="$WORK_DIR/ui-state"
+export FORKOP_UI_COMPONENT_ACTION_DIR="$WORK_DIR/ui-state/component-actions"
+export FORKOP_UI_SUBSCRIPTION_ACTION_DIR="$WORK_DIR/ui-state/subscription-actions"
 
 cat >"$WORK_DIR/init" <<'EOF_INIT'
 #!/bin/sh
@@ -59,7 +66,7 @@ run_postinst() {
     FORKOP_COMPONENT_UPDATE_CHECK_STATE_FILE="$WORK_DIR/component-state" \
     FORKOP_TEST_INIT_LOG="$WORK_DIR/init.log" \
     FORKOP_LIB="$FORKOP_LIB" \
-    FORKOP_UI_UC="${FORKOP_UI_UC:-$WORK_DIR/missing-ui.uc}" \
+    FORKOP_UI_UC="${FORKOP_UI_UC:-$FORKOP_LIB/service/ui.uc}" \
     FORKOP_UPGRADE_SING_BOX_WAIT_SECONDS="${1:-15}" \
     FORKOP_UPGRADE_RESTORE_WAIT_SECONDS="${FORKOP_UPGRADE_RESTORE_WAIT_SECONDS:-10}" \
     ucode -L "$FORKOP_LIB" "$PACKAGE_UC" postinst
@@ -68,11 +75,11 @@ run_postinst() {
 # A normal upgrade must wait for the old executable to disappear and then
 # perform exactly one start.
 touch "$WORK_DIR/was-running" "$WORK_DIR/quiesce"
-("$WORK_DIR/sing-box" -e 'system("sleep 3")' &)
+("$FORKOP_XRUST_BIN" -e 'system("sleep 3")' &)
 started="$(date +%s)"
-run_postinst 10 || fail "postinst rejected a normally exiting old sing-box"
+run_postinst 10 || fail "postinst rejected a normally exiting old Xrust"
 elapsed="$(( $(date +%s) - started ))"
-[ "$elapsed" -ge 2 ] || fail "postinst did not wait for the old sing-box"
+[ "$elapsed" -ge 2 ] || fail "postinst did not wait for the old Xrust"
 [ "$elapsed" -le 6 ] || fail "postinst wait exceeded the expected bound"
 [ "$(grep -c '^start$' "$WORK_DIR/init.log")" = 1 ] || fail "postinst did not start exactly once"
 [ ! -e "$WORK_DIR/was-running" ] || fail "successful postinst retained the upgrade marker"
@@ -95,7 +102,9 @@ FORKOP_PACKAGE_UPGRADE_QUIESCE_FILE="$WORK_DIR/quiesce" \
 FORKOP_LIB="$FORKOP_LIB" \
 ucode -L "$FORKOP_LIB" "$PACKAGE_UC" prerm || fail "empty-action prerm failed"
 [ -s "$WORK_DIR/quiesce" ] || fail "empty-action prerm did not preserve upgrade quiesce"
-kill -0 "$(sed -n '1p' "$WORK_DIR/quiesce")" 2>/dev/null || fail "upgrade quiesce is not owned by the live package-manager parent"
+read -r owner ticks <"$WORK_DIR/quiesce"
+kill -0 "$owner" 2>/dev/null && [ "$ticks" = "$(awk '{print $22}' "/proc/$owner/stat")" ] ||
+    fail "upgrade quiesce is not owned by the live package-manager parent"
 rm -f "$WORK_DIR/was-running" "$WORK_DIR/quiesce"
 
 # Reproduce the real procd path: init start returns immediately, a detached
@@ -106,8 +115,7 @@ cat >"$WORK_DIR/ui.uc" <<'EOF_UI'
 #!/usr/bin/env ucode
 let fs = require("fs");
 let value = fs.readfile(getenv("FORKOP_TEST_ACTIVE"));
-if (value != null)
-    print(value);
+exit(ARGV[0] == "service-action-idle" && value == null ? 0 : 1);
 EOF_UI
 cat >"$WORK_DIR/detached-worker" <<'EOF_DETACHED_WORKER'
 #!/bin/sh
@@ -173,10 +181,10 @@ fi
 # the hand-off markers so the failed upgrade remains diagnosable/recoverable.
 : >"$WORK_DIR/init.log"
 touch "$WORK_DIR/was-running" "$WORK_DIR/quiesce"
-("$WORK_DIR/sing-box" -e 'system("sleep 4")' &)
+("$FORKOP_XRUST_BIN" -e 'system("sleep 4")' &)
 started="$(date +%s)"
 if run_postinst 1 >/dev/null 2>&1; then
-    fail "postinst accepted a sing-box that exceeded the wait timeout"
+    fail "postinst accepted an Xrust process that exceeded the wait timeout"
 fi
 elapsed="$(( $(date +%s) - started ))"
 [ "$elapsed" -ge 1 ] || fail "timeout path returned before its configured bound"
@@ -184,4 +192,4 @@ elapsed="$(( $(date +%s) - started ))"
 [ -e "$WORK_DIR/was-running" ] || fail "timeout path lost the upgrade marker"
 [ -e "$WORK_DIR/quiesce" ] || fail "timeout path lost the quiesce marker"
 
-printf 'package upgrade sing-box wait checks passed\n'
+printf 'package upgrade Xrust wait checks passed\n'

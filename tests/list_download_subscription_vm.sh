@@ -43,7 +43,7 @@ ucode -L "$lib" "$lib/service/initd.uc" start-service test "$$"
 test -s /var/run/forkop/watchdog.ready
 test -s /tmp/sing-box/rulesets/coldsub-community-subnets-lists-ruleset.json
 test -z "$(find /var/run/forkop -maxdepth 1 -name 'list-download-transport.*')"
-proxy=$(ucode -L "$lib" "$lib/singbox/runtime.uc" service-proxy-address lists)
+proxy=$(ucode -L "$lib" "$lib/xrust/runtime.uc" service-proxy-address lists)
 curl -fsS --max-time 20 --proxy "$proxy" https://mirror.51343.ru/forkop/lists/allow-domains/Subnets/IPv4/discord.lst >/dev/null
 test "$(uci get forkop.settings.download_lists_via_proxy)" = 1
 test "$(uci get forkop.settings.download_lists_via_proxy_section)" = coldsub

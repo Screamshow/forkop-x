@@ -1,6 +1,7 @@
 #!/usr/bin/env ucode
 
 let fs = require("fs");
+let xrust = require("xrust.binary");
 let common = require("core.common");
 let core_ip = require("core.ip");
 let uci_core = require("core.uci");
@@ -8,7 +9,7 @@ let rule_config = require("config.rule");
 let domain_config = require("config.domain");
 let connections = require("config.connections");
 let routing_rulesets = require("routing.rulesets");
-let runtime_constants = require("singbox.constants");
+let runtime_constants = require("xrust.constants");
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
 const DNS_SOURCE_SET = "forkop_dns_sources";
 const DNS_SOURCE6_SET = "forkop_dns_sources6";
@@ -90,14 +91,6 @@ function write_text_file(path, text) {
     if (type(result) == "boolean" && !result)
         return false;
     return true;
-}
-
-function file_executable(path) {
-    let stat = fs.stat(as_string(path));
-    if (stat == null || stat.mode == null)
-        return false;
-
-    return (int(stat.mode) & 73) != 0;
 }
 
 function unlink_file(path) {
@@ -852,7 +845,7 @@ function nft_create_runtime_base(table, localv4_set, common_set, port_set, ip_po
     // Native Rust X exit clients use the same classifiers as LAN clients.
     // Rebuild membership with each nft candidate; never persist it in UCI.
     if (fs.stat('/etc/forkop-tailscale/enabled') && fs.stat('/etc/forkop-tailscale/exit-enabled') &&
-        trim(fs.readfile('/etc/forkop/sing-box-variant') || '') == 'rust-x' &&
+        fs.stat(xrust.PATH) != null &&
         !nft_add_set_elements(table, interface_set, 'forkop-tslan'))
         return false;
 

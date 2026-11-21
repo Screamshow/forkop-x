@@ -5,8 +5,7 @@ USE_PROCD=1
 start_service() {
     [ -f /etc/forkop-tailscale/enabled ] || return 0
     ucode /usr/lib/forkop/tailscale/compat.uc check >/dev/null 2>&1 || return 1
-    [ "$(cat /etc/forkop/sing-box-variant 2>/dev/null)" = rust-x ] || return 1
-    native=/usr/lib/rust-x/sing-box
+    native=/usr/bin/xrust
     "$native" tailscale-native-capability >/dev/null 2>&1 || return 1
     # Repair permissions on existing installations before direct execution.
     chmod 0755 /usr/lib/forkop/tailscale/lan.sh /usr/lib/forkop/tailscale/transport.sh || return 1

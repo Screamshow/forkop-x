@@ -8,7 +8,7 @@ cat <<'UC'
 let messages=[];
 function log_message(message,level){push(messages,{message,level});}
 UC
-sed -n '/^function update_dns_outage(/,/^}/p' "$ROOT/forkop/files/usr/lib/singbox/dns_failover.uc"
+sed -n '/^function update_dns_outage(/,/^}/p' "$ROOT/forkop/files/usr/lib/xrust/dns_failover.uc"
 cat <<'UC'
 let state={failures:0,reported:false};
 for(let i=0;i<4;i++)update_dns_outage(state,true,3);

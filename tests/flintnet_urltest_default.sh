@@ -41,8 +41,8 @@ function run(url,option,label){
  fs.writefile(work+"/fixture.json",sprintf("%J",{settings,section:[section]}));
  let args=["env","TMP_SUBSCRIPTION_FOLDER="+work+"/cache","FORKOP_RUNTIME_STATE_DIR="+work+"/state",
   "TMP_SING_BOX_FOLDER="+work+"/singbox","FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR="+work+"/persistent",
-  "FORKOP_LIB="+lib,"ucode","-L",lib,lib+"/singbox/generator.uc","generate-config-fixture",
-  work+"/fixture.json",work+"/generated.json","127.0.0.1","0","1","","1.14.2-rust-x.0.0.28"];
+  "FORKOP_LIB="+lib,"ucode","-L",lib,lib+"/xrust/generator.uc","generate-config-fixture",
+  work+"/fixture.json",work+"/generated.json","127.0.0.1","0","1","","0.0.28"];
  let log=work+"/generation.log";
  expect(system(join(" ",map(args,quote))+" >"+quote(log)+" 2>&1")==0,
   label+": generation failed: "+(fs.readfile(log)||""));

@@ -171,7 +171,7 @@ run() {
     # supplied by a UCI option (it might point at /etc or other system data).
     # /tmp/xrust-rulesets holds the Rust X core's compiled rule-set cache;
     # cores before the rename used /tmp/tachyon-rulesets.
-    for directory in /etc/forkop /etc/forkop-tailscale /etc/sing-box /tmp/sing-box /tmp/xrust-rulesets \
+    for directory in /etc/forkop /etc/forkop-tailscale /etc/xrust /etc/sing-box /tmp/xrust /tmp/sing-box /usr/share/xrust /tmp/xrust-rulesets \
         /tmp/tachyon-rulesets /usr/lib/forkop /usr/share/forkop /www/luci-static/resources/view/forkop; do
         rm -rf "$ROOT$directory"
     done
@@ -181,7 +181,7 @@ run() {
         /etc/config/sing-box.apk-old /etc/config/sing-box-opkg /etc/config/sing-box.opkg-new \
         /etc/config/sing-box.opkg-old /etc/config/sing-box.opkg-dist \
         /usr/bin/forkop /usr/bin/sing-box /usr/lib/libcronet.so \
-        /etc/init.d/forkop /etc/init.d/sing-box /etc/init.d/forkop-torrserver-direct /etc/init.d/forkop-support /etc/init.d/forkop-tailscale \
+        /etc/init.d/forkop /etc/init.d/forkop-xrust /etc/init.d/sing-box /etc/init.d/forkop-torrserver-direct /etc/init.d/forkop-support /etc/init.d/forkop-tailscale \
         /etc/uci-defaults/50_luci-forkop \
         /usr/share/luci/menu.d/luci-app-forkop.json /usr/share/rpcd/acl.d/luci-app-forkop.json; do
         rm -f "$ROOT$file"

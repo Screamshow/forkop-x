@@ -20,8 +20,8 @@ ucode -e '
             selector_proxy_links: split(trim(fs.readfile(ARGV[0])), "\n") }] };
     fs.writefile(ARGV[1], sprintf("%J", fixture));
 ' "$WORK/links.txt" "$WORK/fixture.json"
-ucode -L "$LIB" "$LIB/singbox/generator.uc" generate-config-fixture \
-    "$WORK/fixture.json" "$WORK/runtime.json" 127.0.0.1 0 1 '' 1.14.2-rust-x.0.0.43
+ucode -L "$LIB" "$LIB/xrust/generator.uc" generate-config-fixture \
+    "$WORK/fixture.json" "$WORK/runtime.json" 127.0.0.1 0 1 '' 0.0.43
 
 cat >"$WORK/check.uc" <<'UC'
 let fs = require("fs"), parser = require("subscription.parser");

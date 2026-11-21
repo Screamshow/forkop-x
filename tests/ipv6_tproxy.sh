@@ -128,7 +128,7 @@ for mode in enabled all-disabled lo-disabled missing; do
     if [ "$mode" = enabled ]; then enabled_sb_signature=$sb_signature; else
         [ "$sb_signature" != "$enabled_sb_signature" ] || fail 'IPv6 change did not change sing-box signature'
     fi
-    ucode -L "$FORKOP_LIB" "$FORKOP_LIB/singbox/generator.uc" generate-config-fixture \
+    ucode -L "$FORKOP_LIB" "$FORKOP_LIB/xrust/generator.uc" generate-config-fixture \
         "$WORK_DIR/fixture.json" "$WORK_DIR/$mode.json" 127.0.0.1 0 '' '' 1.12.0
     if command -v sing-box >/dev/null 2>&1; then
         sing-box check -c "$WORK_DIR/$mode.json"
@@ -151,7 +151,7 @@ if (!n.sing_box_standard_ports_listening(ports + "::1:1602\n", null, null, "::1"
 mkdir -p "$WORK_DIR/enabled-sysctl/all" "$WORK_DIR/enabled-sysctl/lo"
 printf "0\n" >"$WORK_DIR/enabled-sysctl/all/disable_ipv6"
 printf "0\n" >"$WORK_DIR/enabled-sysctl/lo/disable_ipv6"
-for version in 1.12.0 1.14.2-x-1.0.0 1.14.2-rust-x.0.0.30; do
+for version in 1.14.2-rust-x.0.0.44; do
     for capture in ports system; do
     ucode -e '
 let fs = require("fs"), c = json(fs.readfile(ARGV[0]));
@@ -159,7 +159,7 @@ c.section[0].ports = ARGV[2] == "ports" ? ["1-65535"] : [];
 c.section[0].fully_routed_ips = ARGV[2] == "system" ? ["@system"] : [];
 fs.writefile(ARGV[1], sprintf("%J", c));
 ' "$WORK_DIR/fixture.json" "$WORK_DIR/service-fixture.json" "$capture"
-    FORKOP_IPV6_SYSCTL_DIR="$WORK_DIR/enabled-sysctl" ucode -L "$FORKOP_LIB" "$FORKOP_LIB/singbox/generator.uc" generate-config-fixture \
+    FORKOP_IPV6_SYSCTL_DIR="$WORK_DIR/enabled-sysctl" ucode -L "$FORKOP_LIB" "$FORKOP_LIB/xrust/generator.uc" generate-config-fixture \
         "$WORK_DIR/service-fixture.json" "$WORK_DIR/service.json" 127.0.0.1 0 '' '' "$version"
     ucode -e '
 let fs = require("fs"), c = json(fs.readfile(ARGV[0]));

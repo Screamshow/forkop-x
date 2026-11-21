@@ -18,6 +18,13 @@ cat >"$WORK/bin/nft" <<'SH'
 case "$1" in
   -f) cp "$2" "$NFT_WORK/applied.nft" ;;
   list)
+    if [ "$2" = tables ]; then
+      printf 'table inet ForkopTorrServerDirect\n'
+      exit 0
+    fi
+    if { [ "$2" = chain ] || [ "$2" = table ]; } && [ "$4" != ForkopTorrServerDirect ]; then
+      exit 1
+    fi
     [ -f "$NFT_WORK/listing" ] && { cat "$NFT_WORK/listing"; exit 0; }
     [ -f "$NFT_WORK/applied.nft" ] || exit 1
     printf 'table inet ForkopTorrServerDirect {\n\tchain output {\n\t\ttype route hook output priority mangle - 1; policy accept;\n'
@@ -28,7 +35,8 @@ case "$1" in
   delete) rm -f "$NFT_WORK/applied.nft" ;;
 esac
 SH
-chmod 0755 "$WORK/bin/nft"
+printf '#!/bin/sh\nexit 0\n' >"$WORK/bin/curl"
+chmod 0755 "$WORK/bin/nft" "$WORK/bin/curl"
 export PATH="$WORK/bin:$PATH" NFT_WORK="$WORK"
 
 # Load the module functions without its command dispatch.
@@ -49,6 +57,20 @@ assert(mark >= 0, "TorrServer bypass mark rule is missing");
 assert(v4 < mark && v6 < mark, "FakeIP exclusions must precede the bypass mark");
 assert(active(info), "applied rule is not recognised as active");
 
+let marks = require("diagnostics.mark_rules");
+let table = "ForkopTorrServerDirect";
+let rule = replace(substr(lines[mark], length("add rule inet " + table + " output ")),
+    " counter ", " counter packets 27 bytes 9412 ");
+assert(marks.is_forkop_mark("inet", table, "output", rule), "generated rule must be recognised");
+assert(marks.is_forkop_mark("inet", table, "output", replace(rule, "0x08000000", "0x8000000")),
+    "nft may omit the leading zero");
+assert(!marks.is_forkop_mark("ip", table, "output", rule), "other family must remain visible");
+assert(!marks.is_forkop_mark("inet", "foreign", "output", rule), "other table must remain visible");
+assert(!marks.is_forkop_mark("inet", table, "prerouting", rule), "other chain must remain visible");
+for (let foreign in [ replace(rule, "0x08000000", "0x01000000"), replace(rule, "level 2", "level 1"),
+    replace(rule, "Forkop TorrServer Direct", "Foreign"), rule + " drop" ])
+    assert(!marks.is_forkop_mark("inet", table, "output", foreign), "changed rule must remain visible");
+
 // A rule from an older version (no FakeIP exclusions) must be replaced.
 fs.writefile(ARGV[0] + "/listing",
     "table inet ForkopTorrServerDirect {\n\tchain output {\n" +
@@ -61,3 +83,23 @@ UC
 } >"$WORK/test.uc"
 
 ucode -L "$LIB" "$WORK/test.uc" "$WORK" || fail "TorrServer Direct FakeIP regression"
+
+rm "$WORK/listing"
+nft list ruleset >"$WORK/generated"
+check_other_mark_flag() {
+  FORKOP_LIB="$LIB" ucode -L "$LIB" "$LIB/diagnostics/runtime.uc" check-nft-rules |
+    ucode -e 'let result = json(require("fs").readfile("/dev/stdin")); exit(result.rules_other_mark_exist == int(ARGV[0]) ? 0 : 1);' "$1"
+}
+other_mark_lines() {
+  ucode -L "$LIB" "$LIB/diagnostics/status.uc" nft-ruleset-other-mark-lines ForkopTable <"$1"
+}
+
+check_other_mark_flag 0 || fail "stock TorrServer Direct rule triggered a warning"
+[ -z "$(other_mark_lines "$WORK/generated")" ] || fail "stock TorrServer Direct rule appeared in the report"
+
+sed '/meta mark set/p; s/meta mark set 0x08000000/meta mark set 0x01000000/' "$WORK/generated" >"$WORK/listing"
+check_other_mark_flag 1 || fail "another mark in the TorrServer Direct table was ignored"
+[ "$(other_mark_lines "$WORK/listing" | sed 's/^[[:space:]]*//')" = \
+  'socket cgroupv2 level 2 "services/torrserver" meta mark set 0x01000000 counter packets 0 bytes 0 comment "Forkop TorrServer Direct"' ] ||
+  fail "report did not isolate the foreign mark"
+printf 'TorrServer Direct diagnosis checks passed\n'

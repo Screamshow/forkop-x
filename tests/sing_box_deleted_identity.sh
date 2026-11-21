@@ -19,8 +19,11 @@ state() { ucode -L "$LIB_DIR" "$STATE_UC" "$@"; }
 package() { ucode -L "$LIB_DIR" "$PACKAGE_UC" "$@"; }
 installer() { ucode "$WORK_DIR/installer-helper.uc" "$@"; }
 expect_identity() {
-  local path="$1" expected="$2"
+  local path="$1" owner expected
+  shift
   for owner in state package installer; do
+    expected="$1"
+    shift
     if "$owner" sing-box-exe-path-fixture "$path"; then
       [ "$expected" = yes ] || { echo "accepted $path in $owner" >&2; exit 1; }
     else
@@ -44,15 +47,21 @@ verify_runtime() {
   fi
 }
 
-expect_identity /usr/bin/sing-box yes
-expect_identity '/usr/bin/sing-box (deleted)' yes
-expect_identity '/usr/bin/sing-box ' no
-expect_identity /usr/bin/not-sing-box no
-expect_identity '/usr/bin/sing-box (deleted) extra' no
-expect_identity '/usr/bin/sing-box (deleted) (deleted)' no
-[ "$(state sing-box-exe-kind-fixture /usr/bin/sing-box)" = current ]
-[ "$(state sing-box-exe-kind-fixture '/usr/bin/sing-box (deleted)')" = deleted ]
-[ "$(state sing-box-exe-kind-fixture '/usr/bin/sing-box ')" = other ]
+# Only the current backend controls native Xrust. The package hook also waits
+# for a legacy runtime to exit while the installer still supports old releases.
+expect_identity /usr/bin/xrust yes yes no
+expect_identity '/usr/bin/xrust (deleted)' yes yes no
+expect_identity /usr/bin/sing-box no yes yes
+expect_identity '/usr/bin/sing-box (deleted)' no yes yes
+expect_identity /usr/lib/rust-x/sing-box no yes yes
+expect_identity '/usr/lib/rust-x/sing-box (deleted)' no yes yes
+expect_identity '/tmp/foreign/sing-box' no no yes
+expect_identity '/usr/bin/xrust ' no no no
+expect_identity '/usr/bin/xrust (deleted) extra' no no no
+expect_identity '/usr/bin/xrust (deleted) (deleted)' no no no
+[ "$(state sing-box-exe-kind-fixture /usr/bin/xrust)" = current ]
+[ "$(state sing-box-exe-kind-fixture '/usr/bin/xrust (deleted)')" = deleted ]
+[ "$(state sing-box-exe-kind-fixture '/usr/bin/xrust ')" = other ]
 
 # The deleted child remains counted as the sole owned process, then its exact
 # PID/start time must disappear and procd must clear the PID before replacement.
@@ -79,6 +88,6 @@ verify_runtime reject 42 100 1 2 42 100 1
 # then a new sole procd-owned PID must point at the installed executable.
 observe exited 100 gone 0 0 0
 verify_runtime 43:200 43 200 1 1 43 200 1
-[ "$(state sing-box-exe-kind-fixture /usr/bin/sing-box)" = current ]
+[ "$(state sing-box-exe-kind-fixture /usr/bin/xrust)" = current ]
 
-echo 'sing-box deleted identity and stop transition checks passed'
+echo 'Xrust deleted identity and stop transition checks passed'

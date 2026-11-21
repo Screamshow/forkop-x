@@ -1,4 +1,4 @@
-// Keep this identifier in sync with singbox/rulesets.uc hash12().
+// Keep this identifier in sync with xrust/rulesets.uc hash12().
 export function customRulesetTag(reference: string): string {
   let first = 2166136261;
   let second = 16777619;

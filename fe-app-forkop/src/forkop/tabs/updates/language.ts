@@ -42,7 +42,7 @@ export function renderLanguage(disabled: boolean) {
     E('p', {}, _('Change Forkop X interface language')),
     E(
       'div',
-      { class: 'fkp_updates-page__component__variants-buttons' },
+      { class: 'fkp_updates-page__component__language-buttons' },
       buttons,
     ),
     status,

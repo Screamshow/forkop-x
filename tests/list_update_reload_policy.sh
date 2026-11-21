@@ -106,9 +106,9 @@ if grep -Fq '"refresh-and-reload"' "$LIFECYCLE_UC" ||
   fail "configuration edits must not launch a second source refresh/reload"
 fi
 
-grep -Fq 'if (refresh_manifest(proxy_address, false) != 0)' "$ROOT_DIR/forkop/files/usr/lib/singbox/ruleset_cache.uc" ||
+grep -Fq 'if (refresh_manifest(proxy_address, false) != 0)' "$ROOT_DIR/forkop/files/usr/lib/xrust/ruleset_cache.uc" ||
   fail "unchanged rule-set content must not request a reload"
-grep -Fq 'if (failed && (for_restart || !changed))' "$ROOT_DIR/forkop/files/usr/lib/singbox/ruleset_cache.uc" ||
+grep -Fq 'if (failed && (for_restart || !changed))' "$ROOT_DIR/forkop/files/usr/lib/xrust/ruleset_cache.uc" ||
   fail "a failed rule-set source must not suppress reload of other successful changes"
 
 grep -Fq 'PERSISTENT_LIST_CACHE_DIR + "/last-success.timestamp"' "$UPDATES_UC" ||

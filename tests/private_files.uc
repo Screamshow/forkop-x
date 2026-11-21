@@ -28,7 +28,7 @@ function run(args) {
     let command = map([...env, ...args], quote);
     expect(system(join(" ", command)) == 0, "command: " + args[0]);
 }
-function runtime(args) { run(["ucode", "-L", lib, lib + "/singbox/runtime.uc", ...args]); }
+function runtime(args) { run(["ucode", "-L", lib, lib + "/xrust/runtime.uc", ...args]); }
 function cache(args) { run(["ucode", "-L", lib, lib + "/subscription/cache.uc", ...args]); }
 function private_json(path, value) {
     expect(common.write_private_json_file(path, value) != null, "write private JSON");
@@ -94,7 +94,7 @@ private_json(work + "/fixture.json", {
     settings: { ".name": "settings", ".type": "settings", dns_server: "1.1.1.1" },
     section: [{ ".name": "probe", ".type": "section", enabled: "1", action: "connection", selector_proxy_links: [uri] }]
 });
-run(["ucode", "-L", lib, lib + "/singbox/generator.uc", "generate-config-fixture",
+run(["ucode", "-L", lib, lib + "/xrust/generator.uc", "generate-config-fixture",
     work + "/fixture.json", work + "/generated.json", "127.0.0.1", "0", "0", "", "1.13.21"]);
 mode(work + "/generated.json", 0600);
 mode(work + "/generated.json.section-cache", 0700);

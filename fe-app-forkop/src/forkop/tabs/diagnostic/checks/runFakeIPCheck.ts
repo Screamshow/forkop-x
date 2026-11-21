@@ -31,7 +31,7 @@ export async function runFakeIPCheck() {
     : checkFakeIPResponse.message;
 
   const checks = {
-    singBoxFakeIP:
+    xrustFakeIP:
       routerFakeIPResponse.success && routerFakeIPResponse.data.fakeip,
     browserFakeIP:
       checkFakeIPResponse.success && checkFakeIPResponse.data.fakeip,
@@ -46,7 +46,7 @@ export async function runFakeIPCheck() {
       checkFakeIPResponse.data.IP !== checkIPResponse.data.IP,
   };
 
-  const fakeIPWorks = checks.singBoxFakeIP && checks.browserFakeIP;
+  const fakeIPWorks = checks.xrustFakeIP && checks.browserFakeIP;
   const { state, description } = fakeIPWorks
     ? !publicIPComparisonAvailable
       ? {
@@ -63,14 +63,14 @@ export async function runFakeIPCheck() {
               'FakeIP works; public IP comparison is inconclusive',
             ),
           }
-    : browserFakeIPCheckUnavailable && checks.singBoxFakeIP
+    : browserFakeIPCheckUnavailable && checks.xrustFakeIP
       ? {
           state: 'warning' as const,
           description: _('Browser FakeIP check could not be completed'),
         }
       : getMeta({
           allGood: false,
-          atLeastOneGood: checks.singBoxFakeIP || checks.browserFakeIP,
+          atLeastOneGood: checks.xrustFakeIP || checks.browserFakeIP,
         });
 
   updateCheckStore({
@@ -81,10 +81,10 @@ export async function runFakeIPCheck() {
     state,
     items: [
       {
-        state: checks.singBoxFakeIP ? 'success' : 'error',
-        key: checks.singBoxFakeIP
-          ? _('Sing-box FakeIP DNS works')
-          : _('Sing-box FakeIP DNS does not work'),
+        state: checks.xrustFakeIP ? 'success' : 'error',
+        key: checks.xrustFakeIP
+          ? _('Xrust FakeIP DNS works')
+          : _('Xrust FakeIP DNS does not work'),
         value: routerFakeIPResponse.success ? routerFakeIPResponse.data.IP : '',
       },
       {

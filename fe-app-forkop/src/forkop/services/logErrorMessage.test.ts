@@ -11,24 +11,24 @@ describe('log error messages', () => {
       'Not enough storage for Forkop update and rollback. Required reserve: 11609 KiB; available: 5344 KiB.',
     );
   });
-  it('accepts the sing-box reserve wording', () => {
+  it('accepts the conservative reserve wording', () => {
     expect(
       getLogErrorMessage(
-        'Not enough flash space for sing-box: conservative installation reserve needs 10000 KiB free, have 8000 KiB',
+        'Not enough flash space for Forkop update and rollback: conservative installation reserve needs 10000 KiB free, have 8000 KiB',
       ),
     ).toContain('10000 KiB; available: 8000 KiB');
   });
   it('keeps phase names and exit codes', () => {
     expect(
       getLogErrorMessage(
-        "[fatal] Startup phase 'sing-box-config' failed with exit status 1",
+        "[fatal] Startup phase 'xrust-config' failed with exit status 1",
       ),
-    ).toBe('Startup phase sing-box-config failed (exit code 1).');
+    ).toBe('Startup phase xrust-config failed (exit code 1).');
   });
   it('recognizes validation and suppressed retry messages', () => {
     expect(
       getLogErrorMessage(
-        'Generated sing-box configuration is invalid: FATAL secret technical output',
+        'Generated Xrust configuration is invalid: FATAL secret technical output',
       ),
     ).toContain('configuration is invalid');
     expect(
@@ -48,7 +48,7 @@ describe('log error messages', () => {
     ).toContain('Restore Meta or turn off real IPs');
     expect(
       getLogErrorMessage(
-        "Generated sing-box configuration is invalid: WhatsApp real DNS requires downloaded Meta subnet rules for 'vpn'",
+        "Generated Xrust configuration is invalid: WhatsApp real DNS requires downloaded Meta subnet rules for 'vpn'",
       ),
     ).toContain('Download the Meta lists');
   });

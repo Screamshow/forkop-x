@@ -1,5 +1,6 @@
 // Experimental native LuCI access. No system Tailscale packages or support state.
 let fs = require('fs');
+let xrust = require('xrust.binary');
 const DIR = '/var/run/forkop/ui-state';
 const AUTH = DIR + '/tailscale-auth';
 const STATUS = DIR + '/tailscale-status.json';
@@ -9,17 +10,17 @@ const STATE = '/etc/forkop-tailscale';
 // so the five processes behind them run again only when one changes.
 const CAPABILITIES = DIR + '/tailscale-capabilities.json';
 function stamp(path) { let s = fs.stat(path); return s ? join(':', [s.inode, s.size, s.mtime, s.ctime]) : '-'; }
-let capability_key = join('|', map(['/etc/forkop/sing-box-variant', '/usr/lib/rust-x/sing-box',
+let capability_key = join('|', map([xrust.PATH,
     '/usr/lib/forkop/core/constants.uc', '/usr/lib/forkop/tailscale/compat.uc'], stamp));
 let capabilities = null;
 try { capabilities = json(fs.readfile(CAPABILITIES) || 'null'); } catch (e) {}
 if (type(capabilities) != 'object' || capabilities.key != capability_key) {
-    let rust = trim(fs.readfile('/etc/forkop/sing-box-variant') || '') == 'rust-x';
+    let rust = fs.stat(xrust.PATH) != null;
     let version = system('ucode /usr/lib/forkop/tailscale/compat.uc check >/dev/null 2>&1') == 0;
-    let native = version && rust && system('/usr/lib/rust-x/sing-box tailscale-native-capability >/dev/null 2>&1') == 0;
+    let native = version && rust && system('/usr/bin/xrust tailscale-native-capability >/dev/null 2>&1') == 0;
     capabilities = {key:capability_key, rust_selected:rust, version_supported:version, available:native,
-        ssh_available: native && system('/usr/lib/rust-x/sing-box tailscale-ssh-capability >/dev/null 2>&1') == 0,
-        exit_available: native && system('/usr/lib/rust-x/sing-box tailscale-exit-capability >/dev/null 2>&1') == 0};
+        ssh_available: native && system('/usr/bin/xrust tailscale-ssh-capability >/dev/null 2>&1') == 0,
+        exit_available: native && system('/usr/bin/xrust tailscale-exit-capability >/dev/null 2>&1') == 0};
     fs.mkdir(DIR);
     if (fs.writefile(CAPABILITIES + '.new', sprintf('%J', capabilities)) != null)
         fs.rename(CAPABILITIES + '.new', CAPABILITIES);

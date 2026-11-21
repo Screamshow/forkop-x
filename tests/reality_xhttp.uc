@@ -1,5 +1,5 @@
 #!/usr/bin/env ucode
-// Run with: ucode -L LIB tests/reality_xhttp.uc WORK LIB [EXTENDED_BINARY]
+// Run with: ucode -L LIB tests/reality_xhttp.uc WORK LIB [XRUST_BINARY]
 let fs = require("fs");
 let parser = require("subscription.parser");
 let links = require("subscription.share_link");
@@ -59,7 +59,7 @@ function generate(link_values, json_values, version) {
         section: [{ ".name": "probe", ".type": "section", enabled: "1", action: "connection",
             selector_proxy_links: link_values, outbound_jsons: json_values }]
     });
-    run(["ucode", "-L", lib, lib + "/singbox/generator.uc", "generate-config-fixture",
+    run(["ucode", "-L", lib, lib + "/xrust/generator.uc", "generate-config-fixture",
         fixture, output, "127.0.0.1", "0", "1", "", version]);
     return read(output);
 }
@@ -90,7 +90,7 @@ for (let aliases in [
     // Force regeneration instead of retaining the source URI.
     delete last.share_link;
     fields(normalize(links.serialize_outbound_link(last)), "X & session=key", 17);
-    let generated = vless_outbound(generate([base + "&extra=" + encode(sprintf("%J", extra))], [], "1.14.1-extended-2.7.2"));
+    let generated = vless_outbound(generate([base + "&extra=" + encode(sprintf("%J", extra))], [], "0.0.45"));
     fields(generated, "X & session=key", 17);
     expect(!exists(generated.tls.reality, "support_x25519mlkem768"), "manual Reality preference stays unspecified");
 }
@@ -137,11 +137,12 @@ write(persistent + "/" + source + ".json", {outbounds:[cached]});
 fs.writefile(persistent + "/" + source + ".url", "https://feed.example/test");
 fs.writefile(persistent + "/" + source + ".user_agent", "Happ");
 fs.writefile(persistent + "/" + source + ".hwid", "");
+let original_persistent = fs.readfile(persistent + "/" + source + ".json");
 fs.unlink(runtime + "/" + source + ".json");
 run(["ucode", "-L", lib, lib + "/subscription/cache.uc", "restore-persistent-source",
     source, runtime, persistent, "https://feed.example/test", "Happ", "", "Default"]);
 fields(read(runtime + "/" + source + ".json").outbounds[0], "X-Cache", 6);
-fields(read(persistent + "/" + source + ".json").outbounds[0], "X-Cache", 6);
+expect(fs.readfile(persistent + "/" + source + ".json") == original_persistent, "restore keeps last-known-good persistent bytes");
 fs.writefile(persistent + "/cache-format", "9\n");
 fs.writefile(runtime + "/cache-format", "10\n");
 run(["env", "FORKOP_RUNTIME_STATE_DIR=" + runtime, "FORKOP_RUNTIME_CACHE_FORMAT_FILE=" + runtime + "/cache-format",
@@ -155,7 +156,8 @@ expect(fs.readfile(runtime + "/cache-format") == "12\n", "runtime cache format u
 expect(fs.stat(persistent + "/" + source + ".json") != null, "offline persistent cache retained");
 
 // Generation must also recover an old runtime cache without a network refresh.
-write(runtime + "/" + source + ".json", {outbounds:[cached]});
+let restored = read(runtime + "/" + source + ".json");
+write(runtime + "/" + source + ".json", {outbounds:[cached], __forkop_source_cache:restored.__forkop_source_cache});
 let cached_fixture = work + "/cached.fixture.json";
 let cached_config = work + "/cached.generated.json";
 write(cached_fixture, {settings:{".name":"settings",".type":"settings",dns_server:"1.1.1.1"},
@@ -165,15 +167,14 @@ write(cached_fixture, {settings:{".name":"settings",".type":"settings",dns_serve
 run(["env", "TMP_SUBSCRIPTION_FOLDER=" + runtime,
     "FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR=" + persistent,
     "FORKOP_RUNTIME_STATE_DIR=" + runtime, "ucode", "-L", lib,
-    lib + "/singbox/generator.uc", "generate-config-fixture", cached_fixture, cached_config,
-    "127.0.0.1", "0", "1", "", "1.14.1-extended-2.7.2"]);
+    lib + "/xrust/generator.uc", "generate-config-fixture", cached_fixture, cached_config,
+    "127.0.0.1", "0", "1", "", "0.0.45"]);
 let cached_generated = vless_outbound(read(cached_config));
 fields(cached_generated, "X-Cache", 6);
 expect(cached_generated.tls.reality.support_x25519mlkem768 === false,
     "cached explicit false survives final generation");
 
-for (let version in ["1.13.21", "1.14.1", "1.14.1-extended-2.7.1", "unknown", "1.14.1-extended-2.7.2-rc1",
-    "1.14.1-extended-2.7.2", "1.14.1-extended-2.7.20", "1.14.1-extended-2.8.0", "1.14.1-extended-3.0.0"]) {
+for (let version in ["0.0.22", "0.0.45"]) {
     let o = vless_outbound(generate([base], [], version));
     expect(!exists(o.tls.reality, "support_x25519mlkem768"), "Reality stays unspecified for " + version);
 }
@@ -181,7 +182,7 @@ for (let value in [false,true]) {
     for (let parameter in ["support_x25519mlkem768", "supportX25519MLKEM768", "support-x25519mlkem768"]) {
         let uri = base + "&" + parameter + "=" + (value ? "true" : "false");
         expect(normalize(uri).tls.reality.support_x25519mlkem768 === value, "explicit subscription URI Reality preference " + parameter);
-        let manual = vless_outbound(generate([uri], [], "1.14.1-extended-2.7.2"));
+        let manual = vless_outbound(generate([uri], [], "0.0.45"));
         expect(manual.tls.reality.support_x25519mlkem768 === value, "explicit manual URI Reality preference " + parameter);
         let cached_alias = normalize(uri);
         delete cached_alias.tls.reality.support_x25519mlkem768;
@@ -195,7 +196,7 @@ for (let value in [false,true]) {
     }
     let o = normalize(base + "&support_x25519mlkem768=" + (value ? "true" : "false"));
     delete o.share_link;
-    let result = vless_outbound(generate([], [sprintf("%J",o)], "1.14.1-extended-2.7.2"));
+    let result = vless_outbound(generate([], [sprintf("%J",o)], "0.0.45"));
     expect(result.tls.reality.support_x25519mlkem768 === value, "explicit JSON Reality preference");
     expect(normalize(links.serialize_outbound_link(o)).tls.reality.support_x25519mlkem768 === value, "Reality preference round trip");
 }
@@ -205,12 +206,12 @@ expect(normalize(base + "&supportX25519MLKEM768=false&support-x25519mlkem768=tru
     .tls.reality.support_x25519mlkem768 === false, "existing camelCase Reality preference takes precedence");
 let unspecified = normalize(base);
 delete unspecified.share_link;
-let unspecified_json = vless_outbound(generate([], [sprintf("%J", unspecified)], "1.14.1-extended-2.7.2"));
+let unspecified_json = vless_outbound(generate([], [sprintf("%J", unspecified)], "0.0.45"));
 expect(!exists(unspecified_json.tls.reality, "support_x25519mlkem768"), "JSON Reality preference stays unspecified");
 expect(index(links.serialize_outbound_link(unspecified_json), "support_x25519mlkem768") < 0, "unspecified Reality preference is not exported");
 let off = normalize(base);
 off.tls.reality.enabled = false;
-let off_result = vless_outbound(generate([], [sprintf("%J",off)], "1.14.1-extended-2.7.2"));
+let off_result = vless_outbound(generate([], [sprintf("%J",off)], "0.0.45"));
 expect(!exists(off_result.tls.reality,"support_x25519mlkem768"), "disabled Reality excluded");
 // Full CDN profiles: import, generated config, export and cache recovery.
 for (let extra in [
@@ -241,7 +242,7 @@ for (let extra in [
     let transport = sprintf("%J",original.transport);
     delete original.share_link;
     expect(sprintf("%J",normalize(links.serialize_outbound_link(original)).transport) == transport, "full CDN export round trip");
-    expect(sprintf("%J",vless_outbound(generate([uri],[],"1.14.1-extended-2.7.2")).transport) == transport,
+    expect(sprintf("%J",vless_outbound(generate([uri],[],"0.0.45")).transport) == transport,
         "full CDN generated transport");
     original.share_link = uri;
     for (let k in ["seq_key","seq_placement","uplink_data_placement","uplink_data_key","uplink_chunk_size",
@@ -261,7 +262,7 @@ for (let extra in [
         run([binary,"check","-c",path]);
     }
 }
-// Check actual Extended decoding with minimal independent configs.
+// Check actual Xrust decoding with minimal independent configs.
 if (binary) {
     for (let o in [last, repaired, xray]) {
         delete o.share_link;

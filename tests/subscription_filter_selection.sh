@@ -7,7 +7,7 @@ export FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR="$WORK/persistent"
 export TMP_SUBSCRIPTION_FOLDER="$WORK/runtime"
 export FORKOP_UCI_STATE_FILE="$WORK/uci.state"
 ucode -L "$ROOT/forkop/files/usr/lib" "$ROOT/tests/subscription_filter_selection.uc"
-ucode -L "$ROOT/forkop/files/usr/lib" "$ROOT/forkop/files/usr/lib/singbox/generator.uc" \
+ucode -L "$ROOT/forkop/files/usr/lib" "$ROOT/forkop/files/usr/lib/xrust/generator.uc" \
     generate-config-fixture "$TMP_SUBSCRIPTION_FOLDER/fixture.json" "$WORK/config.json" 127.0.0.1
 ucode -e '
 let fs=require("fs"); let config=json(fs.readfile(ARGV[0])); let found=false;

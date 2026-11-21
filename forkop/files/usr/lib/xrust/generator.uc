@@ -1,26 +1,27 @@
 #!/usr/bin/env ucode
 
 let fs = require("fs");
+let xrust = require("xrust.binary");
 let common = require("core.common");
 let core_ip = require("core.ip");
 let uci_core = require("core.uci");
-let runtime_constants = require("singbox.constants");
-let cache_identity = require("singbox.cache_identity");
+let runtime_constants = require("xrust.constants");
+let cache_identity = require("xrust.cache_identity");
 let filter_identity = require("subscription.filter_identity");
 let filter_selection = require("subscription.filter_selection");
 // Keep private connection identities out of outboundMetadata/UI caches.
 let subscription_filter_connections = {};
 let subscription_previous_password_connections = {};
 let runtime_xray_client_features = [];
-let runtime_country = require("singbox.country");
-let runtime_dns = require("singbox.dns");
-let runtime_route = require("singbox.route");
-let runtime_rulesets = require("singbox.rulesets");
-let runtime_subscription = require("singbox.subscription");
+let runtime_country = require("xrust.country");
+let runtime_dns = require("xrust.dns");
+let runtime_route = require("xrust.route");
+let runtime_rulesets = require("xrust.rulesets");
+let runtime_subscription = require("xrust.subscription");
 let runtime_url = require("core.url");
-let runtime_urltest = require("singbox.urltest");
-let outbound_reachability = require("singbox.outbound_reachability");
-let proxy_transport = require("singbox.proxy_transport");
+let runtime_urltest = require("xrust.urltest");
+let outbound_reachability = require("xrust.outbound_reachability");
+let proxy_transport = require("xrust.proxy_transport");
 let source_rulesets = require("routing.rulesets");
 let rule_config = require("config.rule");
 let connections = require("config.connections");
@@ -35,14 +36,9 @@ let fixture_uci_data = null;
 let runtime_settings_cache = null;
 let runtime_ruleset_folder = runtime_constants.TMP_RULESET_FOLDER;
 let runtime_supports_xhttp = true;
-let runtime_supports_certificate_pins = false;
 let runtime_supports_native_tunnels = false;
-let runtime_supports_dns_response_matching = false;
-let runtime_supports_legacy_protocols = true;
 let runtime_supports_trojan = true;
-let runtime_supports_all_fingerprints = true;
 let runtime_supports_vless_encryption = true;
-let runtime_supports_reality_mldsa65 = true;
 let runtime_skipped_protocol_outbounds = {};
 let runtime_prunable_outbounds = {};
 
@@ -523,7 +519,7 @@ function ntp_server_names() {
 function base_config(settings, service_address, runtime_context) {
     let log_level = option(settings, "log_level", "warn");
     let rewrite_ttl = int_option(settings, "dns_rewrite_ttl", "60");
-    let cache_path = cache_identity.path(option(settings, "cache_path", "/tmp/sing-box/cache.db"), object_or_empty(runtime_context).core_version);
+    let cache_path = cache_identity.path(option(settings, "cache_path", "/tmp/xrust/cache.db"));
     let dns_config = runtime_dns.config_from_state(runtime_context.dns_state);
     if (dns_config.provider_unavailable) {
         warn(dns_config.unsupported, "\n");
@@ -601,8 +597,7 @@ function base_config(settings, service_address, runtime_context) {
             servers: dns_servers,
             rules: dns_rules,
             final: runtime_constants.DNS_SERVER_TAG,
-            strategy: option(settings, "dns_strategy", "prefer_ipv4"),
-            independent_cache: true
+            strategy: option(settings, "dns_strategy", "prefer_ipv4")
         },
         ntp: {},
         certificate: {},
@@ -639,14 +634,6 @@ function outbound_uses_xhttp(outbound) {
         lc(as_string(outbound.transport.type || "")) == "xhttp";
 }
 
-function outbound_uses_certificate_pins(outbound) {
-    let tls = object_or_empty(object_or_empty(outbound).tls);
-    for (let value in [tls.certificate_sha256, tls.xray_pinned_peer_cert_sha256])
-        if (type(value) == "array" ? length(value) > 0 : as_string(value) != "")
-            return true;
-    return false;
-}
-
 function has_xray_client_feature(feature) {
     return index(runtime_xray_client_features, feature) >= 0;
 }
@@ -672,8 +659,7 @@ function unsupported_xray_client_option(outbound) {
         if (transport.download_settings.tls?.xray_pinned_peer_cert_sha256 != null &&
             !has_xray_client_feature("tls.xray-pins"))
             return "requires Xray certificate pinning on the XHTTP download connection";
-        if (!runtime_supports_reality_mldsa65 &&
-            as_string(transport.download_settings.tls?.reality?.__forkop_mldsa65_verify || "") != "")
+        if (as_string(transport.download_settings.tls?.reality?.__forkop_mldsa65_verify || "") != "")
             return "requires REALITY ML-DSA-65 verification on the XHTTP download connection";
         return unsupported_xray_tls(transport.download_settings.tls);
     }
@@ -711,13 +697,8 @@ const RUST_X_EXCLUDED_OUTBOUND_TYPES = {
     "openvpn-client": true, socks: true
 };
 
-function rust_x_core_version(version) {
-    // Both the packaged wrapper and the bare binary report "-rust-x.".
-    return match(as_string(version), /-rust-x\./) != null;
-}
-
 function outbound_excluded_protocol(outbound) {
-    if (runtime_supports_legacy_protocols || type(outbound) != "object")
+    if (type(outbound) != "object")
         return "";
     let t = lc(as_string(outbound.type || ""));
     if (t == "trojan" && runtime_supports_trojan)
@@ -738,8 +719,7 @@ function outbound_unsupported_vless_encryption(outbound) {
 }
 
 // REALITY ML-DSA-65 verification (pqv) is a Forkop-side marker: Xrust has no
-// ML-DSA verification, so such nodes are refused there; for the other cores
-// the marker is removed and their configuration is unchanged.
+// ML-DSA verification, so these nodes must be rejected before publication.
 function outbound_uses_reality_mldsa65(outbound) {
     return type(outbound) == "object" && type(outbound.tls) == "object" &&
         type(outbound.tls.reality) == "object" &&
@@ -791,7 +771,7 @@ const XRUST_UNSUPPORTED_FINGERPRINTS = { android: true, "360": true, qq: true };
 const XRUST_FINGERPRINT_REPLACEMENT = "firefox";
 
 function use_supported_utls_fingerprint(outbound, source, name) {
-    if (runtime_supports_all_fingerprints || type(outbound) != "object" ||
+    if (type(outbound) != "object" ||
         type(outbound.tls) != "object" || type(outbound.tls.utls) != "object" ||
         outbound.tls.utls.enabled === false)
         return;
@@ -820,12 +800,10 @@ function ensure_explicit_outbound_supported(outbound, source, name) {
     let encryption = outbound_unsupported_vless_encryption(outbound);
     if (encryption != "")
         runtime_generate_unsupported(as_string(source) + " '" + as_string(name) + "' uses VLESS encryption " + encryption + ", which Xrust does not support; use a link with encryption=none");
-    if (!runtime_supports_reality_mldsa65 && outbound_uses_reality_mldsa65(outbound))
+    if (outbound_uses_reality_mldsa65(outbound))
         runtime_generate_unsupported(as_string(source) + " '" + as_string(name) + "' requires REALITY ML-DSA-65 verification (pqv), which Xrust does not support; remove pqv only if you accept the server without it");
-    if (!runtime_supports_certificate_pins && outbound_uses_certificate_pins(outbound))
-        runtime_generate_unsupported(as_string(source) + " '" + as_string(name) + "' requires TLS certificate SHA-256 pinning; use Xrust or a core with verified certificate_sha256 support");
     if (!runtime_supports_xhttp && outbound_uses_xhttp(outbound))
-        runtime_generate_unsupported(as_string(source) + " '" + as_string(name) + "' uses XHTTP transport, but installed sing-box does not advertise XHTTP support");
+        runtime_generate_unsupported(as_string(source) + " '" + as_string(name) + "' uses XHTTP transport, but installed Xrust does not advertise XHTTP support");
     let unsupported = unsupported_xray_client_option(outbound);
     if (unsupported != "")
         runtime_generate_unsupported(as_string(source) + " '" + as_string(name) + "' " + unsupported + " with the installed core");
@@ -890,17 +868,13 @@ function compatible_subscription_outbounds(outbounds, section_name) {
             remember_skipped_protocol_outbound(section_name, "vless encryption");
             continue;
         }
-        if (!runtime_supports_reality_mldsa65 && outbound_uses_reality_mldsa65(outbound)) {
+        if (outbound_uses_reality_mldsa65(outbound)) {
             warn_skipped_subscription_outbound(section_name, outbound, "REALITY ML-DSA-65 verification (pqv) is not supported by Xrust");
             remember_skipped_protocol_outbound(section_name, "reality pqv");
             continue;
         }
-        if (!runtime_supports_certificate_pins && outbound_uses_certificate_pins(outbound)) {
-            warn_skipped_subscription_outbound(section_name, outbound, "TLS certificate SHA-256 pinning requires Xrust; pin retained in subscription cache");
-            continue;
-        }
         if (!runtime_supports_xhttp && outbound_uses_xhttp(outbound)) {
-            warn_skipped_subscription_outbound(section_name, outbound, "installed sing-box does not advertise XHTTP support");
+            warn_skipped_subscription_outbound(section_name, outbound, "installed Xrust does not advertise XHTTP support");
             continue;
         }
         let unsupported = unsupported_xray_client_option(outbound);
@@ -2921,39 +2895,27 @@ function reference_is_local(reference) {
     return substr(as_string(reference), 0, 1) == "/";
 }
 
-function source_file_exists(path) {
-    return fs.readfile(path) != null;
-}
-
 function rebuild_local_domain_ip_list_ruleset(section_name, references, domains_only) {
+    // The list updater materializes the complete set whenever a URL is present.
+    for (let reference in references)
+        if (!reference_is_local(reference))
+            return;
+
     let ruleset_path = domain_ip_list_ruleset_path(section_name);
-    let has_local = false;
-
-    for (let reference in references) {
-        if (reference_is_local(reference)) {
-            has_local = true;
-            break;
-        }
-    }
-
-    if (!has_local)
-        return;
-
     fs.unlink(ruleset_path);
     source_rulesets.create_source(ruleset_path);
 
     for (let reference in references) {
         reference = as_string(reference);
-        if (!reference_is_local(reference))
-            continue;
-        if (!source_file_exists(reference)) {
+        let data = fs.readfile(reference);
+        if (data == null) {
             warn("local domain/IP list not found: ", reference, "\n");
             continue;
         }
 
-        source_rulesets.import_plain_list(reference, ruleset_path, "domain_suffix", "domains", "5000");
+        source_rulesets.import_plain_list_content(data, ruleset_path, "domain_suffix", "domains", "5000");
         if (!domains_only)
-            source_rulesets.import_plain_list(reference, ruleset_path, "ip_cidr", "subnets", "5000");
+            source_rulesets.import_plain_list_content(data, ruleset_path, "ip_cidr", "subnets", "5000");
     }
 }
 
@@ -2964,7 +2926,8 @@ function add_domain_ip_list_ruleset(config, section_name, rule_set_tags, dns_que
     rebuild_local_domain_ip_list_ruleset(section_name, references, domains_only);
 
     let ruleset_path = domain_ip_list_ruleset_path(section_name);
-    if (!source_rulesets.has_rules(ruleset_path))
+    let matchers = source_rulesets.source_matchers(ruleset_path);
+    if (matchers == null)
         return;
 
     let tag_name = domain_ip_list_ruleset_tag(section_name);
@@ -2979,11 +2942,9 @@ function add_domain_ip_list_ruleset(config, section_name, rule_set_tags, dns_que
 
     if (!domains_only)
         push(rule_set_tags, tag_name);
-    let has_domains = source_rulesets.has_domain_matchers(ruleset_path);
-    let has_addresses = source_rulesets.has_ip_matchers(ruleset_path);
-    if (runtime_supports_dns_response_matching && has_addresses)
+    if (matchers.addresses)
         push(dns_response_tags, tag_name);
-    else if (has_domains)
+    else if (matchers.domains)
         push(dns_query_tags, tag_name);
 }
 
@@ -3162,40 +3123,23 @@ function add_source_dns_matchers(rule, source_ip_cidr) {
 }
 
 function add_source_aware_bypass_dns_rules(config, matchers, rewrite_ttl) {
-    if (runtime_supports_dns_response_matching) {
-        // sing-box 1.14 response matching must inspect the response from the
-        // same path that will be returned. Evaluate dnsmasq first, then
-        // respond with that accepted non-FakeIP answer below.
-        let evaluate = copy_dns_matchers(matchers);
-        evaluate.action = "evaluate";
-        evaluate.server = runtime_constants.DNSMASQ_DNS_SERVER_TAG;
-        push_dns_matcher_rule(config, evaluate);
-    }
+    // Evaluate and return the non-FakeIP answer from the same resolver.
+    let evaluate = copy_dns_matchers(matchers);
+    evaluate.action = "evaluate";
+    evaluate.server = runtime_constants.DNSMASQ_DNS_SERVER_TAG;
+    push_dns_matcher_rule(config, evaluate);
 
     let fakeip_matcher = {
         ip_cidr: [ runtime_constants.FAKEIP_INET4_RANGE, runtime_constants.FAKEIP_INET6_RANGE ],
-        invert: true
+        invert: true,
+        match_response: true
     };
-    if (runtime_supports_dns_response_matching)
-        fakeip_matcher.match_response = true;
-
-    let filtered_dnsmasq = {
+    push_dns_matcher_rule(config, {
         type: "logical",
         mode: "and",
-        rules: [
-            copy_dns_matchers(matchers),
-            fakeip_matcher
-        ]
-    };
-    if (runtime_supports_dns_response_matching) {
-        filtered_dnsmasq.action = "respond";
-    }
-    else {
-        filtered_dnsmasq.action = "route";
-        filtered_dnsmasq.server = runtime_constants.DNSMASQ_DNS_SERVER_TAG;
-        filtered_dnsmasq.rewrite_ttl = rewrite_ttl;
-    }
-    push_dns_matcher_rule(config, filtered_dnsmasq);
+        action: "respond",
+        rules: [ copy_dns_matchers(matchers), fakeip_matcher ]
+    });
 
     let fallback = copy_dns_matchers(matchers);
     fallback.action = "route";
@@ -3230,18 +3174,6 @@ function add_section_dns_matcher_rule(config, section, matchers, rewrite_ttl) {
         push_dns_matcher_rule(config, tunnel_dns);
 }
 
-function append_unique(values, additions) {
-    let seen = {};
-    for (let value in values)
-        seen[value] = true;
-    for (let value in additions) {
-        if (!seen[value]) {
-            seen[value] = true;
-            push(values, value);
-        }
-    }
-}
-
 function add_response_ruleset_dns_rule(config, section, tags, rewrite_ttl, server_tag) {
     if (length(tags) == 0)
         return;
@@ -3267,20 +3199,6 @@ function add_response_ruleset_dns_rule(config, section, tags, rewrite_ttl, serve
 }
 
 function add_section_ruleset_dns_rules(config, section, query_tags, response_tags, rewrite_ttl, server_tag) {
-    if (!runtime_supports_dns_response_matching) {
-        append_unique(query_tags, response_tags);
-        if (length(query_tags) > 0) {
-            if (server_tag == section_dns_server(section))
-                add_section_dns_matcher_rule(config, section, { rule_set: single_or_array(query_tags) }, rewrite_ttl);
-            else {
-                let legacy = { rule_set: single_or_array(query_tags), action: "route", server: server_tag, rewrite_ttl };
-                add_source_dns_matchers(legacy, legacy_condition_values(section, "source_ip_cidr"));
-                push_dns_matcher_rule(config, exclude_sources_from_matchers(legacy, section));
-            }
-        }
-        return;
-    }
-
     if (length(query_tags) > 0) {
         if (server_tag == section_dns_server(section))
             add_section_dns_matcher_rule(config, section, { rule_set: single_or_array(query_tags) }, rewrite_ttl);
@@ -3802,24 +3720,20 @@ function enabled_sections(deferred_sections) {
     return result;
 }
 
-function generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan, supports_bittorrent_direct, supports_vless_encryption, xray_features) {
+function generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, core_version, supports_trojan, supports_bittorrent_direct, supports_vless_encryption, xray_features) {
     // Provenance and UI metadata belong to this candidate, never the live cache.
     runtime_subscription.set_section_cache_dir(output_path + ".section-cache");
     runtime_prunable_outbounds = {};
     runtime_skipped_protocol_outbounds = {};
-    // Verified for Xrust; Go X 1.0.4 and Extended 2.7.2 do not support this
-    // whole-certificate pin. Never substitute an SPKI pin or remove the pin.
-    runtime_supports_certificate_pins = rust_x_core_version(sing_box_version);
-    let xrust_version = match(as_string(sing_box_version), /rust-x[.-]([0-9]+)\.([0-9]+)\.([0-9]+)/);
-    runtime_supports_native_tunnels = xrust_version != null &&
-        (int(xrust_version[1]) > 0 || int(xrust_version[2]) > 0 || int(xrust_version[3]) >= 36);
-    // Xrust is built without vmess, shadowsocks and socks outbounds; only
-    // builds declaring outbound.trojan include the Trojan client.
-    runtime_supports_legacy_protocols = !rust_x_core_version(sing_box_version);
+    core_version = as_string(core_version);
+    let build = xrust.build_version(core_version);
+    if (core_version != "" && build == "")
+        runtime_generate_unsupported("the installed client must be Xrust");
+    let version_parts = split(build, ".");
+    runtime_supports_native_tunnels = build != "" &&
+        (int(version_parts[0]) > 0 || int(version_parts[1]) > 0 || int(version_parts[2]) >= 36);
     runtime_supports_trojan = cli_bool(supports_trojan);
-    runtime_supports_all_fingerprints = !rust_x_core_version(sing_box_version);
-    runtime_supports_vless_encryption = !rust_x_core_version(sing_box_version) || cli_bool(supports_vless_encryption);
-    runtime_supports_reality_mldsa65 = !rust_x_core_version(sing_box_version);
+    runtime_supports_vless_encryption = cli_bool(supports_vless_encryption);
     runtime_xray_client_features = split(as_string(xray_features), ",");
     runtime_supports_xhttp = supports_xhttp == null || as_string(supports_xhttp) == ""
         ? true
@@ -3838,19 +3752,12 @@ function generate_config(output_path, service_address, mwan3_active, supports_xh
     let dns_state = runtime_dns.runtime_state(settings);
     let config = base_config(settings, service_address, {
         dns_state,
-        core_version: sing_box_version,
-        supports_bittorrent_direct: rust_x_core_version(sing_box_version) && cli_bool(supports_bittorrent_direct),
+        supports_bittorrent_direct: cli_bool(supports_bittorrent_direct),
         mwan3_active: cli_bool(mwan3_active),
         source_aware_dns: length(source_aware_dns) > 0
     });
     if (bool_option(settings, "whatsapp_real_dns", false))
         config.dns.reverse_mapping = true;
-    let version_parts = match(as_string(sing_box_version), /^v?([0-9]+)\.([0-9]+)\./);
-    runtime_supports_dns_response_matching = version_parts != null &&
-        (int(version_parts[1]) > 1 || (int(version_parts[1]) == 1 && int(version_parts[2]) >= 14));
-    if (version_parts != null && (int(version_parts[1]) > 1 ||
-        (int(version_parts[1]) == 1 && int(version_parts[2]) >= 14)))
-        delete config.dns.independent_cache;
     add_source_aware_dns_support(config, source_aware_dns);
     let taken = reserved_runtime_tag_set(config.outbounds);
     reserve_section_outbound_tags(sections, taken);
@@ -3888,7 +3795,7 @@ function generate_config(output_path, service_address, mwan3_active, supports_xh
     outbound_reachability.prune(config, runtime_prunable_outbounds);
     strip_internal_fields(config);
     if (!bootstrap_lists) {
-        dns_state.config_path = option(settings, "config_path", "");
+        dns_state.config_path = getenv("FORKOP_APPLIED_XRUST_CONFIG_PATH") || option(settings, "config_path", "");
         dns_state.health = runtime_dns.health_settings(settings);
         let tags = {};
         for (let server in config.dns.servers)
@@ -3912,11 +3819,11 @@ function generate_config(output_path, service_address, mwan3_active, supports_xh
     }
 }
 
-function generate_config_fixture(fixture_path, output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan, supports_bittorrent_direct, supports_vless_encryption, xray_features) {
+function generate_config_fixture(fixture_path, output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, core_version, supports_trojan, supports_bittorrent_direct, supports_vless_encryption, xray_features) {
     use_fixture_cursor(fixture_path);
     runtime_subscription.set_section_cache_dir(output_path + ".section-cache");
     runtime_ruleset_folder = output_path + ".rulesets";
-    generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, sing_box_version, supports_trojan, supports_bittorrent_direct, supports_vless_encryption, xray_features);
+    generate_config(output_path, service_address, mwan3_active, supports_xhttp, deferred_sections, core_version, supports_trojan, supports_bittorrent_direct, supports_vless_encryption, xray_features);
 }
 
 function stdin_contains(needle) {
@@ -3972,6 +3879,6 @@ else if (mode == "stdin-first-field")
 else if (mode == "service-route-check-section-fixture")
     service_route_check_section_fixture();
 else {
-    warn("Usage: singbox/generator.uc <operation> ...\n");
+    warn("Usage: xrust/generator.uc <operation> ...\n");
     exit(1);
 }

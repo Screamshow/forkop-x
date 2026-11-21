@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repository="${FORKOP_GITHUB_REPOSITORY:-Screamshow/forkop-x}"
+root="${MIRROR_ROOT:-/srv/mirror/public/forkop}"
+exec 9>"${FORKOP_CANARY_LOCK_FILE:-/run/lock/forkop-canary-mirror.lock}"
+flock -n 9 || exit 0
+
+releases="$(curl -fsSL --retry 3 "https://api.github.com/repos/$repository/releases?per_page=30")"
+release="$(jq -c '[.[] | select(.tag_name != "2.2.9-canary.1" and .prerelease == true and (.tag_name | test("^[0-9]+\\.[0-9]+\\.[0-9]+-canary\\.[0-9]+$")))] | first' <<< "$releases")"
+[[ "$release" != null ]] || { echo "No published canary release" >&2; exit 1; }
+version="$(jq -r .tag_name <<< "$release")"
+current="$(jq -r '.tag_name // empty' "$root/updates/canary.json" 2>/dev/null || true)"
+if [[ "$current" =~ ^[0-9]+\.[0-9]+\.[0-9]+-canary\.[0-9]+$ && "$current" != "$version" ]] &&
+   [[ "$(printf '%s\n' "$current" "$version" | sort -V | tail -n 1)" == "$current" ]]; then
+    echo "Keeping Forkop canary $current while GitHub reports $version"
+    exit 0
+fi
+destination="$root/updates/canary/releases/$version"
+staging="$root/updates/canary/.${version}.staging"
+mkdir -p "$staging" "$root/updates/canary/releases"
+
+for package in forkop luci-app-forkop luci-i18n-forkop-ru; do
+    for ext in apk ipk; do
+        name="${package}_${version}.${ext}"
+        row="$(jq -c --arg name "$name" '.assets[] | select(.name == $name)' <<< "$release")"
+        [[ -n "$row" ]] || { echo "Missing canary asset: $name" >&2; exit 1; }
+        url="$(jq -r .browser_download_url <<< "$row")"
+        digest="$(jq -r '.digest // empty' <<< "$row")"
+        [[ "$digest" == sha256:* ]] || { echo "Missing digest: $name" >&2; exit 1; }
+        if [[ ! -s "$staging/$name" ]] ||
+            [[ "$(sha256sum "$staging/$name" | cut -d' ' -f1)" != "${digest#sha256:}" ]]; then
+            curl -fsSL --retry 3 "$url" -o "$staging/$name.new"
+            mv "$staging/$name.new" "$staging/$name"
+        fi
+        [[ "$(sha256sum "$staging/$name" | cut -d' ' -f1)" == "${digest#sha256:}" ]] || exit 1
+    done
+done
+
+major="${version%%.*}"
+if (( 10#$major >= 3 )); then
+    name=forkop-manifest.json
+    row="$(jq -ce --arg name "$name" '.assets[] | select(.name == $name)' <<< "$release")"
+    url="$(jq -er .browser_download_url <<< "$row")"
+    digest="$(jq -er '.digest | select(test("^sha256:[a-f0-9]{64}$"))' <<< "$row")"
+    size="$(jq -er '.size | select(type == "number" and . > 0)' <<< "$row")"
+    curl -fsSL --retry 3 "$url" -o "$staging/$name.new"
+    [[ "$(wc -c < "$staging/$name.new")" -eq "$size" ]]
+    [[ "$(sha256sum "$staging/$name.new" | cut -d' ' -f1)" == "${digest#sha256:}" ]]
+    jq -e '.apk_signed == true' "$staging/$name.new" >/dev/null
+    mv "$staging/$name.new" "$staging/$name"
+    apk_bin="${APK_BIN:-/root/.cache/forkop/openwrt-sdk/extracted/apk/staging_dir/host/bin/apk}"
+    "$apk_bin" --keys-dir "$root" verify "$staging"/*.apk
+    manifest_writer="${FORKOP_CHANNEL_MANIFEST_WRITER:-/usr/local/lib/forkop/write-channel-manifest.sh}"
+    MIRROR_ROOT="$root" bash "$manifest_writer" canary "$version" "$staging" "/forkop/updates/canary/releases/$version" "$staging"
+    mv "$staging/canary.json" "$staging/release.json"
+else
+    jq --arg version "$version" '
+        {channel: "canary", tag_name: $version,
+         html_url: ("/forkop/updates/canary/releases/" + $version + "/"),
+         assets: [.assets[] | select(.name | test("^(forkop|luci-app-forkop|luci-i18n-forkop-ru)_.*\\.(apk|ipk)$"))
+           | {name, browser_download_url: ("/forkop/updates/canary/releases/" + $version + "/" + .name),
+              sha256: (.digest | sub("^sha256:"; ""))}]}
+    ' <<< "$release" > "$staging/release.json.new"
+    mv "$staging/release.json.new" "$staging/release.json"
+fi
+(cd "$staging" && sha256sum ./*.apk ./*.ipk > SHA256SUMS.new)
+mv "$staging/SHA256SUMS.new" "$staging/SHA256SUMS"
+
+if [[ ! -d "$destination" ]]; then
+    mv "$staging" "$destination"
+else
+    # Never move the channel pointer to different metadata for an existing tag.
+    if (( 10#$major >= 3 )); then
+        for file in "$staging"/*; do
+            cmp -s "$file" "$destination/${file##*/}" || {
+                echo "Refusing to replace immutable Forkop $version asset ${file##*/}" >&2
+                exit 1
+            }
+        done
+    fi
+    rm -rf "$staging"
+fi
+if (( 10#$major >= 3 )); then
+    python3 "${FORKOP_RELEASE_CATALOG_WRITER:-/usr/local/lib/forkop/write-release-catalog.py}" "$root/updates"
+fi
+cp "$destination/release.json" "$root/updates/.canary.json.new"
+mv "$root/updates/.canary.json.new" "$root/updates/canary.json"
+echo "Forkop canary $version mirror sync completed"

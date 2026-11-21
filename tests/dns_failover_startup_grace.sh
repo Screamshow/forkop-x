@@ -31,8 +31,8 @@ function apply_selections(state,selections){
 function log_message(m,l){}
 function update_dns_outage(){}
 UC
-sed -n '/^function failover_confirmed(/,/^}/p' "$FORKOP_LIB/singbox/dns_failover.uc"
-sed -n '/^function worker(/,/^}/p' "$FORKOP_LIB/singbox/dns_failover.uc"
+sed -n '/^function failover_confirmed(/,/^}/p' "$FORKOP_LIB/xrust/dns_failover.uc"
+sed -n '/^function worker(/,/^}/p' "$FORKOP_LIB/xrust/dns_failover.uc"
 cat <<'UC'
 try { worker(); } catch(e) { if(!finished) die(e); }
 assert(finished, "worker exited before fixture finished");
@@ -84,7 +84,7 @@ function log_message() {}
 function update_dns_outage() {}
 UC
 sed -n '/^function choose_index(/,/^}/p; /^function failover_confirmed(/,/^}/p; /^function worker(/,/^}/p' \
-    "$FORKOP_LIB/singbox/dns_failover.uc"
+    "$FORKOP_LIB/xrust/dns_failover.uc"
 cat <<'UC'
 function run_worker() {
     finished = false;
@@ -108,7 +108,7 @@ UC
 ucode "$WORK/recovery-timer.uc"
 
 ucode -L "$FORKOP_LIB" -e '
-let dns = require("singbox.dns");
+let dns = require("xrust.dns");
 let applied = dns.state_template({dns_server: ["192.0.2.1", "192.0.2.2"]});
 applied.config_path = "/active/config.json";
 let selection = dns.failover_selection(applied, {...applied, main_index: 1, config_path: "/edited/config.json"});
@@ -128,13 +128,13 @@ cat <<'UC'
 let fs = require("fs");
 let common = require("core.common");
 let uci_core = require("core.uci");
-let runtime_dns = require("singbox.dns");
+let runtime_dns = require("xrust.dns");
 let connections = require("config.connections");
 const CONFIG_NAME = "forkop", STATE_FILE = ARGV[0], SECTION_CACHE_DIR = ARGV[1];
 let cfg = { config_path: "/old/config.json", dns_server: ["192.0.2.1", "192.0.2.2"] };
 function settings() { return cfg; }
 UC
-sed -n '/^function applied_worker_state(/,/^}/p' "$FORKOP_LIB/singbox/dns_failover.uc"
+sed -n '/^function applied_worker_state(/,/^}/p' "$FORKOP_LIB/xrust/dns_failover.uc"
 cat <<'UC'
 let state = applied_worker_state(false);
 assert(state.config_path == "/old/config.json");

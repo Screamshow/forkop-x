@@ -1,4 +1,4 @@
-// ucode -L LIB tests/subscription_pin_compatibility.uc WORK LIB [GO_X] [RUST_X]
+// ucode -L LIB tests/subscription_pin_compatibility.uc WORK LIB [XRUST_BINARY]
 let fs=require("fs"), work=ARGV[0], lib=ARGV[1];
 function expect(ok,why){if(!ok)die(why+"\n");}
 function write(path,value){expect(fs.writefile(path,sprintf("%J",value))!=null,"write fixture");}
@@ -12,31 +12,39 @@ let fixture={settings:{".name":"settings",".type":"settings",dns_server:"1.1.1.1
 write(work+"/fixture.json",fixture);
 for(let suffix in ["url","user_agent","hwid"])
  fs.writefile(work+"/cache/probe-subscription-1."+suffix,suffix=="url"?"https://feed.example/test":suffix=="user_agent"?"Happ":"");
-function generate(version,output){
- let args=["env","TMP_SUBSCRIPTION_FOLDER="+work+"/cache","FORKOP_RUNTIME_STATE_DIR="+work+"/state","TMP_SING_BOX_FOLDER="+work+"/singbox","FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR="+work+"/persistent","FORKOP_LIB="+lib,"ucode","-L",lib,lib+"/singbox/generator.uc","generate-config-fixture",work+"/fixture.json",output,"127.0.0.1","0","1","",version];
+function generate(version,output,features){
+ let args=["env","TMP_SUBSCRIPTION_FOLDER="+work+"/cache","FORKOP_RUNTIME_STATE_DIR="+work+"/state","TMP_SING_BOX_FOLDER="+work+"/singbox","FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR="+work+"/persistent","FORKOP_LIB="+lib,"ucode","-L",lib,lib+"/xrust/generator.uc","generate-config-fixture",work+"/fixture.json",output,"127.0.0.1","0","1","",version,"0","0","0",features||""];
  return system(join(" ",map(args,quote))+" >"+quote(work+"/generation.log")+" 2>&1");
 }
 write(work+"/cache/probe-subscription-1.json",{outbounds:[node,pinned,chained,{type:"selector",tag:"pinned-group",outbounds:["pinned"]}]});
 let cached=fs.readfile(work+"/cache/probe-subscription-1.json");
-for(let profile in [{version:"1.14.2-x-1.0.4",binary:ARGV[2]},{version:"1.14.1-extended-2.7.2"},{version:"1.14.2-rust-x.0.0.22",binary:ARGV[3]}]){
- let output=work+"/generated.json";
- expect(generate(profile.version,output)==0,"mixed subscription failed: "+profile.version+": "+fs.readfile(work+"/generation.log"));
- let config=json(fs.readfile(output));let nodes=filter(config.outbounds,function(o){return o.type=="vless";});
- let rust=index(profile.version,"rust-x")>=0;
- expect(length(nodes)==(rust?3:1),"incompatible nodes or detour not pruned");
- if(!rust)expect(index(fs.readfile(work+"/generation.log"),"pin retained in subscription cache")>=0,"pin warning missing");
- else expect(length(filter(nodes,function(o){return o.tls.certificate_sha256!=null;}))==1,"Rust X pin lost");
- if(profile.binary)expect(run([profile.binary,"check","-c",output])==0,"real core check: "+profile.version);
- expect(fs.readfile(work+"/cache/probe-subscription-1.json")==cached,"capability filter changed cache");
-}
+let output=work+"/generated.json";
+expect(generate("0.0.45",output)==0,"mixed subscription failed: "+fs.readfile(work+"/generation.log"));
+let config=json(fs.readfile(output));
+let nodes=filter(config.outbounds,o=>o.type=="vless");
+expect(length(nodes)==3,"native certificate pin or its dependent node was pruned");
+expect(length(filter(nodes,o=>o.tls.certificate_sha256!=null))==1,"Xrust certificate pin lost");
+if(ARGV[2])expect(run([ARGV[2],"check","-c",output])==0,"native Xrust pin check failed");
+expect(fs.readfile(work+"/cache/probe-subscription-1.json")==cached,"generation changed cache");
+
+pinned.tls.verify_server_name="localhost";
+write(work+"/cache/probe-subscription-1.json",{outbounds:[node,pinned,chained,{type:"selector",tag:"pinned-group",outbounds:["pinned"]}]});
+cached=fs.readfile(work+"/cache/probe-subscription-1.json");
+expect(generate("0.0.45",output)==0,"mixed capability fixture failed");
+expect(length(filter(json(fs.readfile(output)).outbounds,o=>o.type=="vless"))==1,"incompatible pin/name node or its detour was kept");
+expect(generate("0.0.45",output,"tls.verify-name")==0,"advertised verification capability rejected");
+nodes=filter(json(fs.readfile(output)).outbounds,o=>o.type=="vless");
+expect(length(nodes)==3&&length(filter(nodes,o=>o.tls.verify_server_name=="localhost"))==1,"advertised pin/name verification lost");
+expect(fs.readfile(work+"/cache/probe-subscription-1.json")==cached,"capability filter changed cache");
+
 write(work+"/cache/probe-subscription-1.json",{outbounds:[pinned]});
 fs.writefile(work+"/kept.json","LAST_KNOWN_GOOD\n");
-expect(generate("1.14.2-x-1.0.4",work+"/kept.json")!=0,"all-pinned subscription must fail closed");
+expect(generate("0.0.45",work+"/kept.json")!=0,"all-incompatible subscription must fail closed");
 expect(fs.readfile(work+"/kept.json")=="LAST_KNOWN_GOOD\n","failed generation replaced live config");
 delete fixture.section[0].subscription_urls;
-fixture.section[0].selector_proxy_links=["vless://00000000-0000-4000-8000-000000000001@127.0.0.1:443?security=tls&pcs=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"];
+fixture.section[0].selector_proxy_links=["vless://00000000-0000-4000-8000-000000000001@127.0.0.1:443?security=tls&pcs=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef&vcn=localhost"];
 write(work+"/fixture.json",fixture);
-expect(generate("1.14.2-x-1.0.4",work+"/kept.json")!=0,"manual pinned link accepted on incompatible core");
-expect(index(fs.readfile(work+"/generation.log"),"requires TLS certificate SHA-256 pinning")>=0,"manual pin capability error missing");
+expect(generate("0.0.45",work+"/kept.json")!=0,"manual verification name accepted without feature");
+expect(index(fs.readfile(work+"/generation.log"),"requires separate TLS certificate name verification")>=0,"manual verification capability error missing");
 expect(fs.readfile(work+"/kept.json")=="LAST_KNOWN_GOOD\n","manual failure replaced config");
-print("Pin compatibility: Go X/Extended filter, dependent routes, Rust X retention, unchanged cache, explicit manual failure and last-known-good config passed\n");
+print("Xrust pin compatibility: native pins, capability filtering, detours, unchanged cache and last-known-good config passed\n");

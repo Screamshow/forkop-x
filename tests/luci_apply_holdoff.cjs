@@ -16,6 +16,7 @@ assert.ok(confirm.length > 100, 'VM native LuCI confirm found');
     apply(...args) { calls.push(args); },
   };
   const context = vm.createContext({
+    document: { addEventListener() {}, dispatchEvent() {} },
     ui: { changes }, uci: { changes: () => failure ? Promise.reject(Error('RPC')) : Promise.resolve(pending) },
     main: { FORKOP_UCI_PACKAGE: 'forkop' }, L: { env },
     UI: { prototype: { changes } }, E() {}, _: value => ({format() { return value; }}),

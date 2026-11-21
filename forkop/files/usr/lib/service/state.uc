@@ -1,6 +1,7 @@
 #!/usr/bin/env ucode
 
 let fs = require("fs");
+let xrust = require("xrust.binary");
 let common = require("core.common");
 let locks = require("core.locks");
 let uci_core = require("core.uci");
@@ -9,12 +10,12 @@ let runtime_health = require("core.runtime_health");
 let core_ip = require("core.ip");
 let rule_config = require("config.rule");
 let connections = require("config.connections");
-let provider_dns = require("singbox.provider_dns");
+let provider_dns = require("xrust.provider_dns");
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
 const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
 const DEFAULT_PENDING_RELOAD_FILE = getenv("FORKOP_PENDING_RELOAD_FILE") || "/var/run/forkop/reload.pending";
 const DEFAULT_SERVICE_INIT = getenv("FORKOP_SERVICE_INIT") || "/etc/init.d/forkop";
-const SING_BOX_INIT = getenv("FORKOP_SING_BOX_INIT") || "/etc/init.d/sing-box";
+const XRUST_INIT = getenv("FORKOP_SING_BOX_INIT") || xrust.INIT;
 const SB_DNS_INBOUND_ADDRESS = getenv("SB_DNS_INBOUND_ADDRESS") || "127.0.0.42";
 const SB_TPROXY_INBOUND_PORT = getenv("SB_TPROXY_INBOUND_PORT") || "1602";
 const SB_TPROXY_INBOUND6_ADDRESS = getenv("SB_TPROXY_INBOUND6_ADDRESS") || "::1";
@@ -340,7 +341,7 @@ function stdin_first_field() {
 }
 
 function sing_box_service_pid_from_value(value) {
-    let service = type(value) == "object" ? value["sing-box"] : null;
+    let service = type(value) == "object" ? value[xrust.SERVICE_NAME] : null;
     let instances = service && type(service.instances) == "object" ? service.instances : {};
 
     for (let _, instance in instances) {
@@ -352,7 +353,7 @@ function sing_box_service_pid_from_value(value) {
 }
 
 function sing_box_service_pid_runtime() {
-    let data = command_output_from_args([ "ubus", "call", "service", "list", "{\"name\":\"sing-box\"}" ]);
+    let data = command_output_from_args([ "ubus", "call", "service", "list", sprintf("%J", { name: xrust.SERVICE_NAME }) ]);
     try {
         return sing_box_service_pid_from_value(json(data));
     }
@@ -361,41 +362,25 @@ function sing_box_service_pid_runtime() {
     }
 }
 
-function path_basename(path) {
-    path = as_string(path);
-    let slash = rindex(path, "/");
-    return slash >= 0 ? substr(path, slash + 1) : path;
-}
-
 function sing_box_exe_path(path) {
-    let basename = path_basename(path);
-    return basename == "sing-box" || basename == "sing-box (deleted)";
+    return xrust.exe_kind(path) != "other";
 }
 
 function sing_box_exe_kind(path) {
-    let basename = path_basename(path);
-    if (basename == "sing-box")
-        return "current";
-    return basename == "sing-box (deleted)" ? "deleted" : "other";
+    return xrust.exe_kind(path);
 }
 
 function pid_is_sing_box(pid) {
     pid = as_string(pid);
     if (match(pid, /^[0-9]+$/) == null)
         return false;
-    let args = split(fs.readfile("/proc/" + pid + "/cmdline") || "", chr(0));
-    if (args[1] == "tailscale-luci")
-        return false;
-
-    return sing_box_exe_path(as_string(fs.readlink("/proc/" + pid + "/exe")));
+    let proc = "/proc/" + pid;
+    return sing_box_exe_path(fs.readlink(proc + "/exe")) &&
+        xrust.is_proxy_cmdline(fs.readfile(proc + "/cmdline"));
 }
 
 function pid_has_current_sing_box_exe(pid) {
     return sing_box_exe_kind(as_string(fs.readlink("/proc/" + pid + "/exe"))) == "current";
-}
-
-function pid_has_deleted_sing_box_exe(pid) {
-    return sing_box_exe_kind(as_string(fs.readlink("/proc/" + pid + "/exe"))) == "deleted";
 }
 
 function hup_sing_box_runtime() {
@@ -513,10 +498,16 @@ function sing_box_single_owned_service_runtime() {
     return sing_box_runtime_provenance() != null;
 }
 
-function sing_box_current_owned_service_runtime() {
+function sing_box_owned_service_kind() {
     let provenance = sing_box_runtime_provenance();
-    return provenance != null && pid_has_current_sing_box_exe(provenance.pid) &&
-        process_start_ticks_for_pid(provenance.pid) == provenance.start_ticks;
+    if (provenance == null)
+        return "other";
+    let kind = sing_box_exe_kind(fs.readlink("/proc/" + provenance.pid + "/exe"));
+    return process_start_ticks_for_pid(provenance.pid) == provenance.start_ticks ? kind : "other";
+}
+
+function sing_box_current_owned_service_runtime() {
+    return sing_box_owned_service_kind() == "current";
 }
 
 // Readiness requires every configured TCP/UDP socket to belong to the same
@@ -570,12 +561,6 @@ function wait_managed_sing_box_config_listeners(config_path, timeout) {
     return false;
 }
 
-function sing_box_deleted_owned_service_runtime() {
-    let provenance = sing_box_runtime_provenance();
-    return provenance != null && pid_has_deleted_sing_box_exe(provenance.pid) &&
-        process_start_ticks_for_pid(provenance.pid) == provenance.start_ticks;
-}
-
 function sing_box_process_conflict() {
     // Version, config validation and rule-set commands briefly use the same
     // executable as the service. A single overlapping observation must not
@@ -598,7 +583,7 @@ function log_controlled_transition_failure(reason, provenance) {
     let observed_pid = sing_box_service_pid_runtime();
     let process_count = sing_box_process_count();
     command_success_from_args([
-        "logger", "-t", "forkop", "[fatal] Controlled sing-box transition refused: " + as_string(reason) +
+        "logger", "-t", "forkop", "[fatal] Controlled Xrust transition refused: " + as_string(reason) +
         " (expected_pid=" + as_string(expected_pid) +
         ", expected_start_ticks=" + as_string(expected_ticks) +
         ", observed_procd_pid=" + as_string(observed_pid) +
@@ -687,7 +672,7 @@ function stop_managed_sing_box_and_wait(timeout) {
         return false;
     }
 
-    if (!command_success_from_args([ SING_BOX_INIT, "stop" ])) {
+    if (!command_success_from_args([ XRUST_INIT, "stop" ])) {
         log_controlled_transition_failure("sing-box stop command failed", provenance);
         return false;
     }
@@ -743,7 +728,7 @@ function stop_all_sing_box_and_wait(timeout) {
         return true;
     // Remove procd's respawn authority first. Calling the nested init script
     // here can deadlock against rc.common's service lock during Forkop Stop.
-    if (!command_success_from_args([ "ubus", "call", "service", "delete", "{\"name\":\"sing-box\"}" ]))
+    if (!command_success_from_args([ "ubus", "call", "service", "delete", sprintf("%J", { name: xrust.SERVICE_NAME }) ]))
         return sing_box_process_count() == 0 && sing_box_service_pid_runtime() <= 0;
 
     for (let remaining = timeout; remaining >= 0; remaining--) {
@@ -775,13 +760,13 @@ function start_managed_sing_box_and_verify(timeout) {
             return false;
     }
     else if (process_count != 0) {
-        log_controlled_transition_failure("unexpected sing-box exists before start", null);
+        log_controlled_transition_failure("unexpected Xrust exists before start", null);
         return false;
     }
 
     // A Forkop start invoked by procd can inherit fd 1000. Detach the nested
     // sing-box service command from that lock, then verify its actual state.
-    if (!command_start_without_procd_lock([ SING_BOX_INIT, "start" ])) {
+    if (!command_start_without_procd_lock([ XRUST_INIT, "start" ])) {
         log_controlled_transition_failure("sing-box start command failed", null);
         return false;
     }
@@ -1302,8 +1287,6 @@ function subscription_urls_signature(section) {
     for (let entry in connections.subscription_urls(section)) {
         push(result, {
             url: entry,
-            subscription_update_enabled: connections.subscription_update_enabled(section, entry) ? "1" : "0",
-            subscription_update_interval: connections.subscription_update_interval(section, entry),
             download_via_proxy_section: connections.subscription_download_section(section, entry),
             auto_user_agent: connections.subscription_auto_user_agent(section, entry) ? "1" : "0",
             user_agent: connections.subscription_user_agent(section, entry),
@@ -1611,7 +1594,6 @@ function append_sing_box_rule_signature_body(body, section, sections) {
         body = signature_add_value(body, prefix + ".urltest_exclude_regex", option(section, "urltest_exclude_regex", ""));
         body = signature_add_value(body, prefix + ".urltest_include_outbounds", option(section, "urltest_include_outbounds", ""));
         body = signature_add_value(body, prefix + ".urltest_include_regex", option(section, "urltest_include_regex", ""));
-        body = signature_add_value(body, prefix + ".subscription_update_interval", section_subscription_update_interval(section));
         body = signature_add_outbound_detour_body(body, section, prefix);
         body = signature_add_mixed_proxy_body(body, section, prefix);
         body = signature_add_value(body, prefix + ".resolve_real_ip_for_routing", bool_option_value(section, "resolve_real_ip_for_routing", false));
@@ -1678,7 +1660,7 @@ function sing_box_signature_body(settings, sections, mwan3_active) {
     body = signature_add_value(body, "settings.whatsapp_real_dns", bool_option_value(settings, "whatsapp_real_dns", false));
     if (sing_box_signature_has_remote_ruleset_sources(sections))
         body = signature_add_value(body, "settings.update_interval", settings_update_interval(settings));
-    body = signature_add_value(body, "settings.cache_path", option(settings, "cache_path", "/tmp/sing-box/cache.db"));
+    body = signature_add_value(body, "settings.cache_path", option(settings, "cache_path", "/tmp/xrust/cache.db"));
     body = signature_add_value(body, "settings.config_path", option(settings, "config_path", ""));
     body = signature_add_value(body, "settings.log_level", option(settings, "log_level", "warn"));
     body = signature_add_value(body, "settings.service_listen_address", option(settings, "service_listen_address", ""));
@@ -1979,6 +1961,8 @@ else if (mode == "sing-box-single-owned-service-runtime")
     exit(sing_box_single_owned_service_runtime() ? 0 : 1);
 else if (mode == "sing-box-current-owned-service-runtime")
     exit(sing_box_current_owned_service_runtime() ? 0 : 1);
+else if (mode == "sing-box-owned-service-kind")
+    print(sing_box_owned_service_kind(), "\n");
 else if (mode == "sing-box-runtime-provenance") {
     let provenance = sing_box_runtime_provenance();
     if (provenance == null || !pid_has_current_sing_box_exe(provenance.pid))
@@ -1988,7 +1972,7 @@ else if (mode == "sing-box-runtime-provenance") {
 else if (mode == "wait-managed-sing-box-config-listeners")
     exit(wait_managed_sing_box_config_listeners(ARGV[1], ARGV[2]) ? 0 : 1);
 else if (mode == "sing-box-deleted-owned-service-runtime")
-    exit(sing_box_deleted_owned_service_runtime() ? 0 : 1);
+    exit(sing_box_owned_service_kind() == "deleted" ? 0 : 1);
 else if (mode == "sing-box-process-conflict")
     exit(sing_box_process_conflict() ? 0 : 1);
 else if (mode == "sing-box-exe-path-fixture")

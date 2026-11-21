@@ -1,9 +1,31 @@
 // Draft-only subscription catalogue. Never commits UCI or applies a runtime.
 let fs = require('fs');
+let xrust = require('xrust.binary');
 let common = require('core.common');
 let root = getenv('FORKOP_EDITOR_STATE_DIR') || '/var/run/forkop/ui-state';
 let lib = getenv('FORKOP_LIB') || '/usr/lib/forkop';
 let id = ARGV[1] || '';
+if (ARGV[0] == 'removed-sources') {
+    if (!match(id, /^[a-zA-Z0-9_-]+$/)) exit(1);
+    let removed;
+    try { removed = json(ARGV[2] || ''); } catch (e) { exit(1); }
+    if (type(removed) != 'array') exit(1);
+    let removed_ids = {};
+    for (let item in removed) {
+        if (type(item) != 'string' || !match(item, /^[a-zA-Z0-9_-]+$/)) exit(1);
+        removed_ids[item] = true;
+    }
+    // This UCI cursor sees the committed package, outside LuCI's session delta.
+    let uci = require('core.uci');
+    let affected = false;
+    for (let source in uci.section_objects('forkop', 'subscription_url'))
+        if (source.section == id && removed_ids[source['.name']]) {
+            affected = true;
+            break;
+        }
+    print(sprintf('%J\n', { affected }));
+    exit(0);
+}
 if (ARGV[0] != 'preview' || !match(id, /^editor-[a-z0-9-]{8,80}$/)) exit(1);
 let request = root + '/' + id + '.json';
 let raw = fs.readfile(request);
@@ -49,9 +71,18 @@ if (length(sources) == 0) { cleanup(); print('{"names":{},"countries":{}}\n'); e
 write(dir+'/fixture.json',fixture);
 // Generator owns protocol compatibility, group visibility, aliases and deduplication.
 let cmd = 'TMP_SUBSCRIPTION_FOLDER=' + q(dir) + ' ';
-cmd += 'ucode -L '+q(lib)+' '+q(lib+'/singbox/generator.uc')+' generate-config-fixture ';
-let version = trim(fs.readfile(getenv('SB_VERSION_STATE_FILE') || '/etc/forkop/sing-box-version') || '');
-cmd += q(dir+'/fixture.json')+' '+q(dir+'/candidate.json')+' 127.0.0.1 0 1 '+q('')+' '+q(version)+' 1 1 1';
+cmd += 'ucode -L '+q(lib)+' '+q(lib+'/xrust/generator.uc')+' generate-config-fixture ';
+let pipe = fs.popen(q(xrust.PATH) + ' version 2>/dev/null', 'r');
+let version_output = pipe ? pipe.read('all') : '';
+if (pipe)
+    pipe.close();
+let version = xrust.version_from_output(version_output);
+let flags = map([ 'transport.xhttp', 'outbound.trojan', 'sniff.bittorrent-extended', 'outbound.vless.encryption' ],
+    feature => xrust.has_feature(version_output, feature) ? '1' : '0');
+let features = filter([ 'transport.xhttp.split', 'transport.grpc.multi', 'tls.xray-pins', 'tls.verify-name' ],
+    feature => xrust.has_feature(version_output, feature));
+cmd += join(' ', map([ dir+'/fixture.json', dir+'/candidate.json', '127.0.0.1', '0',
+    flags[0], '', version, flags[1], flags[2], flags[3], join(',', features) ], q));
 if (system(cmd+' >'+q(dir+'/generate.log')+' 2>&1') != 0) fail('Cannot build subscription catalogue');
 let state = json(fs.readfile(dir+'/candidate.json.section-cache/editor.json') || '{}');
 let metadata = state.outboundMetadata || {};

@@ -14,7 +14,7 @@ printf '%s\n' '{"interface":[]}' > "$TEST_PROVIDER_INTERFACES"
 printf '%s\n' '{"settings":{"dns_use_provider":"1","config_path":"/tmp/sing-box/config.json"},"section":[{".name":"direct","enabled":"1","action":"bypass","domain_suffix":["example.org"]}]}' > "$WORK/fixture.json"
 LIB="$ROOT/forkop/files/usr/lib"
 generate() {
-    ucode -L "$LIB" "$LIB/singbox/generator.uc" generate-config-fixture \
+    ucode -L "$LIB" "$LIB/xrust/generator.uc" generate-config-fixture \
         "$WORK/fixture.json" "$WORK/generated.json" 127.0.0.1 0 1 "" 1.14.2
 }
 status=0
@@ -30,7 +30,7 @@ grep -Fq '192.0.2.53' "$WORK/generated.json"
 cat <<'UC'
 let permanent_start_failure=false,startup_config_fingerprint='';
 let config_status=75, cleared=0;
-let runtime_constants=require('singbox.constants');
+let runtime_constants=require('xrust.constants');
 const NFT_UC='nft',STATE_UC='state',SUBSCRIPTION_CACHE_UC='cache',UPDATES_UC='updates',SINGBOX_UC='runtime';
 function log_message(){}
 function validate_start_config(){return 0;}

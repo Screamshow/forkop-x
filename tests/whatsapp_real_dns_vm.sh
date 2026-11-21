@@ -56,7 +56,7 @@ version=$($CORE version | head -1 | awk '{print $3}')
 for mode in on off custom; do
     mkdir -p "$WORK/$mode.config.rulesets"
     cp "$WORK/meta.json" "$WORK/$mode.config.rulesets/vpn-community-subnets-lists-ruleset.json"
-    ucode -L "$LIB" "$LIB/singbox/generator.uc" generate-config-fixture \
+    ucode -L "$LIB" "$LIB/xrust/generator.uc" generate-config-fixture \
         "$WORK/$mode.json" "$WORK/$mode.config" 127.0.0.1 0 1 '' "$version"
 done
 # Avoid remote rule-set downloads and persistent caches in this deterministic test.
@@ -87,7 +87,7 @@ for fixture in missing-meta filtered-meta; do
     grep -q 'WhatsApp real DNS requires' "$WORK/$fixture.log"
     echo "PASS $fixture rejected"
 done
-if ucode -L "$LIB" "$LIB/singbox/generator.uc" generate-config-fixture "$WORK/on.json" "$WORK/no-subnets.config" 127.0.0.1 0 1 '' "$version" >"$WORK/no-subnets.log" 2>&1; then
+if ucode -L "$LIB" "$LIB/xrust/generator.uc" generate-config-fixture "$WORK/on.json" "$WORK/no-subnets.config" 127.0.0.1 0 1 '' "$version" >"$WORK/no-subnets.log" 2>&1; then
     echo 'FAIL: missing subnet cache accepted'; exit 1
 fi
 grep -q 'WhatsApp real DNS requires downloaded Meta' "$WORK/no-subnets.log"

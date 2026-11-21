@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FORKOP_LIB="$ROOT_DIR/forkop/files/usr/lib"
-GENERATOR="$FORKOP_LIB/singbox/generator.uc"
+GENERATOR="$FORKOP_LIB/xrust/generator.uc"
 WORK_DIR="$(mktemp -d)"
 
 cleanup() {
@@ -185,5 +185,60 @@ if ucode -L "$FORKOP_LIB" "$GENERATOR" generate-config-fixture \
 fi
 grep -Fq "remote subnets ruleset for 'vpn' is missing or invalid" "$WORK_DIR/missing-materialized.stderr" ||
   fail "missing materialized remote subnet ruleset must report a safe reason"
+
+cat >"$WORK_DIR/local-matchers.uc" <<'UCODE'
+let fs = require("fs");
+let rulesets = require("routing.rulesets");
+let path = ARGV[0];
+fs.writefile(path, "not JSON");
+assert(rulesets.source_matchers(path) == null, "skip malformed local lists");
+fs.writefile(path, sprintf("%J", {version: 3, rules: [{domain_suffix: ["local.fixture.test"]}]}));
+let domains = rulesets.source_matchers(path);
+assert(domains.domains && !domains.addresses, "domain-only lists match DNS queries");
+fs.writefile(path, sprintf("%J", {version: 3, rules: [{domain_suffix: ["local.fixture.test"]}, {ip_cidr: ["192.0.2.0/24"]}]}));
+let mixed = rulesets.source_matchers(path);
+assert(mixed.addresses && !mixed.domains, "mixed lists match DNS responses");
+UCODE
+ucode -L "$FORKOP_LIB" "$WORK_DIR/local-matchers.uc" "$WORK_DIR/local-ruleset.json" ||
+  fail "local ruleset matcher classification changed"
+
+printf 'local.fixture.test\r\n192.0.2.0/24\n2001:db8:149::/48\n' >"$WORK_DIR/local-list.txt"
+cat >"$WORK_DIR/combined.json" <<JSON
+{
+  "settings": { ".name": "settings", ".type": "settings", "dns_server": "1.1.1.1" },
+  "section": [
+    { ".name": "combined", ".type": "section", "enabled": "1", "action": "bypass",
+      "domain_ip_lists": [ "$WORK_DIR/local-list.txt", "https://fixture.test/combined.txt" ] },
+    { ".name": "local_only", ".type": "section", "enabled": "1", "action": "bypass",
+      "domain_ip_lists": [ "$WORK_DIR/local-list.txt" ] }
+  ]
+}
+JSON
+
+COMBINED_OUTPUT="$WORK_DIR/combined.generated.json"
+mkdir -p "$COMBINED_OUTPUT.rulesets"
+cat >"$WORK_DIR/materialized.json" <<'JSON'
+{"version":3,"rules":[{"domain_suffix":["local.fixture.test","remote.fixture.test"]},{"ip_cidr":["192.0.2.0/24","198.51.100.0/24"]}]}
+JSON
+cp "$WORK_DIR/materialized.json" "$COMBINED_OUTPUT.rulesets/combined-lists-ruleset.json"
+generate "$WORK_DIR/combined.json" "$COMBINED_OUTPUT"
+cmp "$WORK_DIR/materialized.json" "$COMBINED_OUTPUT.rulesets/combined-lists-ruleset.json" ||
+  fail "generator overwrote the updater's mixed local/remote materialization"
+ucode -e '
+let fs = require("fs");
+let config = json(fs.readfile(ARGV[0]));
+assert(length(filter(config.route.rule_set, item => item.tag == "combined-lists-ruleset")) == 1,
+    "the complete mixed ruleset must participate in routing");
+let local = json(fs.readfile(ARGV[0] + ".rulesets/local_only-lists-ruleset.json"));
+assert(local.rules[0].domain_suffix[0] == "local.fixture.test", "local CRLF domain missing");
+assert(length(local.rules[1].ip_cidr) == 2, "local IPv4 and IPv6 networks missing");
+' "$COMBINED_OUTPUT"
+
+ABSENT_OUTPUT="$WORK_DIR/absent.generated.json"
+generate "$WORK_DIR/combined.json" "$ABSENT_OUTPUT"
+[ ! -e "$ABSENT_OUTPUT.rulesets/combined-lists-ruleset.json" ] ||
+  fail "generator published incomplete mixed list without an updater generation"
+[ -s "$ABSENT_OUTPUT.rulesets/local_only-lists-ruleset.json" ] ||
+  fail "missing mixed generation suppressed an independent local list"
 
 printf 'Remote list routing checks passed\n'

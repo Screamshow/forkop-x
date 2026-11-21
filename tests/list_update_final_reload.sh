@@ -100,6 +100,7 @@ pending_reason="$(FORKOP_LIST_UPDATE_RELOAD_FILE="$WORK_DIR/list-update.reload" 
 mkdir "$WORK_DIR/held-reload.lock"
 printf '%s\n' "$$" >"$WORK_DIR/held-reload.lock/pid"
 initd_queue_output="$(
+  FORKOP_LIB="$FORKOP_LIB" \
   FORKOP_RUNTIME_STATE_DIR="$WORK_DIR/initd-runtime" \
   FORKOP_PENDING_RELOAD_FILE="$WORK_DIR/initd-reload.pending" \
   FORKOP_RELOAD_LOCK_DIR="$WORK_DIR/held-reload.lock" \

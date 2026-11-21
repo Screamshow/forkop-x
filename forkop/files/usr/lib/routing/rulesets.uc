@@ -154,11 +154,7 @@ function write_optional_lines(path, lines) {
         exit(1);
 }
 
-function import_plain_list(plain_path, ruleset_path, key, kind, chunk_size_text, invalid_path, counts_path) {
-    let data = fs.readfile(plain_path);
-    if (data == null)
-        exit(1);
-
+function import_plain_list_content(data, ruleset_path, key, kind, chunk_size_text, invalid_path, counts_path) {
     let chunk_size = int(chunk_size_text || 5000);
     if (chunk_size < 1)
         chunk_size = 5000;
@@ -195,6 +191,14 @@ function import_plain_list(plain_path, ruleset_path, key, kind, chunk_size_text,
 
     write_optional_lines(invalid_path, invalid);
     write_optional_lines(counts_path, counts);
+}
+
+function import_plain_list(plain_path, ruleset_path, key, kind, chunk_size_text, invalid_path, counts_path) {
+    let data = fs.readfile(plain_path);
+    if (data == null)
+        exit(1);
+
+    import_plain_list_content(data, ruleset_path, key, kind, chunk_size_text, invalid_path, counts_path);
 }
 
 function extract_ip_cidr(json_path, output_path) {
@@ -582,8 +586,12 @@ function value_has_ip_matchers(value) {
     return false;
 }
 
-function has_ip_matchers(path) {
-    return value_has_ip_matchers(read_json_file(path));
+function source_matchers(path) {
+    let ruleset = object_or_empty(read_json_file(path));
+    if (length(array_or_empty(ruleset.rules)) == 0)
+        return null;
+    let addresses = value_has_ip_matchers(ruleset);
+    return { addresses, domains: !addresses && value_has_domain_matchers(ruleset) };
 }
 
 function has_rules(path) {
@@ -597,11 +605,12 @@ function module_exports() {
         patch_source,
         patch_source_values,
         import_plain_list,
+        import_plain_list_content,
         extract_ip_cidr,
         extract_ip_cidr_nft_elements,
         extract_ip_cidr_nft_protocol_elements,
         has_domain_matchers,
-        has_ip_matchers,
+        source_matchers,
         has_rules,
         ruleset_tag,
         read_json_file,

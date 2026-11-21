@@ -49,12 +49,15 @@ let subscription_outbounds_changed=false;
 let subscription_failure_detail=null;
 function subscription_apply_failure(reason,state){subscription_failure_detail={reason,state};return false;}
 function subscription_hot_transition(p){return {handled:false};}
-let PRIORITY_UC="priority", DNS_FAILOVER_UC="dns", LIB_DIR="lib";
+let PRIORITY_UC="priority", DNS_FAILOVER_UC="dns", LIB_DIR="lib", SECTION_CACHE_DIR="section-cache";
+const CONFIG_NAME="forkop", xrust={APPLIED_CONFIG_PATH_FILE:"pointer"};
+let uci_core={reload:()=>true};
 let fail_ready, fail_start, fail_init, fail_recovery, fail_snapshot, calls, config, readiness_calls;
 function trim(v) {return replace(v,/^[ \t\r\n]+|[ \t\r\n]+$/g,"");}
 function as_string(v){return v==null?"":""+v;}
 function option(s,k,f){return s[k]||f;}
 function uci_settings(){return {config_path:"config"};}
+function file_first_line_value(path){assert(path=="pointer");return "config";}
 function current_proxy_outbounds_signature(p){return "unchanged";}
 function subscription_prepare_cache_request(a,b,c){return {ok:true,updated:1,failed:0};}
 function subscription_runtime_change_check(p){return {ok:true,changed:true};}
@@ -66,7 +69,7 @@ function command_success_from_args(args){push(calls,join(" ",args));return true;
 let fs={readfile:function(p){return config;},chmod:function(p,m){return true;},stat:function(p){return {};}};
 let common={write_private_file:function(p,v){return length(v);}};
 function module_success(args){push(calls,join(" ",args));return !(args[1]=="save-selector-state" && fail_snapshot);}
-function singbox_runtime_success(args){
+function xrust_runtime_success(args){
  push(calls,join(" ",args));
  if(args[0]=="restore-config-stage"){config="old"; return true;}
  if(args[0]=="init-config"){config="new";return !fail_init;}
@@ -99,7 +102,8 @@ function run(ready,start,init,recovery,want) {
    if(config!="new" || readiness_calls!=1 || index(text,"restore-config-stage")>=0)die("success transition\n");
    if(index(text,"wait-managed-sing-box-config-listeners")>index(text,"priority start-runtime"))die("helpers started before ready\n");
  }else{
-   if(config!="old" || index(text,"restore-config-stage backup-dir/previous.json.restore")<0)die("old runtime not restored\n");
+   if(config!="old" || index(text,"restore-config-stage backup-dir/previous.json config")<0 ||
+       index(text,"publish-section-cache backup-dir/previous.json")<0)die("old runtime or section cache not restored\n");
    if(recovery){
      if(index(text,"rm -rf backup-dir")>=0 || index(text,"priority start-runtime")>=0)die("failed recovery backup/helpers\n");
    }else if(index(text,"priority start-runtime")<0 || index(text,"dns start-runtime")<0)die("recovered workers missing\n");

@@ -143,6 +143,10 @@ function set_item_sections_from_data(data) {
     set_item_sections(item_index_from_data(data));
 }
 
+function reload_item_sections() {
+    item_sections = null;
+}
+
 function get_item_sections() {
     if (item_sections == null)
         item_sections = item_index_from_uci();
@@ -632,15 +636,8 @@ function subscription_node_prefix(section, value) {
     return trim(as_string(prefix));
 }
 
-function subscription_user_agent(section, value) {
-    if (subscription_auto_user_agent(section, value))
-        return "";
-
-    let child = child_item_by_value(section, "subscription_url", "url", value);
-    let configured = child != null
-        ? child_option(child, "user_agent", "")
-        : item_option(section, "subscription_url_settings", value, "user_agent", "");
-    return configured != "" ? configured : "sing-box";
+function subscription_user_agent() {
+    return "";
 }
 
 function subscription_hwid(section, value) {
@@ -1029,6 +1026,7 @@ return {
     set_item_sections,
     set_item_sections_from_cursor,
     set_item_sections_from_data,
+    reload_item_sections,
     settings_map,
     item_settings,
     item_option,
