@@ -37,20 +37,22 @@ function configureForkopApplyHoldoff() {
   const originalApply = changes.apply;
   const originalConfirm = changes.confirm;
   let forkopOnly = false;
-  let includesForkop = false;
   let confirmingForkop = false;
 
   document.addEventListener("uci-applied", () => {
     if (!confirmingForkop) return;
     confirmingForkop = false;
 
-    // LuCI shows a UCI-only success notice immediately after this event.
-    // Dismiss the progress modal through LuCI so it also resumes polling.
+    // Keep LuCI's confirmation visible until its native page refresh.
     const displayStatus = changes.displayStatus;
     const displayCommitted = function (status, content) {
       if (status !== "notice") return displayStatus.call(this, status, content);
       changes.displayStatus = displayStatus;
-      return displayStatus.call(this, null);
+      return displayStatus.call(
+        this,
+        status,
+        E("p", {}, _("Settings saved. Refreshing the page…")),
+      );
     };
     changes.displayStatus = displayCommitted;
     Promise.resolve().then(() => {
@@ -62,20 +64,17 @@ function configureForkopApplyHoldoff() {
     const context = this;
     const args = arguments;
     forkopOnly = false;
-    includesForkop = false;
     confirmingForkop = false;
     return uci
       .changes()
       .catch(() => null)
       .then((pending) => {
         const packages = Object.keys(pending || {});
-        includesForkop =
-          Array.isArray(pending?.[main.FORKOP_UCI_PACKAGE]) &&
-          pending[main.FORKOP_UCI_PACKAGE].length > 0;
         forkopOnly =
           packages.every((name) => Array.isArray(pending[name])) &&
           packages.filter((name) => pending[name].length > 0).length === 1 &&
-          includesForkop;
+          Array.isArray(pending?.[main.FORKOP_UCI_PACKAGE]) &&
+          pending[main.FORKOP_UCI_PACKAGE].length > 0;
         return originalApply.apply(context, args);
       });
   };
@@ -83,8 +82,7 @@ function configureForkopApplyHoldoff() {
   changes.confirm = function () {
     const skipHoldoff = forkopOnly;
     forkopOnly = false;
-    confirmingForkop = includesForkop;
-    includesForkop = false;
+    confirmingForkop = skipHoldoff;
     const holdoff = L.env.apply_holdoff;
     try {
       // Native confirm schedules its first request synchronously. Restore the
@@ -225,6 +223,7 @@ const EntryPoint = {
     const updateUiCapabilities = function (data) {
       uiCapabilities.loaded = true;
       uiCapabilities.xrustTailscale = Number(data?.xrust_tailscale) === 1;
+      setBitTorrentDirectSupported(data?.xrust_bittorrent_direct === 1);
       applyUiCapabilities();
 
       return uiCapabilities;
@@ -324,7 +323,8 @@ const EntryPoint = {
     settingsSection.cfgsections = function () {
       return ["settings"];
     };
-    settings.createSettingsContent(settingsSection);
+    const setBitTorrentDirectSupported =
+      settings.createSettingsContent(settingsSection);
 
     const diagnosticSection = forkopMap.section(
       form.TypedSection,
@@ -385,8 +385,7 @@ const EntryPoint = {
     tailscale.createTailscaleContent(tailscaleSection);
 
     const rendered = await forkopMap.render();
-    // Capability probes must not hold LuCI's entire view behind Loading view.
-    // Start after rendering; rule editors share this request when opened.
+    // Render the page before checking the core's capabilities.
     window.setTimeout(() => {
       void loadUiCapabilities().catch(() => null);
     }, 0);

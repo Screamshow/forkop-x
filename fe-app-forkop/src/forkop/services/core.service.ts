@@ -144,7 +144,7 @@ export function coreService(options: CoreServiceOptions = {}) {
       if (configError) {
         ui.addNotification(
           _('Forkop settings were not applied'),
-          E('div', {}, configError),
+          E('div', {}, getLogErrorMessage(configError) ?? configError),
           'error',
           'fkp-config-apply-error',
         );

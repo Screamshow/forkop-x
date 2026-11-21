@@ -2209,3 +2209,21 @@ msgstr "Выходной узел недоступен."
 
 msgid "Forkop settings were not applied"
 msgstr "Настройки Forkop не применены"
+
+msgid "Route detected BitTorrent directly"
+msgstr "Направлять BitTorrent напрямую"
+
+msgid "Incompatible subscription nodes were skipped"
+msgstr "Несовместимые узлы подписки пропущены"
+
+msgid "Required connection is unavailable"
+msgstr "Необходимое подключение недоступно"
+
+msgid "Rejected by the selected core"
+msgstr "Отклонён выбранным ядром"
+
+msgid "Settings saved. Refreshing the page…"
+msgstr "Настройки сохранены. Страница обновляется…"
+
+msgid "The generated Xrust configuration is invalid. Previous configuration recovery was requested. Correct the settings and apply them again; see the system log for details."
+msgstr "Конфигурация Xrust отклонена. Forkop запросил восстановление предыдущей конфигурации. Исправьте настройки и примените их снова. Подробности в системном журнале."

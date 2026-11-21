@@ -3103,3 +3103,27 @@ msgstr ""
 #: src/forkop/services/core.service.ts:146
 msgid "Forkop settings were not applied"
 msgstr ""
+
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:635
+msgid "Route detected BitTorrent directly"
+msgstr ""
+
+#: src/forkop/tabs/dashboard/partials/renderSections.ts:581
+msgid "Incompatible subscription nodes were skipped"
+msgstr ""
+
+#: src/forkop/tabs/dashboard/partials/renderSections.ts:591
+msgid "Required connection is unavailable"
+msgstr ""
+
+#: src/forkop/tabs/dashboard/partials/renderSections.ts:592
+msgid "Rejected by the selected core"
+msgstr ""
+
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/forkop.js:54
+msgid "Settings saved. Refreshing the page…"
+msgstr ""
+
+#: src/forkop/services/logErrorMessage.service.ts:8
+msgid "The generated Xrust configuration is invalid. Previous configuration recovery was requested. Correct the settings and apply them again; see the system log for details."
+msgstr ""

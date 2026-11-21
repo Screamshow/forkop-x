@@ -1,6 +1,14 @@
 // Translate known Forkop messages; preserve the original log for diagnostics.
 export function getLogErrorMessage(line: string): string | null {
   if (
+    line ===
+    'The generated Xrust configuration is invalid. Previous configuration recovery was requested. Correct the settings and apply them again; see the system log for details.'
+  ) {
+    return _(
+      'The generated Xrust configuration is invalid. Previous configuration recovery was requested. Correct the settings and apply them again; see the system log for details.',
+    );
+  }
+  if (
     line.includes('WhatsApp real DNS requires downloaded Meta subnet rules')
   ) {
     return _(

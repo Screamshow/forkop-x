@@ -185,6 +185,44 @@ function configureDnsDuration(
   configureDnsFailoverVisibility(option, dnsOption, bootstrapOption);
 }
 
+function configureBitTorrentDirect(option) {
+  const { write, remove, renderWidget } = option;
+  let supported;
+  let refreshWidget;
+  option.default = "0";
+  option.rmempty = false;
+  option.readonly = true;
+
+  // Saving another setting while the capability is unknown must preserve UCI.
+  option.write = function (sectionId, value) {
+    if (!this.readonly) return write.call(this, sectionId, value);
+  };
+  option.remove = function (sectionId) {
+    if (!this.readonly) return remove.call(this, sectionId);
+  };
+  option.renderWidget = function (...args) {
+    const field = E("div");
+    refreshWidget = () => {
+      const description = supported === false
+        ? _("Update Forkop X to enable this setting")
+        : _("Recognized torrent connections bypass proxy and VPN.");
+      field.replaceChildren(
+        renderWidget.apply(this, args),
+        E("div", { class: "cbi-value-description" }, description),
+      );
+    };
+    refreshWidget();
+    return field;
+  };
+
+  return (available) => {
+    supported = available;
+    option.readonly = !available || option.map.readonly;
+    option.default = available ? "1" : "0";
+    refreshWidget?.();
+  };
+}
+
 function createSettingsContent(section) {
   const renderSettings = section.render;
   section.render = function () {
@@ -590,40 +628,13 @@ function createSettingsContent(section) {
   o.default = "1";
   o.rmempty = false;
 
-  o = section.option(
-    form.Flag,
-    "bittorrent_direct",
-    _("Route detected BitTorrent directly"),
-    _("Recognized torrent connections bypass proxy and VPN."),
+  const setBitTorrentDirectSupported = configureBitTorrentDirect(
+    section.option(
+      form.Flag,
+      "bittorrent_direct",
+      _("Route detected BitTorrent directly"),
+    ),
   );
-  o.default = "0";
-  o.rmempty = false;
-  o.readonly = true;
-  const loadBitTorrent = o.load;
-  const writeBitTorrent = o.write;
-  const removeBitTorrent = o.remove;
-  // An unavailable checkbox must not turn an absent setting into explicit OFF
-  // when the user saves unrelated settings before upgrading Forkop X.
-  o.write = function (section_id, value) {
-    if (!this.readonly) return writeBitTorrent.call(this, section_id, value);
-  };
-  o.remove = function (section_id) {
-    if (!this.readonly) return removeBitTorrent.call(this, section_id);
-  };
-  o.load = async function (section_id) {
-    let supported = false;
-    try {
-      const result = await fs.exec("/usr/bin/forkop", ["get_ui_capabilities"]);
-      const info = JSON.parse(result.stdout || "{}");
-      supported = info.xrust_bittorrent_direct === 1;
-    } catch (_error) { /* Keep unavailable when capability detection fails. */ }
-    this.readonly = !supported;
-    this.default = supported ? "1" : "0";
-    this.description = supported
-      ? _("Recognized torrent connections bypass proxy and VPN.")
-      : _("Update Forkop X to enable this setting");
-    return loadBitTorrent.call(this, section_id);
-  };
 
   o = section.option(
     form.Flag,
@@ -888,6 +899,8 @@ function createSettingsContent(section) {
   );
   o.default = "0";
   o.rmempty = false;
+
+  return setBitTorrentDirectSupported;
 }
 
 const EntryPoint = {

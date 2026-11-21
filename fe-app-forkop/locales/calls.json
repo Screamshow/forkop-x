@@ -4889,5 +4889,47 @@
     "places": [
       "src/forkop/services/core.service.ts:146"
     ]
+  },
+  {
+    "call": "Incompatible subscription nodes were skipped",
+    "key": "Incompatible subscription nodes were skipped",
+    "places": [
+      "src/forkop/tabs/dashboard/partials/renderSections.ts:581"
+    ]
+  },
+  {
+    "call": "Rejected by the selected core",
+    "key": "Rejected by the selected core",
+    "places": [
+      "src/forkop/tabs/dashboard/partials/renderSections.ts:592"
+    ]
+  },
+  {
+    "call": "Required connection is unavailable",
+    "key": "Required connection is unavailable",
+    "places": [
+      "src/forkop/tabs/dashboard/partials/renderSections.ts:591"
+    ]
+  },
+  {
+    "call": "Route detected BitTorrent directly",
+    "key": "Route detected BitTorrent directly",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:635"
+    ]
+  },
+  {
+    "call": "Settings saved. Refreshing the page…",
+    "key": "Settings saved. Refreshing the page…",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/forkop.js:54"
+    ]
+  },
+  {
+    "call": "The generated Xrust configuration is invalid. Previous configuration recovery was requested. Correct the settings and apply them again; see the system log for details.",
+    "key": "The generated Xrust configuration is invalid. Previous configuration recovery was requested. Correct the settings and apply them again; see the system log for details.",
+    "places": [
+      "src/forkop/services/logErrorMessage.service.ts:8"
+    ]
   }
 ]

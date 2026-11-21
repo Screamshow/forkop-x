@@ -5,6 +5,7 @@ on:
     paths:
       - 'fe-app-forkop/**'
       - 'luci-app-forkop/**'
+      - 'tests/luci_initial_render.cjs'
       - 'tests/luci_save_apply.cjs'
       - '.github/workflows/frontend-ci.yml'
 
@@ -31,6 +32,10 @@ jobs:
       - name: Check LuCI Save and Apply
         working-directory: .
         run: node tests/luci_save_apply.cjs
+
+      - name: Check LuCI initial rendering
+        working-directory: .
+        run: node tests/luci_initial_render.cjs
 
       - name: Get yarn cache directory path
         id: yarn-cache-dir-path

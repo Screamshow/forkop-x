@@ -73,14 +73,15 @@ if (nativeSource) assert.ok(nativeHandler, 'find the VM native LuCI handler');
     uci: { changes: () => Promise.resolve(pending) },
     L: { env: { apply_holdoff: 4 } },
     main: { FORKOP_UCI_PACKAGE: 'forkop', translateForkop: text => text },
+    E: (_tag, _attributes, text) => text,
   };
   vm.runInNewContext(
     `(function () { ${source.replace('return view.extend(EntryPoint);', 'configureForkopApplyHoldoff();')} })()`,
     context,
   );
   for (const [packages, success, finalStatus] of [
-    [{ forkop: [['set']] }, true, [null, undefined]],
-    [{ forkop: [['set']], network: [['set']] }, true, [null, undefined]],
+    [{ forkop: [['set']] }, true, ['notice', 'Settings saved. Refreshing the page…']],
+    [{ forkop: [['set']], network: [['set']] }, true, ['notice', 'native UCI confirmation']],
     [{ forkop: [['set']] }, false, ['warning', 'native rollback']],
     [{ network: [['set']] }, true, ['notice', 'native UCI confirmation']],
   ]) {
@@ -92,5 +93,5 @@ if (nativeSource) assert.ok(nativeHandler, 'find the VM native LuCI handler');
     assert.equal(context.L.env.apply_holdoff, 4);
   }
   console.log('PASS: native prototype dispatch, save before apply, checked/unchecked modes and validation failure');
-  console.log('PASS: Forkop success modal dismissed, progress and rollback unchanged');
+  console.log('PASS: Forkop confirmation stays visible; mixed changes, progress and rollback preserved');
 })().catch(error => { console.error(error); process.exitCode = 1; });
