@@ -1752,6 +1752,11 @@ msgstr ""
 msgid "No compatible releases available"
 msgstr ""
 
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:262
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:283
+msgid "No online WAN supplies usable DNS"
+msgstr ""
+
 #: src/forkop/tabs/diagnostic/checks/runNftCheck.ts:105
 msgid "No other marking rules found"
 msgstr ""
@@ -2643,6 +2648,10 @@ msgstr ""
 msgid "UDP (Unprotected DNS)"
 msgstr ""
 
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:284
+msgid "Unable to read provider DNS"
+msgstr ""
+
 #: src/forkop/tabs/updates/remoteSupport.ts:136
 #: src/forkop/tabs/updates/remoteSupport.ts:437
 msgid "Unable to read remote support status"
@@ -2757,6 +2766,14 @@ msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:5127
 msgid "Use another section as an intermediate hop to connect to servers in this section. Does not apply to network interfaces or JSON outbounds."
+msgstr ""
+
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:236
+msgid "Use DNS supplied by online WAN interfaces for main and Bootstrap DNS. With mwan3, each DNS uses its own WAN."
+msgstr ""
+
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:235
+msgid "Use provider DNS"
 msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:542
@@ -3081,10 +3098,6 @@ msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/tailscale.js:111
 msgid "Exit Node is unavailable."
-msgstr ""
-
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/forkop.js:55
-msgid "Settings saved to UCI. See Diagnostics for the Forkop runtime result."
 msgstr ""
 
 #: src/forkop/services/core.service.ts:146

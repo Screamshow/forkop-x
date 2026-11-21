@@ -1,6 +1,6 @@
 0c577aec50e078dcc1268caf8698012a312af59f87420f6641a3a17431081084  htdocs/luci-static/resources/view/forkop/dashboard.js
 0bbf1d735e8885053897cd14c02adc2a9feb9968edc2c16d3dc67bd0adcb0111  htdocs/luci-static/resources/view/forkop/diagnostic.js
-fa2585283ae83f2336b43e07c7c7071971cd70886ec37b28a773a0e1afd0697c  htdocs/luci-static/resources/view/forkop/forkop.js
+b69de91a5e0a210e6dff63a9ce02461d7d82b4e8eb39b14287ec0888028ec56c  htdocs/luci-static/resources/view/forkop/forkop.js
 8f8391cb39618ba976e1df24422f2d5e3f19e9e811708e590fcb477387369492  htdocs/luci-static/resources/view/forkop/local_devices.js
 715d6f41fd9cc4603f4a676dd3c46166e60b33e87b1514acaccc220df855fcd1  htdocs/luci-static/resources/view/forkop/monitoring.js
 5dc2e5629aec2e16b72f0cf9184f10f77d91764331076edb82f0d0f6cc08871a  htdocs/luci-static/resources/view/forkop/section.js

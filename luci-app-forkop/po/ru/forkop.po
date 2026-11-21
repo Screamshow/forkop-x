@@ -1223,6 +1223,9 @@ msgstr "Нет закрытых подключений"
 msgid "No compatible releases available"
 msgstr "Нет совместимых релизов"
 
+msgid "No online WAN supplies usable DNS"
+msgstr "Нет доступного WAN с подходящими DNS"
+
 msgid "No other marking rules found"
 msgstr "Другие правила маркировки не найдены"
 
@@ -1850,6 +1853,9 @@ msgstr "Тип"
 msgid "UDP (Unprotected DNS)"
 msgstr "UDP (Незащищённый DNS)"
 
+msgid "Unable to read provider DNS"
+msgstr "Не удалось получить DNS провайдера"
+
 msgid "Unable to read remote support status"
 msgstr "Не удалось получить статус удалённой помощи"
 
@@ -1924,6 +1930,12 @@ msgstr "Настройки URLTest сохранены"
 
 msgid "Use another section as an intermediate hop to connect to servers in this section. Does not apply to network interfaces or JSON outbounds."
 msgstr "Использовать другую секцию как промежуточный узел подключения к серверам этой секции. Не применяется к сетевым интерфейсам и JSON outbound."
+
+msgid "Use DNS supplied by online WAN interfaces for main and Bootstrap DNS. With mwan3, each DNS uses its own WAN."
+msgstr "Основной и Bootstrap DNS берутся с доступных WAN. С mwan3 каждый DNS использует свой WAN."
+
+msgid "Use provider DNS"
+msgstr "Использовать DNS провайдера"
 
 msgid "Use real IP addresses for WhatsApp"
 msgstr "Использовать реальные IP для WhatsApp"
@@ -2194,9 +2206,6 @@ msgstr "Обновите Forkop X, чтобы использовать эту н
 
 msgid "Exit Node is unavailable."
 msgstr "Выходной узел недоступен."
-
-msgid "Settings saved to UCI. See Diagnostics for the Forkop runtime result."
-msgstr "Настройки сохранены в UCI. Результат применения Forkop доступен во вкладке «Диагностика»."
 
 msgid "Forkop settings were not applied"
 msgstr "Настройки Forkop не применены"
