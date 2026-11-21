@@ -114,8 +114,11 @@ http_get() { cat "$work/catalog.json"; }
 installed_forkop_package_version() {
     [ "$1" = luci-i18n-forkop-ru ] || printf '1.2.3_rc7\n'
 }
+service_capture_failures=0
 install_json_ucode() {
     if [ "$1" = installer-capture-service ]; then
+        printf 'capture\n' >> "$work/service-captures"
+        [ "$(wc -l < "$work/service-captures")" -gt "$service_capture_failures" ] || return 1
         printf 'FORKOP_WAS_ENABLED=0\nFORKOP_WAS_RUNNING=0\n'
     else
         ucode "$helper" "$@"
@@ -131,6 +134,27 @@ UPDATE_HAD_I18N=0
 prepare_current_update_rollback
 [ "$(wc -l < "$UPDATE_ROLLBACK_MANIFEST")" = 2 ] || fail 'incorrect rollback package set'
 [ "$UPDATE_TRANSACTION_ACTIVE" = 0 ] || fail 'staging started mutation transaction'
+[ "$(wc -l < "$work/service-captures")" = 1 ] || fail 'successful service probe was repeated'
+sleep() { printf '%s\n' "$1" >> "$work/service-retry-delays"; }
+
+service_capture_failures=1
+: > "$work/service-captures"
+prepare_current_update_rollback
+[ "$(wc -l < "$work/service-captures")" = 2 ] || fail 'transient service probe was not retried once'
+[ "$(cat "$work/service-retry-delays")" = 1 ] || fail 'unexpected delay before retry'
+
+service_capture_failures=2
+: > "$work/service-captures"
+: > "$work/service-retry-delays"
+if (prepare_current_update_rollback) > "$work/service-error" 2>&1; then
+    fail 'persistent service probe failure was accepted'
+fi
+[ "$(wc -l < "$work/service-captures")" = 2 ] || fail 'persistent service failure did not stop after retry'
+[ "$(cat "$work/service-retry-delays")" = 1 ] || fail 'persistent service probe retried more than once'
+grep -Fq 'Cannot capture service state for update rollback after retry' "$work/service-error"
+[ "$UPDATE_TRANSACTION_ACTIVE" = 0 ] || fail 'failed service preflight started package changes'
+service_capture_failures=0
+
 printf '{"releases":[]}' > "$work/catalog.json"
 if (prepare_current_update_rollback); then fail 'update accepted without exact rollback packages'; fi
 # Original packages are resolved separately, with the same hash checks.

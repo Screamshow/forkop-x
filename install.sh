@@ -1026,6 +1026,13 @@ function installer_recover_interrupted_cleanup(init_scripts) {
     }
 }
 
+function installer_unknown_service_state(action, result) {
+    let reason = result.timed_out
+        ? "timed out after " + INSTALLER_SERVICE_PROBE_TIMEOUT + " seconds"
+        : "did not report an exit status (probe helper exit " + result.status + ")";
+    return { known: false, value: false, reason: action + " " + reason };
+}
+
 function installer_service_enabled_state(init_script) {
     if (!path_executable(init_script))
         return { known: true, value: false };
@@ -1038,7 +1045,7 @@ function installer_service_enabled_state(init_script) {
     if (service_name != "" && length(fs.glob(INSTALLER_RC_DIR + "/S??" + service_name)) > 0)
         return { known: true, value: true };
 
-    return { known: false, value: false };
+    return installer_unknown_service_state("enabled", result);
 }
 
 function installer_service_running_state(init_script) {
@@ -1053,7 +1060,7 @@ function installer_service_running_state(init_script) {
     if (running.complete && !running.timed_out)
         return { known: true, value: running.status == 0 };
 
-    return { known: false, value: false };
+    return installer_unknown_service_state("running", running);
 }
 
 function installer_backend_status_running_state(bin_path) {
@@ -1746,6 +1753,10 @@ else if (mode == "release-catalog-entry") {
 else if (mode == "installer-capture-service") {
     let enabled = installer_service_enabled_state(INSTALLER_FORKOP_INIT);
     let running = installer_service_running_state(INSTALLER_FORKOP_INIT);
+    if (!enabled.known)
+        warn("Cannot determine whether Forkop starts at boot: " + enabled.reason + ".\n");
+    if (!running.known)
+        warn("Cannot determine whether Forkop is running: " + running.reason + ".\n");
     if (!enabled.known || !running.known) exit(1);
     print("FORKOP_WAS_ENABLED=", enabled.value ? "1" : "0", "\n",
         "FORKOP_WAS_RUNNING=", running.value ? "1" : "0", "\n");
@@ -2399,8 +2410,12 @@ prepare_current_update_rollback() {
     done
     cp "${FORKOP_INSTALLER_BACKUP_DIR:-/etc/forkop-backups}/configuration.tar.gz" "$TMP_DIR/rollback/configuration.tar.gz" ||
         fail "Cannot preserve configuration for update rollback"
-    install_json_ucode installer-capture-service > "$TMP_DIR/rollback/service.env" ||
-        fail "Cannot capture service state for update rollback"
+    if ! install_json_ucode installer-capture-service > "$TMP_DIR/rollback/service.env"; then
+        warn "Cannot capture service state for update rollback; retrying in 1 second"
+        sleep 1
+        install_json_ucode installer-capture-service > "$TMP_DIR/rollback/service.env" ||
+            fail "Cannot capture service state for update rollback after retry"
+    fi
     # shellcheck disable=SC1091
     . "$TMP_DIR/rollback/service.env"
     prepare_package_init_adapter || fail "Cannot prepare package lifecycle adapter"
