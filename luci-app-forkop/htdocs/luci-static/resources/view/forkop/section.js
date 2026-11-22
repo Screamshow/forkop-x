@@ -1355,6 +1355,114 @@ function countryChoices() {
   })).sort((a, b) => a.label.localeCompare(b.label));
 }
 
+// LuCI splits custom multiselect entries on whitespace. Encode widget values
+// so a name containing spaces is still a single choice.
+function serverChoiceKey(name) {
+  return `server:${encodeURIComponent(name)}`;
+}
+
+function serverNameFromChoiceKey(key) {
+  return decodeURIComponent(key.slice("server:".length));
+}
+
+const ServerNameDropdown = ui.Dropdown.extend({
+  handleCreateKeydown(event) {
+    if (event.key === "Enter") {
+      const input = event.currentTarget;
+      const name = input.value.trim();
+      input.value = name ? serverChoiceKey(name) : "";
+    }
+    return ui.Dropdown.prototype.handleCreateKeydown.apply(this, arguments);
+  },
+  createChoiceElement(node, key, label) {
+    return ui.Dropdown.prototype.createChoiceElement.call(
+      this,
+      node,
+      key,
+      label ?? serverNameFromChoiceKey(key),
+    );
+  },
+});
+
+function configureServerNameChoices(option, parentSectionForItem, multiple) {
+  const getChoices = (itemId, values) =>
+    currentOutboundNameChoices(parentSectionForItem(itemId), values);
+
+  option.placeholder = _("-- Select --");
+  option.load = async function (itemId) {
+    const saved = optionMapValue(this, itemId, this.option);
+    await loadOutboundNameChoices(parentSectionForItem(itemId));
+    return multiple ? uniqueDynamicListItems(saved) : normalizeOptionValues(saved);
+  };
+
+  if (!multiple) {
+    configureLiveDynamicListChoices(option, getChoices);
+    return;
+  }
+
+  option.formvalue = function (itemId) {
+    const keys = form.DynamicList.prototype.formvalue.call(this, itemId);
+    if (keys == null) return keys;
+
+    const selected = new Set(keys.map(serverNameFromChoiceKey));
+    const values = uniqueDynamicListItems(this.cfgvalue(itemId)).filter((name) =>
+      selected.delete(name),
+    );
+    return values.concat([...selected]);
+  };
+
+  option.renderWidget = function (itemId, _optionIndex, cfgvalue) {
+    const selected = uniqueDynamicListItems(cfgvalue);
+    const getLabels = (values) =>
+      Object.fromEntries(
+        getChoices(itemId, values).map(({ value, label }) => [serverChoiceKey(value), label]),
+      );
+    const labels = getLabels(selected);
+    let choiceKeys = Object.keys(labels);
+    const disabled = this.readonly ?? this.map.readonly;
+    const widget = new ServerNameDropdown(selected.map(serverChoiceKey), labels, {
+      id: this.cbid(itemId),
+      multiple: true,
+      optional: true,
+      create: !disabled,
+      disabled,
+      sort: choiceKeys.slice(),
+      select_placeholder: this.placeholder,
+      display_items: Number.MAX_SAFE_INTEGER,
+    });
+    ensureMultiValuePickerStyles();
+    const node = widget.render();
+    node.classList.add("fkp-multivalue-picker");
+    if (disabled) {
+      node.tabIndex = -1;
+      return node;
+    }
+
+    const refreshChoices = () => {
+      if (!node.isConnected) return false;
+      // While open, LuCI keeps a separate preview list before the menu.
+      if (node.hasAttribute("open")) return;
+
+      const nextLabels = getLabels(widget.getValue().map(serverNameFromChoiceKey));
+      const nextKeys = Object.keys(nextLabels);
+      if (stringArraysEqual(choiceKeys, nextKeys)) return;
+
+      choiceKeys = nextKeys;
+      widget.clearChoices();
+      widget.addChoices(choiceKeys, nextLabels);
+    };
+    node.addEventListener("click", refreshChoices, true);
+    node.addEventListener("keydown", refreshChoices, true);
+
+    const sectionId = parentSectionForItem(itemId);
+    if (!dashboardFilterChoiceRefreshers.has(sectionId)) {
+      dashboardFilterChoiceRefreshers.set(sectionId, new Set());
+    }
+    dashboardFilterChoiceRefreshers.get(sectionId).add(refreshChoices);
+    return node;
+  };
+}
+
 function currentOutboundNameChoices(section_id, values) {
   if (!outboundNameChoicesCache.has(section_id)) {
     loadOutboundNameChoices(section_id);
@@ -2381,21 +2489,10 @@ function addUrlTestItemOptions(itemSection, options = {}) {
       list.placeholder = _("-- Select --");
     }
     if (key.endsWith("_outbounds")) {
-      list.load = function (itemId) {
-        const sectionId = parentSectionForItem(itemId);
-        const values = normalizeOptionValues(optionMapValue(this, itemId, key));
-
-        return loadOutboundNameChoices(sectionId).then(() => {
-          refreshOptionChoices(
-            this,
-            currentOutboundNameChoices(sectionId, values),
-          );
-          return values;
-        });
-      };
-      list.placeholder = _("-- Select --");
-      configureLiveDynamicListChoices(list, (itemId, values) =>
-        currentOutboundNameChoices(parentSectionForItem(itemId), values),
+      configureServerNameChoices(
+        list,
+        parentSectionForItem,
+        key === "include_outbounds",
       );
     }
     if (validator) {
@@ -2594,22 +2691,7 @@ function addPriorityLevelItemOptions(itemSection, options = {}) {
       list.placeholder = _("-- Select --");
     }
     if (key === "server_name" || key === "exclude_outbounds") {
-      list.load = function (itemId) {
-        const sectionId = parentSectionForItem(itemId);
-        const values = normalizeOptionValues(optionMapValue(this, itemId, key));
-
-        return loadOutboundNameChoices(sectionId).then(() => {
-          refreshOptionChoices(
-            this,
-            currentOutboundNameChoices(sectionId, values),
-          );
-          return values;
-        });
-      };
-      list.placeholder = _("-- Select --");
-      configureLiveDynamicListChoices(list, (itemId, values) =>
-        currentOutboundNameChoices(parentSectionForItem(itemId), values),
-      );
+      configureServerNameChoices(list, parentSectionForItem, key === "server_name");
     }
     if (validator) {
       list.validate = function (_itemId, value) {
@@ -4785,26 +4867,25 @@ function loadRulesetValues(option) {
   });
 }
 
-const RulesetMultiValue = form.MultiValue.extend({
-  renderWidget(section_id, option_index, cfgvalue) {
-    if (!document.getElementById("fkp-ruleset-picker-styles")) {
-      document.head.appendChild(E("style", { id: "fkp-ruleset-picker-styles" }, `
-        .cbi-dropdown.fkp-ruleset-picker:not(.btn):not(.cbi-button) {
+function ensureMultiValuePickerStyles() {
+  if (!document.getElementById("fkp-multivalue-picker-styles")) {
+    document.head.appendChild(E("style", { id: "fkp-multivalue-picker-styles" }, `
+        .cbi-dropdown.fkp-multivalue-picker:not(.btn):not(.cbi-button) {
           height: auto;
           max-width: 100%;
         }
-        .cbi-dropdown.fkp-ruleset-picker[empty] > ul:not(.dropdown) {
+        .cbi-dropdown.fkp-multivalue-picker[empty] > ul:not(.dropdown) {
           display: none;
         }
-        .fkp-ruleset-picker:not([empty]):not([open]) > ul,
-        .fkp-ruleset-picker:not([empty])[open] > ul.preview {
+        .fkp-multivalue-picker:not([empty]):not([open]) > ul,
+        .fkp-multivalue-picker:not([empty])[open] > ul.preview {
           flex-wrap: wrap;
           gap: 4px;
         }
-        .cbi-dropdown.fkp-ruleset-picker:not([empty]) > ul:not(.dropdown) {
+        .cbi-dropdown.fkp-multivalue-picker:not([empty]) > ul:not(.dropdown) {
           padding: 5px 0 5px 6px;
         }
-        .cbi-dropdown.fkp-ruleset-picker > ul:not(.dropdown) > li[display] {
+        .cbi-dropdown.fkp-multivalue-picker > ul:not(.dropdown) > li[display] {
           flex: 0 1 auto;
           min-height: 0;
           max-width: 100%;
@@ -4815,11 +4896,16 @@ const RulesetMultiValue = form.MultiValue.extend({
           white-space: normal;
           overflow-wrap: anywhere;
         }
-      `));
-    }
+    `));
+  }
+}
+
+const RulesetMultiValue = form.MultiValue.extend({
+  renderWidget(section_id, option_index, cfgvalue) {
+    ensureMultiValuePickerStyles();
     this.display_size = this.keylist.length;
     const widget = this.super("renderWidget", [section_id, option_index, cfgvalue]);
-    widget.classList.add("fkp-ruleset-picker");
+    widget.classList.add("fkp-multivalue-picker");
     return widget;
   },
 });
