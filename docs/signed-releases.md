@@ -73,8 +73,13 @@ manifest's GitHub size and digest before reading it. After publishing,
 compare the exact pin in the channel pointer, archived manifest and release
 catalog. Keep all published 2.x and Xrust archives for rollback.
 
-Forkop 2.7.6 upgrades to 3.x with Xrust already installed. If 2.7.6 uses
-sing-box, select Xrust there and verify it starts before upgrading. The 3.x
+The shared installer upgrades older versions through the signed 2.7.6
+bridge. It uses the bridge's component action to switch to legacy Xrust
+0.0.44 if needed, then stages the native core pinned to the 3.x release.
+Before activating 3.0.3 on the mirror, publish and verify its shared
+installer and synchronization override as described in
+[Installer publication](installer-publication.md).
+Legacy LuCI on 2.7.6 can upgrade when it already uses Xrust. The 3.x
 installer stages the pinned package for clean installations. The normal
 Forkop update and version selector install the pinned core for the chosen 3.x
 release. These core archives declare `minimum_forkop_major: 3`, and the

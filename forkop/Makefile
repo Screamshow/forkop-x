@@ -40,6 +40,17 @@ endef
 define Build/Compile
 endef
 
+define Package/forkop/preinst
+#!/bin/sh
+if [ -z "$${IPKG_INSTROOT:-}" ] && [ ! -L /etc/rc.d/S98forkop-upgrade-recovery ]; then
+    banner="$$(/usr/bin/xrust version 2>/dev/null)" && \
+        printf '%s\n' "$$banner" | head -n 1 | grep -Eq '^xrust version [0-9]+\.[0-9]+\.[0-9]+$$' || {
+        printf '%s\n' 'Forkop 3 requires native Xrust. Run the official Forkop installer to upgrade the packages together: https://mirror.51343.ru/forkop/install.sh' >&2
+        exit 1
+    }
+fi
+endef
+
 define Package/forkop/prerm
 #!/usr/bin/ucode
 

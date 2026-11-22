@@ -13,6 +13,7 @@ WORK_DIR="$(mktemp -d)"
 unset FORKOP_LIB FORKOP_SOURCE_LIB FORKOP_BYTECODE_CACHE FORKOP_BYTECODE_CACHE_DIR
 unset FORKOP_UCODE_BIN FORKOP_BYTECODE_VALIDATION_TTL
 export FORKOP_PACKAGE_RECOVERY_ROOT="$WORK_DIR/recovery"
+export UPDATES_LOCK_DIR="$WORK_DIR/component-action.lock"
 
 cleanup() {
   rm -rf "$WORK_DIR"
@@ -143,6 +144,18 @@ cmp -s "$CACHE_DIR/manifest" "$WORK_DIR/original-manifest" ||
   fail "an armed package transaction must leave the old modules usable"
 rm "$recovery_hook"
 
+# Released LuCI does not arm a boot journal. The lock remains held across
+# the package replacement and until any rollback has finished.
+mkdir "$UPDATES_LOCK_DIR"
+printf '%s\n' "$$" > "$UPDATES_LOCK_DIR/pid"
+[ "$(resolve FORKOP_BYTECODE_VALIDATION_TTL=60)" = "$SOURCE_DIR" ] ||
+  fail "an active legacy updater must force installed sources during replacement"
+cmp -s "$CACHE_DIR/manifest" "$WORK_DIR/original-manifest" ||
+  fail "an active legacy updater must retain its original cache manifest"
+[ "$(ucode -L "$built" "$built/service/entry.uc")" = "$source_out" ] ||
+  fail "an active legacy updater must retain its helpers"
+printf '%s\n' 99999999 > "$UPDATES_LOCK_DIR/pid"
+
 stale="$(resolve_only)"
 [ "$stale" = "$SOURCE_DIR" ] ||
   fail "a cache built from replaced sources must not be resolved, got '$stale'"
@@ -150,6 +163,8 @@ stale="$(resolve_only)"
 rebuilt="$(resolve)"
 [ "$rebuilt" != "$SOURCE_DIR" ] && [ "$rebuilt" != "$built" ] ||
   fail "replaced sources must produce a new cache directory, got '$rebuilt'"
+rm "$UPDATES_LOCK_DIR/pid"
+rmdir "$UPDATES_LOCK_DIR"
 rebuilt_out="$(ucode -L "$rebuilt" "$rebuilt/service/entry.uc")"
 [ "$rebuilt_out" = "probe-domain-v2" ] ||
   fail "rebuilt cache must carry the new sources, got '$rebuilt_out'"

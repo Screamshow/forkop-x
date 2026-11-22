@@ -985,8 +985,8 @@ function wait_for_service_action_idle() {
 }
 
 function wait_for_forkop_restore(wait_for_explicit_start) {
-    let deadline = now_seconds() + 180;
-    while (now_seconds() < deadline) {
+    let deadline = clock(true)[0] + 180;
+    while (clock(true)[0] < deadline) {
         let starting = forkop_starting();
         // A rejected configuration cannot become ready by waiting. During
         // an owned start the marker may still belong to the previous attempt.
@@ -999,7 +999,7 @@ function wait_for_forkop_restore(wait_for_explicit_start) {
         // second restart. Keep waiting for its explicit terminal state.
         if (!starting && !file_exists(PACKAGE_UPGRADE_STATE) && !wait_for_explicit_start)
             return false;
-        if (now_seconds() >= deadline)
+        if (clock(true)[0] >= deadline)
             break;
         command_success_from_args([ "sleep", "1" ]);
     }

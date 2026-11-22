@@ -24,6 +24,7 @@ warn() { printf '%s\n' "$1" >&2; }
 msg() { printf '%s\n' "$1"; }
 installed_forkop_package_version() { printf '2.7.6\n'; }
 pkg_is_installed() { [ "$1" = rust-x ]; }
+prepare_bridge_xrust() { :; }
 install_json_ucode() { ucode "$(install_json_helper_path)" "$@"; }
 prepare_legacy_upgrade_recovery() {
     printf 'prepare\n' >> "$work/events"
@@ -79,5 +80,6 @@ if (upgrade_forkop_with_pinned_xrust) > "$work/output" 2>&1; then exit 1; fi
 printf 'prepare\naction\ncommit-restored\n' | cmp - "$work/events"
 [ -L "$TEST_HOOK" ]
 grep -Fq 'remains available for boot recovery' "$work/output"
+grep -Fq "Forkop update to 3.0.0 failed. See the result above and run 'logread -e forkop' for package manager details." "$work/output"
 
 echo 'Installer component contention, retry and real recovery failure checks passed'

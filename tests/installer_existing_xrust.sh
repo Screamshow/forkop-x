@@ -60,8 +60,12 @@ core_line=$(grep -n '^        update_existing_xrust$' "$work/main" | cut -d: -f1
 start_line=$(grep -n '^    post_install$' "$work/main" | cut -d: -f1)
 [ "$core_line" -lt "$start_line" ]
 
-# Run the real component dispatch and version gate. Stop at package staging
-# so the fixture never calls a package manager or touches the live service.
+echo 'Installer existing Xrust selection and failure handling: OK'
+
+# The dispatch remains in the published bridge. Pass its source explicitly
+# when testing that historical backend alongside the current installer.
+[ "$#" -gt 0 ] || exit 0
+LEGACY_ACTION_UC="$1"
 {
 cat <<'UCODE'
 let apk, current, latest, comparison, terminal, compared, wanted_version;
@@ -104,7 +108,7 @@ UCODE
 sed -n '/^function compare_versions(/,/^}/p;
         /^function status_from_compare(/,/^}/p;
         /^function install_package_sing_box(/,/^}/p;
-        /^function dispatch_sing_box(/,/^}/p' "$ROOT/forkop/files/usr/lib/components/action.uc"
+        /^function dispatch_sing_box(/,/^}/p' "$LEGACY_ACTION_UC"
 cat <<'UCODE'
 function check(action, installed, offered, order, expected, expect_comparison, version) {
     current = installed;
@@ -132,4 +136,4 @@ for (let is_apk_fixture in [ false, true ]) {
 }
 UCODE
 } | ucode -
-echo 'Installer existing Xrust selection and failure handling: OK'
+echo 'Legacy Xrust dispatch and exact package comparisons: OK'

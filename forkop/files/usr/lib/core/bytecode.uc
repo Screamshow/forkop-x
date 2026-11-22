@@ -25,6 +25,8 @@ const SOURCE_DIR = getenv("FORKOP_SOURCE_LIB") || "/usr/lib/forkop";
 const CACHE_DIR = getenv("FORKOP_BYTECODE_CACHE_DIR") || "/var/run/forkop/bytecode";
 const UPGRADE_RECOVERY_HOOK = (getenv("FORKOP_PACKAGE_RECOVERY_ROOT") || "") +
     "/etc/rc.d/S98forkop-upgrade-recovery";
+const COMPONENT_LOCK_DIR = getenv("UPDATES_LOCK_DIR") ||
+    (getenv("FORKOP_RUNTIME_STATE_DIR") || "/var/run/forkop") + "/component-action.lock";
 const UCODE_BIN = ucode_binary();
 const MANIFEST_VERSION = "4";
 // A leaf module, loaded through the fresh cache to prove the interpreter accepts it.
@@ -35,10 +37,14 @@ const BUILD_LOCK_MAX_AGE = 120;
 const VALIDATION_TTL_SECONDS = int(getenv("FORKOP_BYTECODE_VALIDATION_TTL") || "3");
 
 function enabled() {
-    // A released updater may still need its cached helpers. Leave its generation
-    // current until the package transaction commits or restores the old packages.
-    return as_string(getenv("FORKOP_BYTECODE_CACHE") || "1") != "0" &&
-        fs.lstat(UPGRADE_RECOVERY_HOOK) == null;
+    if (as_string(getenv("FORKOP_BYTECODE_CACHE") || "1") == "0" ||
+        fs.lstat(UPGRADE_RECOVERY_HOOK) != null)
+        return false;
+
+    // LuCI 2.7.6 holds this lock but does not create a recovery journal.
+    // Keep its helper generation until its installer or rollback has finished.
+    let owner = trim(as_string(fs.readfile(COMPONENT_LOCK_DIR + "/pid")));
+    return match(owner, /^[1-9][0-9]*$/) == null || fs.stat("/proc/" + owner) == null;
 }
 
 function manifest_path() {

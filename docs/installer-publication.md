@@ -5,6 +5,15 @@ uses `--channel canary`. `canary-install.sh` downloads that same installer,
 selects canary and forwards the remaining arguments. Do not maintain a
 second copy of the installation implementation.
 
+Use the shared installer to update older installations to Forkop X 3.0.3
+or later. It first upgrades releases older than 2.7.6 to the signed 2.7.6
+bridge. If the bridge needs Xrust, the installer runs 2.7.6's guarded
+component switch to the legacy Xrust 0.0.44 build. It then prepares the boot
+recovery journal and installs the selected Forkop release and its exact
+native Xrust pin. A failed bridge core switch leaves the native upgrade
+unstarted. If the native update is rolled back after a successful switch,
+the recovery pair is Forkop X 2.7.6 and the working bridge Xrust.
+
 An already installed `rust-x` package is updated through the newly installed
 Forkop backend after the Forkop packages and configuration checks succeed,
 before the installer restores the previous service state. This separate component
@@ -12,6 +21,16 @@ transaction validates the mirror package, checks space and stages exact rollback
 packages and dependencies. A core-update failure returns a nonzero installer
 status and leaves the successful Forkop update in place; the backend reports
 whether core recovery succeeded. Other installed core variants are preserved.
+
+If installed Forkop 3.x has a missing or incompatible Xrust executable, the
+installer repairs that release in place. `--repair-xrust` explicitly selects
+this mode and exits after the repair. An ordinary update resumes after a
+successful repair. The repair compares the installed package and executable against the
+archived pin and platform package revision, verifies and
+installs the matching `rust-x`, then checks that Forkop starts. Repair keeps a
+separate copy of the UCI file and stages the exact previous Xrust package for
+rollback. Installations with a separate sing-box package or unmanaged core
+require manual recovery.
 
 The installer is unattended, including legacy migration and conflicting DNS
 proxy handling. Legacy configuration is backed up before migration. A fresh

@@ -132,6 +132,24 @@ grep -Fq '/usr/lib/forkop/config/migration.uc migrate' "$FORKOP_MAKEFILE" ||
 [ "$(grep -Fc '/usr/lib/forkop/config/migration.uc migrate' "$BUILD_SCRIPT")" -ge 3 ] ||
   fail "manual IPK/APK package scripts must run configuration migrations after install and upgrade"
 
+(
+  work=$(mktemp -d)
+  trap 'rm -rf "$work"' EXIT
+  source <(sed -n '/^write_backend_preinst() {/,/^}/p' "$BUILD_SCRIPT")
+  write_backend_preinst | sed "s@/usr/bin/xrust@$work/xrust@g; s@/etc/rc.d/S98forkop-upgrade-recovery@$work/recover@g" > "$work/preinst"
+  if sh "$work/preinst" > "$work/log" 2>&1; then
+    fail "native Forkop package must refuse uncoordinated installation on a legacy core"
+  fi
+  grep -Fq 'Run the official Forkop installer' "$work/log" || fail "missing installer guidance"
+  IPKG_INSTROOT="$work/offline" sh "$work/preinst"
+  ln -s "$work/journal" "$work/recover"
+  sh "$work/preinst"
+  rm "$work/recover"
+  printf '#!/bin/sh\nprintf "xrust version 0.0.45\\nFeatures: fixture\\n"\n' > "$work/xrust"
+  chmod 700 "$work/xrust"
+  sh "$work/preinst"
+)
+
 if grep -Rqs 'require("uci")' "$FORKOP_LIB"; then
   require_package_dependency "ucode-mod-uci"
 fi

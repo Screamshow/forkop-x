@@ -296,6 +296,19 @@ installed_size_bytes() {
   du -sk "$1" | awk '{print $1 * 1024}'
 }
 
+write_backend_preinst() {
+  cat <<'EOF'
+#!/bin/sh
+if [ -z "${IPKG_INSTROOT:-}" ] && [ ! -L /etc/rc.d/S98forkop-upgrade-recovery ]; then
+    banner="$(/usr/bin/xrust version 2>/dev/null)" &&
+        printf '%s\n' "$banner" | head -n 1 | grep -Eq '^xrust version [0-9]+\.[0-9]+\.[0-9]+$' || {
+        printf '%s\n' 'Forkop 3 requires native Xrust. Run the official Forkop installer to upgrade the packages together: https://mirror.51343.ru/forkop/install.sh' >&2
+        exit 1
+    }
+fi
+EOF
+}
+
 write_backend_ipk_control() {
   local control_dir="$1"
   local installed_size="$2"
@@ -321,6 +334,8 @@ EOF
 /etc/config/forkop
 EOF
 
+  write_backend_preinst > "$control_dir/preinst"
+
   cat > "$control_dir/postinst" <<'EOF'
 #!/bin/sh
 [ -n "${IPKG_INSTROOT}" ] && exit 0
@@ -340,7 +355,7 @@ if (getenv("IPKG_INSTROOT") == null || getenv("IPKG_INSTROOT") == "") {
 exit(0);
 EOF
 
-  chmod 0755 "$control_dir/postinst" "$control_dir/prerm"
+  chmod 0755 "$control_dir/preinst" "$control_dir/postinst" "$control_dir/prerm"
 }
 
 write_app_ipk_control() {
@@ -456,10 +471,7 @@ write_backend_apk_scripts() {
   rm -rf "$scripts_dir"
   make_dir "$scripts_dir"
 
-  cat > "$scripts_dir/backend-pre-install.sh" <<'EOF'
-#!/usr/bin/ucode
-exit(0);
-EOF
+  write_backend_preinst > "$scripts_dir/backend-pre-install.sh"
 
   cat > "$scripts_dir/backend-post-install.sh" <<'EOF'
 #!/usr/bin/ucode
@@ -477,11 +489,10 @@ if (getenv("IPKG_INSTROOT") == null || getenv("IPKG_INSTROOT") == "")
 exit(0);
 EOF
 
-  cat > "$scripts_dir/backend-pre-upgrade.sh" <<'EOF'
-#!/usr/bin/ucode
-if (getenv("IPKG_INSTROOT") == null || getenv("IPKG_INSTROOT") == "")
-    exit(system("/usr/bin/forkop package_prerm upgrade >/dev/null 2>&1"));
-exit(0);
+  write_backend_preinst > "$scripts_dir/backend-pre-upgrade.sh"
+  cat >> "$scripts_dir/backend-pre-upgrade.sh" <<'EOF'
+[ -n "${IPKG_INSTROOT:-}" ] && exit 0
+/usr/bin/forkop package_prerm upgrade >/dev/null 2>&1
 EOF
 
   cat > "$scripts_dir/backend-post-upgrade.sh" <<'EOF'

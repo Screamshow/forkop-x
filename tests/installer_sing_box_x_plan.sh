@@ -150,6 +150,13 @@ prepare_core_package_plan
 cat > "$work/forkop" <<'SH'
 #!/bin/sh
 printf '%s\n' "$*" >> "$BACKEND_LOG"
+if [ "${MOCK_BRIDGE_STATE:-}" ] && [ "$*" = 'component_action sing_box install_rust_x 0.0.44' ]; then
+    if [ "${CORE_SWITCH_FAIL:-0}" -eq 1 ]; then
+        printf '%s\n' '{"success":false,"message":"Previous core restored"}'
+        exit 1
+    fi
+    touch "$MOCK_BRIDGE_STATE"
+fi
 if [ "${OLD_BACKEND:-0}" -eq 1 ]; then
     printf '%s\n' '{"success":false,"message":"Unknown component action"}'
     exit 1
@@ -169,6 +176,8 @@ main_update() (
   shift 2
   printf '%s\n' "$installed_before" > "$work/installed"
   : > "$BACKEND_LOG"
+  export MOCK_BRIDGE_STATE="$work/bridge-xrust"
+  rm -f "$MOCK_BRIDGE_STATE"
   check_root() { :; }
   init_tmp_dir() { TMP_DIR="$(mktemp -d "$work/phase.XXXXXX")"; }
   cleanup() { [ -z "$TMP_DIR" ] || rm -rf "$TMP_DIR"; }
@@ -187,6 +196,15 @@ main_update() (
   ensure_bootstrap_ucode_runtime() { :; }
   installed_forkop_package_version() { cat "$work/installed"; }
   pkg_is_installed() { [ "$1" = "${MOCK_CORE:-rust-x}" ]; }
+  bridge_xrust_ready() { [ "${MOCK_CORE:-rust-x}" = rust-x ] || [ -f "$MOCK_BRIDGE_STATE" ]; }
+  install_json_ucode() {
+    if [ "$1" = installer-wait-forkop-ready ]; then
+      printf 'bridge-ready\n' >> "$BACKEND_LOG"
+      [ "${BRIDGE_FAIL:-}" != readiness ]
+    else
+      ucode "$(install_json_helper_path)" "$@"
+    fi
+  }
   prepare_legacy_upgrade_recovery() {
     [ "$(installed_forkop_package_version forkop)" = 2.7.6 ]
     echo recovery-prepare >> "$BACKEND_LOG"
@@ -224,7 +242,7 @@ SH
   prepare_core_package_plan() { :; }
   confirm_legacy_migration() { :; }
   prepare_current_config_backup() { :; }
-  prepare_current_update_rollback() { :; }
+  prepare_current_update_rollback() { FORKOP_WAS_RUNNING=1; }
   ensure_flash_space() { :; }
   preinstall_release_dependencies() { :; }
   cleanup_legacy_installation() { :; }
@@ -243,7 +261,7 @@ SH
   persist_release_channel() { [ "$FORKOP_CHANNEL" = stable ]; }
   validate_installed_configuration() { :; }
   remove_legacy_backup() { :; }
-  post_install() { echo bridge-ready >> "$BACKEND_LOG"; }
+  post_install() { :; }
   update_existing_xrust() { fail 'The bridge must preserve the installed Xrust version'; }
   main "$@"
 )
@@ -268,7 +286,7 @@ main_update 1 3.0.0 --channel canary > /dev/null
 ! grep -Fq 'install 2.7.6' "$BACKEND_LOG"
 grep -Fxq 'component_action forkop install_pinned_xrust 3.0.1-canary.4' "$BACKEND_LOG"
 
-for failure in missing wrong-tag luci; do
+for failure in missing wrong-tag luci readiness; do
   if BRIDGE_FAIL="$failure" main_update 1 2.7.2 --channel canary > "$work/bridge-failed" 2>&1; then
     fail "Failed bridge accepted: $failure"
   fi
@@ -276,17 +294,26 @@ for failure in missing wrong-tag luci; do
   ! grep -Fq 'install_pinned_xrust' "$BACKEND_LOG"
 done
 grep -Fxq 'rollback 2.7.2' "$BACKEND_LOG"
-if MOCK_CORE=sing-box-x main_update 0 2.7.2 --channel canary > "$work/no-xrust" 2>&1; then
-  fail 'Sing-box installation entered the pinned upgrade'
+for apk in 0 1; do
+  for previous_core in sing-box sing-box-x sing-box-tiny sing-box-extended absent; do
+    MOCK_CORE="$previous_core" main_update "$apk" 2.7.2 > "$work/switched"
+    printf '%s\n' 'manifest 3.0.0' 'manifest 2.7.6' 'install 2.7.6' bridge-ready \
+      'component_action sing_box install_rust_x 0.0.44' recovery-prepare \
+      'component_action forkop install_pinned_xrust 3.0.0' recovery-commit > "$work/expected-update.log"
+    cmp "$work/expected-update.log" "$BACKEND_LOG"
+  done
+done
+if MOCK_CORE=sing-box-x CORE_SWITCH_FAIL=1 main_update 0 2.7.2 > "$work/no-xrust" 2>&1; then
+  fail 'Failed core switch entered the native upgrade'
 fi
 [ "$(cat "$work/installed")" = 2.7.6 ]
-grep -Fq 'Switch to Xrust in LuCI' "$work/no-xrust"
+grep -Fq 'Previous core restored' "$work/no-xrust"
 ! grep -Fq 'recovery-prepare' "$BACKEND_LOG"
 if OLD_BACKEND=1 main_update 0 2.7.6 > "$work/older-backend" 2>&1; then
   fail 'A rejected pinned update was reported as successful'
 fi
 grep -Fq 'Unknown component action' "$work/older-backend"
-grep -Fq 'requires Forkop X 2.7.6 or later' "$work/older-backend"
+grep -Fq 'Forkop update to 3.0.0 failed' "$work/older-backend"
 ! grep -Fxq 'recovery-commit' "$BACKEND_LOG"
 grep -Fxq 'recovery-commit-restored' "$BACKEND_LOG"
 
