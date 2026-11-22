@@ -14,6 +14,7 @@ let core_url = require("core.url");
 let xrust = require("xrust.binary");
 let xrust_tags = require("xrust.constants");
 let locks = require("core.locks");
+let bootstrap_dns = require("dns.bootstrap");
 
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
 const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
@@ -41,6 +42,7 @@ const SUBSCRIPTION_DOWNLOAD_MAX_BYTES = 16 * 1024 * 1024;
 const SUBSCRIPTION_PREVIEW_MAX_BYTES = 4 * 1024 * 1024;
 const SUBSCRIPTION_ATTEMPT_SECONDS = 20;
 const SUBSCRIPTION_DOWNLOAD_SECONDS = 60;
+const SUBSCRIPTION_BOOTSTRAP_SECONDS = 5;
 const SUBSCRIPTION_UNUSABLE_RESPONSE = 2;
 
 function as_string(value) {
@@ -1235,20 +1237,6 @@ function get_subscription_hwid(custom_hwid) {
     return custom_hwid != "" ? custom_hwid : generate_hwid();
 }
 
-function bootstrap_dns_servers() {
-    let result = [];
-    // Keep the UCI list order: it is the user's Bootstrap DNS priority.
-    let configured = uci_core.get(CONFIG_NAME + ".settings.bootstrap_dns_server");
-    if (type(configured) != "array")
-        configured = whitespace_values(configured);
-    for (let value in configured) {
-        let server = core_url.host(value);
-        if (core_ip.valid_ip(server))
-            push(result, server);
-    }
-    return result;
-}
-
 function subscription_url_host(url) {
     return core_url.host(url);
 }
@@ -1260,48 +1248,24 @@ function subscription_url_port(url) {
     return core_url.scheme(url) == "http" ? "80" : "443";
 }
 
-function bootstrap_lookup_address(host, server, remaining, bounded) {
-    let args = [ "nslookup", host, server ];
-    if (bounded)
-        args = [ "timeout", "-s", "KILL", as_string(remaining), ...args ];
-    let output = command_output_from_args(args);
-    let name_seen = false;
-    for (let line in split(output, "\n")) {
-        line = trim(as_string(line));
-        if (index(line, "Name:") == 0) {
-            name_seen = true;
-            continue;
-        }
-        if (!name_seen)
-            continue;
-        // BusyBox has emitted both "Address:" and "Address 1:" variants.
-        let matched = match(line, /^Address([ \t]+[0-9]+)?:[ \t]*(.*)$/);
-        if (matched == null)
-            continue;
-        let address = trim(as_string(matched[2]));
-        if (core_ip.valid_ip(address))
-            return address;
-    }
-    return "";
-}
-
 function bootstrap_resolve_subscription_host(url, deadline) {
     let host = subscription_url_host(url);
     if (host == "" || core_ip.valid_ip(host))
         return null;
 
-    let bounded = command_success_from_args([ "command", "-v", "timeout" ]);
-    for (let server in bootstrap_dns_servers()) {
+    let settings = bootstrap_dns.configured();
+    for (let server in settings.servers) {
         let remaining = deadline - int(clock(true)[0]);
         if (remaining <= 0)
             break;
         log_message("Resolving subscription host via bootstrap DNS", "info");
-        let address = bootstrap_lookup_address(host, server, remaining, bounded);
+        let address = bootstrap_dns.lookup(host, server, settings.protocol, min(remaining, SUBSCRIPTION_BOOTSTRAP_SECONDS));
+        let server_host = core_url.host(server);
         if (address != "") {
-            log_message("Bootstrap DNS " + server + " resolved " + host + " -> " + address, "info");
+            log_message("Bootstrap DNS " + server_host + " resolved " + host + " -> " + address, "info");
             return { host, port: subscription_url_port(url), address };
         }
-        log_message("Bootstrap DNS " + server + " failed", "warn");
+        log_message("Bootstrap DNS " + server_host + " failed", "warn");
     }
     return null;
 }

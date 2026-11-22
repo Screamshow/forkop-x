@@ -2,6 +2,7 @@
 
 let common = require("core.common");
 let core_ip = require("core.ip");
+let bootstrap_endpoint = require("dns.bootstrap_endpoint");
 let runtime_constants = require("xrust.constants");
 let runtime_url = require("core.url");
 let provider_dns = require("xrust.provider_dns");
@@ -58,6 +59,7 @@ function state_template(settings) {
         provider,
         provider_routes: routes,
         dns_type: provider ? "udp" : option(settings, "dns_type", "udp"),
+        bootstrap_dns_type: bootstrap_endpoint.protocol(settings),
         dns_detour: detour_tag(settings),
         main_servers: provider ? servers : server_list(settings, "dns_server", "77.88.8.8"),
         bootstrap_servers: provider ? servers : server_list(settings, "bootstrap_dns_server", "77.88.8.8"),
@@ -70,6 +72,7 @@ function state_matches(template, state) {
     state = object_or_empty(state);
     return int(state.version || 0) == 1 &&
         as_string(state.dns_type) == template.dns_type &&
+        (state.bootstrap_dns_type || "udp") == (template.bootstrap_dns_type || "udp") &&
         as_string(state.dns_detour) == template.dns_detour &&
         !!state.provider == !!template.provider &&
         sprintf("%J", state.provider_routes || []) == sprintf("%J", template.provider_routes || []) &&
@@ -158,15 +161,39 @@ function server_from_options(tag_name, dns_type, dns_server, detour) {
     return result;
 }
 
-function bootstrap_server(tag_name, value) {
-    let server = runtime_url.host(value);
-    let port = runtime_url.port(value);
-    return {
-        type: "udp",
+function bootstrap_server(tag_name, dns_type, value) {
+    let endpoint = bootstrap_endpoint.parse(value, dns_type, true);
+    if (endpoint == null)
+        return { unsupported: "invalid Bootstrap DNS address for " + dns_type };
+
+    let server = {
+        type: { udp: "udp", doh: "https", dot: "tls" }[dns_type],
         tag: tag_name,
-        server: server != "" ? server : value,
-        server_port: port != "" ? int(port, 10) : 53
+        server: endpoint.address,
+        server_port: endpoint.port
     };
+    if (dns_type == "doh")
+        server.path = endpoint.path;
+    if (endpoint.tls_name != "")
+        server.tls = { enabled: true, server_name: endpoint.tls_name };
+    else if (dns_type == "doh" && core_ip.ip_family(endpoint.address) == 6) {
+        // Xrust 0.0.45 reuses the TLS name as the HTTP authority. Bracket the
+        // authority, omit SNI for the IP literal and verify its actual IP SAN.
+        server.tls = { enabled: true, server_name: "[" + endpoint.address + "]",
+            disable_sni: true, verify_server_name: endpoint.address };
+    }
+    return server;
+}
+
+function provider_tag(route) {
+    return "provider-dns-wan-" + route.interface;
+}
+
+function provider_outbound(route) {
+    let outbound = { type: "direct", tag: provider_tag(route), bind_interface: route.device };
+    if (route.mark > 0)
+        outbound.routing_mark = route.mark;
+    return outbound;
 }
 
 function bind_provider(server, state, index_value) {
@@ -176,7 +203,7 @@ function bind_provider(server, state, index_value) {
         return { unsupported: "No online WAN has usable provider DNS and routing. Check WAN DHCP/PPPoE and mwan3." };
     // DNS dial fields are not implemented by every supported core. A direct
     // outbound detour applies the binding consistently to UDP and TCP retries.
-    server.detour = "provider-dns-wan-" + route.interface;
+    server.detour = provider_tag(route);
     return server;
 }
 
@@ -190,7 +217,7 @@ function server_config_from_state(state) {
 }
 
 function bootstrap_config_from_state(state) {
-    return bind_provider(bootstrap_server(runtime_constants.BOOTSTRAP_DNS_SERVER_TAG,
+    return bind_provider(bootstrap_server(runtime_constants.BOOTSTRAP_DNS_SERVER_TAG, state.bootstrap_dns_type || "udp",
         state.bootstrap_servers[state.bootstrap_index]), state, state.bootstrap_index);
 }
 
@@ -239,7 +266,7 @@ function add_health_candidate(result, kind, index_value, server) {
     let inbound_tag = health_tag(kind, index_value, "in");
     let dns_server = bind_provider(kind == "main"
         ? server_from_options(server_tag, result.state.dns_type, server, result.state.dns_detour)
-        : bootstrap_server(server_tag, server), result.state, index_value);
+        : bootstrap_server(server_tag, result.state.bootstrap_dns_type || "udp", server), result.state, index_value);
 
     if (dns_server.unsupported) {
         result.unsupported = dns_server.unsupported;
@@ -272,27 +299,58 @@ function add_health_slot(result, kind, index_value) {
     push(result.sniff_inbounds, tag);
 }
 
-function config_from_state(state) {
+const NTP_BOOTSTRAP_FALLBACK_TAG = runtime_constants.NTP_DNS_SERVER_TAG + "-bootstrap";
+
+function add_ntp_resolver(result, bootstrap, routes) {
+    let members = [];
+    let seen = {};
+    for (let route in routes) {
+        let tag = runtime_constants.NTP_DNS_SERVER_TAG + "-wan-" + as_string(length(members) + 1);
+        let detour = provider_tag(route);
+        push(result.servers, { type: "udp", tag, server: route.server, server_port: 53, detour });
+        push(members, tag);
+        if (!seen[detour]) {
+            push(result.outbounds, provider_outbound(route));
+            seen[detour] = true;
+        }
+    }
+    push(result.servers, {
+        type: "udp", tag: NTP_BOOTSTRAP_FALLBACK_TAG, server: bootstrap.server, server_port: 53
+    });
+    // Plain DNS can resolve NTP names before certificate validation is
+    // possible; encrypted Bootstrap can resolve them after time is restored.
+    push(members, NTP_BOOTSTRAP_FALLBACK_TAG, bootstrap.tag);
+    result.ntp_server = runtime_constants.NTP_DNS_SERVER_TAG;
+    push(result.servers, { type: "group", tag: result.ntp_server, servers: members, mode: "stable" });
+}
+
+function config_from_state(state, ntp_required) {
     let main = server_config_from_state(state);
     if (main.unsupported)
         return { unsupported: main.unsupported, provider_unavailable: state.provider && length(state.provider_routes) == 0 };
 
+    let bootstrap = bootstrap_config_from_state(state);
+    if (bootstrap.unsupported)
+        return { unsupported: bootstrap.unsupported };
+
     let result = {
         state,
-        servers: [ bootstrap_config_from_state(state), main ],
+        servers: [ bootstrap, main ],
         outbounds: [],
         inbounds: [],
         rules: [],
-        sniff_inbounds: []
+        sniff_inbounds: [],
+        ntp_server: runtime_constants.BOOTSTRAP_DNS_SERVER_TAG
     };
     let seen_provider = {};
     for (let route in state.provider_routes) {
         if (seen_provider[route.interface]) continue;
         seen_provider[route.interface] = true;
-        let outbound = { type: "direct", tag: "provider-dns-wan-" + route.interface,
-            bind_interface: route.device };
-        if (route.mark > 0) outbound.routing_mark = route.mark;
-        push(result.outbounds, outbound);
+        push(result.outbounds, provider_outbound(route));
+    }
+    if (ntp_required && bootstrap.type != "udp") {
+        state.ntp_wan_routes = provider_dns.discover();
+        add_ntp_resolver(result, bootstrap, state.ntp_wan_routes);
     }
 
     // Reserve loopback health listeners independently of selected DNS mode.
@@ -382,6 +440,7 @@ return {
     server_list,
     state_matches,
     state_template,
+    NTP_BOOTSTRAP_FALLBACK_TAG,
     TUNNEL_DNS_TAG_PREFIX,
     tunnel_dns_tag,
     tunnel_dns_server

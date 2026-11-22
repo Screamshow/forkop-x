@@ -5,6 +5,7 @@ let uci_core = require("core.uci");
 let common = require("core.common");
 let core_ip = require("core.ip");
 let runtime_dns = require("xrust.dns");
+let provider_dns = require("xrust.provider_dns");
 let connections = require("config.connections");
 let worker_identity = require("core.worker_identity");
 let runtime_health = require("core.runtime_health");
@@ -317,19 +318,22 @@ function worker() {
     let observed_runtime = null;
     let requested_wan = "";
     let wan_retry_at = 0;
+    let monitor_wan = state.provider || type(state.ntp_wan_routes) == "array";
 
     while (true) {
         let now = now_seconds();
         // Keep monitoring the applied config until a successful transition
         // replaces this worker. UCI may already contain an unapplied edit.
-        if (state.provider && now >= next_active) {
-            // Provider routes are dynamic. Keep the applied provider mode and
-            // only rediscover WAN data that can change outside of UCI.
-            let expected = runtime_dns.state_template({ dns_use_provider: "1" });
-            if (runtime_dns.state_matches(expected, state))
+        if (monitor_wan && now >= next_active) {
+            // Refresh the applied WAN routes, independently of any draft UCI
+            // edits. Manual encrypted DNS may need new plain DNS for NTP.
+            let expected = state.provider ? runtime_dns.state_template({ dns_use_provider: "1" }) : null;
+            let wan = sprintf("%J", state.provider ? expected.provider_routes : provider_dns.discover());
+            let unchanged = state.provider ? runtime_dns.state_matches(expected, state) :
+                wan == sprintf("%J", state.ntp_wan_routes);
+            if (unchanged)
                 requested_wan = "";
-            else if (length(expected.main_servers) > 0) {
-                let wan = sprintf("%J", expected.provider_routes);
+            else if (!state.provider || length(expected.main_servers) > 0) {
                 if (wan != requested_wan || now >= wan_retry_at) {
                     requested_wan = wan;
                     wan_retry_at = now + max(WAN_RELOAD_RETRY_SECONDS, 3 * active_interval);
@@ -340,7 +344,7 @@ function worker() {
             }
         }
 
-        if (state.provider && length(state.main_servers) <= 1 && length(state.bootstrap_servers) <= 1) {
+        if (monitor_wan && length(state.main_servers) <= 1 && length(state.bootstrap_servers) <= 1) {
             next_active = now + active_interval;
             command_success_from_args([ "sleep", as_string(active_interval) ]);
             continue;
@@ -415,7 +419,8 @@ function start_runtime(preserve_applied, config_path) {
         return 1;
     let previous = common.read_json_file(STATE_FILE);
     let applied = applied_worker_state(preserve_applied);
-    let enabled = applied.provider || length(applied.main_servers) > 1 || length(applied.bootstrap_servers) > 1;
+    let enabled = applied.provider || type(applied.ntp_wan_routes) == "array" ||
+        length(applied.main_servers) > 1 || length(applied.bootstrap_servers) > 1;
     if (!enabled) {
         remove_file(STATE_FILE);
         return 0;

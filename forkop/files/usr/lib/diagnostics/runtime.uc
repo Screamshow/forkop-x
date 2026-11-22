@@ -8,7 +8,10 @@ let process_memory = require("core.process_memory");
 let constants = require("core.constants");
 let core_ip = require("core.ip");
 let uci_core = require("core.uci");
+let runtime_constants = require("xrust.constants");
 let runtime_dns = require("xrust.dns");
+let bootstrap_dns = require("dns.bootstrap");
+let bootstrap_endpoint = require("dns.bootstrap_endpoint");
 let netstat = require("core.netstat");
 
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || constants.FORKOP_CONFIG_NAME || "forkop";
@@ -834,25 +837,23 @@ function url_host(value) {
     return helper_output("url-get-host", [ value ]);
 }
 
-function dns_check_resolve_host(host, resolver, timeout_seconds) {
-    host = as_string(host);
-    resolver = as_string(resolver);
-    if (host == "")
-        return "";
-    if (valid_ipv4(host))
-        return host;
-    if (resolver == "")
-        return "";
-
-    timeout_seconds = int(timeout_seconds || 2);
+function dns_check_bootstrap(active, domain, timeout_seconds) {
     for (let line in split(command_output_from_args([
-        "dig", "@" + resolver, host, "A", "+short", "+timeout=" + as_string(timeout_seconds), "+tries=1"
+        "dig", "-r", "-p", as_string(runtime_dns.health_port("bootstrap", active.state.bootstrap_index)),
+        "@" + runtime_dns.DNS_HEALTH_ADDRESS, domain, "A", "+short",
+        "+timeout=" + as_string(timeout_seconds), "+tries=1"
     ]), "\n")) {
         line = trim(as_string(line));
         if (valid_ipv4(line))
-            return line;
+            return true;
     }
-    return "";
+
+    // When Xrust is stopped, a manual resolver can still be checked directly.
+    // Provider DNS depends on the running core's per-WAN binding.
+    if (active.state.provider || trim(module_output(SERVICE_STATE_UC, [ "sing-box-service-runtime-pid" ])) != "")
+        return false;
+
+    return bootstrap_dns.lookup(domain, active.bootstrap, active.state.bootstrap_dns_type, timeout_seconds, "A") != "";
 }
 
 function device_ipv4_address(interface) {
@@ -909,13 +910,13 @@ function check_dns_available() {
     let active = runtime_dns.active_values(cfg);
     let dns_type = active.state.dns_type;
     let dns_server = active.main;
-    let bootstrap_dns_server = active.bootstrap;
+    let bootstrap_dns_type = active.state.bootstrap_dns_type;
+    let bootstrap_server = bootstrap_endpoint.parse(active.bootstrap, bootstrap_dns_type, true);
     let dont_touch_dhcp = bool_option(cfg, "dont_touch_dhcp", false) ? 1 : 0;
     let domain = "example.com";
     let timeout_seconds = dns_check_timeout_seconds(option(cfg, "dns_check_timeout", "2s"));
     let dns_status = 0;
     let dns_on_router = 0;
-    let bootstrap_dns_status = 0;
     let dhcp_config_status = 1;
 
     let active_dns_args = [ "dig" ];
@@ -941,27 +942,9 @@ function check_dns_available() {
     let dns_server_host = url_host(dns_server);
     if (dns_server_host == "")
         dns_server_host = dns_server;
-    let bootstrap_dns_required = !core_ip.valid_ip(dns_server_host);
-    if (bootstrap_dns_required && bootstrap_dns_server != "") {
-        if (length(active.state.bootstrap_servers) > 1) {
-            for (let line in split(command_output_from_args([
-                "dig", "-p", as_string(runtime_dns.health_port("bootstrap", active.state.bootstrap_index)),
-                "@" + runtime_dns.DNS_HEALTH_ADDRESS, domain, "A", "+short",
-                "+timeout=" + as_string(timeout_seconds), "+tries=1"
-            ]), "\n"))
-                if (valid_ipv4(trim(as_string(line)))) {
-                    bootstrap_dns_status = 1;
-                    break;
-                }
-        }
-        else {
-            let bootstrap_check_domain = domain;
-            if (dns_server_host != "" && !valid_ipv4(dns_server_host))
-                bootstrap_check_domain = dns_server_host;
-            if (dns_check_resolve_host(bootstrap_check_domain, bootstrap_dns_server, timeout_seconds) != "")
-                bootstrap_dns_status = 1;
-        }
-    }
+    let bootstrap_dns_required = !core_ip.valid_ip(dns_server_host) ||
+        runtime_dns.default_domain_resolver(cfg) == runtime_constants.BOOTSTRAP_DNS_SERVER_TAG;
+    let bootstrap_dns_status = bootstrap_server && dns_check_bootstrap(active, domain, timeout_seconds) ? 1 : 0;
 
     if (!module_success(DNS_APPLY_UC, [ "default-config-complete" ]))
         dhcp_config_status = 0;
@@ -974,7 +957,8 @@ function check_dns_available() {
         dns_server_count: length(active.state.main_servers),
         dns_status,
         dns_on_router,
-        bootstrap_dns_server,
+        bootstrap_dns_server: bootstrap_server?.authority || "",
+        bootstrap_dns_type,
         bootstrap_dns_server_index: active.state.bootstrap_index,
         bootstrap_dns_server_count: length(active.state.bootstrap_servers),
         bootstrap_dns_status,

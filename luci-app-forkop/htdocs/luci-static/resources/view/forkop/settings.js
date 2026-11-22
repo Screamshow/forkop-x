@@ -150,8 +150,66 @@ function configureDnsList(
         ? true
         : _("Add at least one DNS server");
     }
-    const validation = validator(normalized);
+    const validation = validator(normalized, _section_id);
     return validation.valid ? true : validation.message;
+  };
+}
+
+function isEncryptedDnsProtocol(protocol) {
+  return protocol === "doh" || protocol === "dot";
+}
+
+function configureDnsProtocol(option, bootstrapOption) {
+  const choices = {
+    doh: _("DNS over HTTPS (DoH)"),
+    dot: _("DNS over TLS (DoT)"),
+    udp: _("UDP (Unprotected DNS)"),
+  };
+  const legacyChoices = {
+    doh: _("DoH (Bootstrap DNS over UDP)"),
+    dot: _("DoT (Bootstrap DNS over UDP)"),
+  };
+  option.default = "udp";
+  option.rmempty = false;
+  option.depends("dns_use_provider", "0");
+  option.retain = true;
+  option.load = function (sectionId) {
+    this.keylist = [];
+    this.vallist = [];
+    for (const [value, label] of Object.entries(choices)) {
+      this.value(value, label);
+    }
+    const selected = uci.get(UCI_PACKAGE, sectionId, "dns_type");
+    const legacy = uci.get(UCI_PACKAGE, sectionId, "bootstrap_dns_legacy_type");
+    if (selected === legacy && isEncryptedDnsProtocol(selected)) {
+      const value = `legacy-${selected}`;
+      this.value(value, legacyChoices[selected]);
+      return value;
+    }
+    return selected;
+  };
+  const parse = option.parse;
+  option.parse = function (sectionId) {
+    if (
+      this.isActive(sectionId) &&
+      isEncryptedDnsProtocol(this.formvalue(sectionId))
+    ) {
+      for (const address of optionListValues(bootstrapOption, sectionId)) {
+        const validation = main.validateBootstrapDNS(address);
+        if (!validation.valid) {
+          return Promise.reject(new TypeError(validation.message));
+        }
+      }
+    }
+    return parse.call(this, sectionId);
+  };
+  const write = option.write;
+  option.write = function (sectionId, value) {
+    // The compatibility choice exists only in the form. Store actual DNS types.
+    if (value !== "udp" && !isEncryptedDnsProtocol(value)) return;
+    const result = write.call(this, sectionId, value);
+    uci.unset(UCI_PACKAGE, sectionId, "bootstrap_dns_legacy_type");
+    return result;
   };
 }
 
@@ -271,7 +329,7 @@ function createSettingsContent(section) {
     form.Flag,
     "dns_use_provider",
     _("Use provider DNS"),
-    _("Use DNS supplied by online WAN interfaces for main and Bootstrap DNS. With mwan3, each DNS uses its own WAN."),
+    _("Use DNS supplied by online WAN interfaces for main and Bootstrap DNS over UDP. With mwan3, each DNS uses its own WAN."),
   );
   providerOption.default = "0";
   providerOption.rmempty = false;
@@ -324,19 +382,12 @@ function createSettingsContent(section) {
       });
     };
   };
-  let o = section.option(
+  const dnsProtocol = section.option(
     form.ListValue,
     "dns_type",
     _("DNS Protocol Type"),
-    _("Select DNS protocol to use"),
+    _("Select DNS protocol for main and Bootstrap DNS"),
   );
-  o.value("doh", _("DNS over HTTPS (DoH)"));
-  o.value("dot", _("DNS over TLS (DoT)"));
-  o.value("udp", _("UDP (Unprotected DNS)"));
-  o.default = "udp";
-  o.rmempty = false;
-  o.depends("dns_use_provider", "0");
-  o.retain = true;
 
   const dnsOption = section.option(
     form.DynamicList,
@@ -354,18 +405,31 @@ function createSettingsContent(section) {
     "bootstrap_dns_server",
     _("Bootstrap DNS Servers"),
     _(
-      "DNS server used to obtain IP addresses for upstream DNS and proxies. Enter an IPv4 or IPv6 address to avoid a DNS lookup during startup. If multiple servers are selected, a timeout switches to a backup.",
+      "DNS server used to resolve upstream DNS and proxy hostnames directly through WAN. Enter an IPv4 or IPv6 address of a server that supports the selected protocol. If multiple servers are selected, a timeout switches to a backup.",
     ),
   );
   configureDnsList(
     bootstrapOption,
     main.BOOTSTRAP_DNS_SERVER_OPTIONS,
     "77.88.8.8",
-    main.validateBootstrapDNS,
+    (value, sectionId) => {
+      const selected =
+        dnsProtocol.formvalue(sectionId) ?? dnsProtocol.cfgvalue(sectionId);
+      const saved = uci.get(UCI_PACKAGE, sectionId, "bootstrap_dns_server");
+      // Leave previously configured names usable in the unencrypted mode.
+      if (
+        (providerEnabled(sectionId) || !isEncryptedDnsProtocol(selected)) &&
+        L.toArray(saved).some((address) => `${address}`.trim() === value)
+      ) {
+        return { valid: true };
+      }
+      return main.validateBootstrapDNS(value);
+    },
   );
+  configureDnsProtocol(dnsProtocol, bootstrapOption);
   renderProviderList(bootstrapOption);
 
-  o = section.option(
+  let o = section.option(
     form.Value,
     "dns_check_interval",
     _("DNS Check Interval"),

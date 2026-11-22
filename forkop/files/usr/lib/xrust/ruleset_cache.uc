@@ -7,7 +7,7 @@ let constants = require("core.constants");
 let rulesets = require("xrust.rulesets");
 let uci_core = require("core.uci");
 let core_ip = require("core.ip");
-let core_url = require("core.url");
+let bootstrap_dns = require("dns.bootstrap");
 
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
 const BIN_PATH = getenv("FORKOP_BIN") || "/usr/bin/forkop";
@@ -354,60 +354,6 @@ function write_manifest(manifest) {
     return true;
 }
 
-function bootstrap_dns_servers() {
-    let result = [];
-    let configured = uci_core.get(CONFIG_NAME + ".settings.bootstrap_dns_server");
-    if (type(configured) != "array")
-        configured = split(trim(as_string(configured)), /[ \t\r\n]+/);
-
-    for (let value in configured) {
-        let server = core_url.host(value);
-        if (core_ip.valid_ip(server))
-            push(result, server);
-    }
-    return result;
-}
-
-function bootstrap_resolve(url) {
-    let host = core_url.host(url);
-    if (host == "" || core_ip.valid_ip(host))
-        return null;
-
-    for (let server in bootstrap_dns_servers()) {
-        let output = command_output([ "nslookup", host, server ]);
-        let name_seen = false;
-        let ipv6_address = "";
-        for (let line in split(output, "\n")) {
-            line = trim(as_string(line));
-            if (index(line, "Name:") == 0) {
-                name_seen = true;
-                continue;
-            }
-            if (!name_seen)
-                continue;
-            let matched = match(line, /^Address([ \t]+[0-9]+)?:[ \t]*(.*)$/);
-            if (matched == null)
-                continue;
-            let address = trim(as_string(matched[2]));
-            if (core_ip.ip_family(address) == 4)
-                return {
-                    host,
-                    port: core_url.port(url) || (core_url.scheme(url) == "http" ? "80" : "443"),
-                    address
-                };
-            if (ipv6_address == "" && core_ip.ip_family(address) == 6)
-                ipv6_address = address;
-        }
-        if (ipv6_address != "")
-            return {
-                host,
-                port: core_url.port(url) || (core_url.scheme(url) == "http" ? "80" : "443"),
-                address: ipv6_address
-            };
-    }
-    return null;
-}
-
 function download_candidate(url, target, proxy_address, resolve) {
     let args = [ "curl", "--fail", "--location", "--silent", "--show-error", "--connect-timeout", "8", "--max-time", "30",
         "--speed-time", "15", "--speed-limit", "1" ];
@@ -432,7 +378,7 @@ function download_candidate_with_bootstrap(url, target, proxy_address) {
     // A configured proxy owns destination DNS. The direct Bootstrap retry is
     // intentionally limited to curl's explicit name-resolution failure.
     if (status == 6 && as_string(proxy_address) == "") {
-        let resolved = bootstrap_resolve(url);
+        let resolved = bootstrap_dns.resolve_url(url, bootstrap_dns.configured());
         if (resolved != null) {
             warn("rule-set download retrying with Bootstrap DNS for ", resolved.host, "\n");
             status = download_candidate(url, target, proxy_address, resolved);

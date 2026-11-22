@@ -11,19 +11,29 @@ cat >"$WORK/bin/curl" <<'EOF'
 echo "$*" >>"$TEST_NETWORK_LOG"
 if [ "${TEST_ACCEPT_NEW:-0}" = 1 ]; then
   output=''
+  resolved=''
   previous=''
   for arg in "$@"; do
     [ "$previous" != '-o' ] || output="$arg"
+    [ "$previous" != '--resolve' ] || resolved="$arg"
     previous="$arg"
   done
   case "$*" in
     *https://lists.test/c.txt*) printf 'c.example\n' >"$output"; exit 0 ;;
+    *https://lists.test/d.txt*)
+      [ "$resolved" = 'lists.test:443:192.0.2.10' ] || exit 6
+      printf 'd.example\n' >"$output"; exit 0 ;;
   esac
 fi
 exit 1
 EOF
 cat >"$WORK/bin/dig" <<'EOF'
 #!/bin/sh
+case "$*" in
+  *'@192.0.2.54 -p 8443 -q lists.test -t A '*' +https=/custom-dns +tls-ca=/etc/ssl/certs/ca-certificates.crt +tls-hostname=192.0.2.54')
+    printf '192.0.2.10\n'; exit 0 ;;
+  *@*|*+https*) exit 1 ;;
+esac
 echo 192.0.2.1
 EOF
 cat >"$WORK/bin/logger" <<'EOF'
@@ -103,6 +113,14 @@ grep -q 'c.example' "$WORK/rulesets/gamma-remote-domains-ruleset.json" || fail '
 grep -q 'https://lists.test/c.txt' "$TEST_NETWORK_LOG" || fail 'wrong source fetched'
 sed -i '/forkop.gamma/d' "$WORK/uci.state"
 prepare || fail 'new section removal failed'
+
+# A direct source whose system DNS fails retries through the selected DoH endpoint.
+printf 'forkop.settings.dns_type=doh\nforkop.settings.bootstrap_dns_server=192.0.2.54:8443/custom-dns\n' >>"$WORK/uci.state"
+write_section delta 'https://lists.test/d.txt' >>"$WORK/uci.state"
+TEST_ACCEPT_NEW=1 prepare || fail 'new source was not downloaded via DoH Bootstrap DNS'
+grep -q 'd.example' "$WORK/rulesets/delta-remote-domains-ruleset.json" || fail 'DoH-resolved source not materialized'
+sed -i '/forkop.delta/d' "$WORK/uci.state"
+prepare || fail 'DoH-resolved section removal failed'
 
 # A corrupt needed source cannot silently use older flash bytes or apply.
 cp "$WORK/generation/manifest.json" "$WORK/good-manifest"

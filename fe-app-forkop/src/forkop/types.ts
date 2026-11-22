@@ -338,6 +338,7 @@ export namespace Forkop {
     dns_server_count: number;
     dns_status: 0 | 1;
     dns_on_router: 0 | 1;
+    bootstrap_dns_type?: DnsCheckResult['dns_type'];
     bootstrap_dns_server: string;
     bootstrap_dns_server_index: number;
     bootstrap_dns_server_count: number;

@@ -2,6 +2,7 @@
 
 let fs = require("fs");
 let common = require("core.common");
+let bootstrap_dns = require("dns.bootstrap");
 
 let as_string = common.as_string;
 let object_or_empty = common.object_or_empty;
@@ -146,24 +147,23 @@ function country_is_endpoint() {
     return { host: as_string(matched[2]), port };
 }
 
-function normalized_resolver(value) {
-    value = trim(as_string(value));
-    let separator = index(value, "#");
-    if (separator >= 0)
-        value = substr(value, 0, separator);
-    if (substr(value, 0, 1) == "[" && substr(value, length(value) - 1) == "]")
-        value = substr(value, 1, length(value) - 2);
-    return valid_ipv4(value) || valid_ipv6(value) ? value : "";
+function bootstrap_settings(state) {
+    if (state == null || state.provider)
+        return bootstrap_dns.configured();
+    let servers = state.bootstrap_servers || [];
+    let active = state.bootstrap_index || 0;
+    if (active > 0 && active < length(servers))
+        servers = [ servers[active], ...slice(servers, 0, active), ...slice(servers, active + 1) ];
+    return { protocol: state.bootstrap_dns_type || "udp", servers };
 }
 
-function resolve_service_host(host, resolver) {
-    resolver = normalized_resolver(resolver);
-    if (host == "" || resolver == "")
-        return "";
-
-    return first_ipv4_line(command_output_from_args([
-        "dig", "+short", "@" + resolver, host, "A", "+time=2", "+tries=1"
-    ]));
+function resolve_service_host(host, settings) {
+    for (let server in settings.servers) {
+        let address = bootstrap_dns.lookup(host, server, settings.protocol, 2, "A");
+        if (public_ipv4(address))
+            return address;
+    }
+    return "";
 }
 
 function resolve_server(value) {
@@ -185,7 +185,7 @@ function resolve_server(value) {
     return first_nslookup_address(command_output_from_args([ "nslookup", server ]));
 }
 
-function lookup_ip_batch(ips, resolver) {
+function lookup_ip_batch(ips, settings) {
     let body_path = trim(command_output_from_args([ "mktemp" ]));
     if (body_path == "")
         return { countries: {}, stop: true };
@@ -196,13 +196,13 @@ function lookup_ip_batch(ips, resolver) {
     ];
     let endpoint = country_is_endpoint();
     if (endpoint.host != "" && !valid_ipv4(endpoint.host) && !valid_ipv6(endpoint.host)) {
-        let service_ip = resolve_service_host(endpoint.host, resolver);
-        if (normalized_resolver(resolver) != "" && !public_ipv4(service_ip)) {
+        let service_ip = resolve_service_host(endpoint.host, settings);
+        if (length(settings.servers) > 0 && service_ip == "") {
             remove_file(body_path);
             warn("Server country service host resolution failed\n");
             return { countries: {}, stop: true };
         }
-        if (public_ipv4(service_ip)) {
+        if (service_ip != "") {
             push(args, "--resolve");
             push(args, endpoint.host + ":" + endpoint.port + ":" + service_ip);
         }
@@ -240,11 +240,11 @@ function lookup_ip_batch(ips, resolver) {
     return { countries, stop: false };
 }
 
-function lookup_ips(ips, resolver) {
+function lookup_ips(ips, settings) {
     let result = {};
     for (let start = 0; start < length(ips); start += COUNTRY_IS_BATCH_SIZE) {
         let batch = slice(ips, start, start + COUNTRY_IS_BATCH_SIZE);
-        let response = lookup_ip_batch(batch, resolver);
+        let response = lookup_ip_batch(batch, settings);
         for (let ip, country in response.countries)
             result[ip] = country;
         if (response.stop)
@@ -270,7 +270,7 @@ function previous_countries_by_server(previous_state) {
     return result;
 }
 
-function detect(servers, previous_state, resolver) {
+function detect(servers, previous_state, dns_state) {
     servers = object_or_empty(servers);
     let cached = previous_countries_by_server(previous_state);
     let result = {};
@@ -307,7 +307,7 @@ function detect(servers, previous_state, resolver) {
             push(tags_by_ip[ip], tag_name);
     }
 
-    let countries_by_ip = length(ips) > 0 ? lookup_ips(ips, resolver) : {};
+    let countries_by_ip = length(ips) > 0 ? lookup_ips(ips, bootstrap_settings(dns_state)) : {};
     for (let ip, tags in tags_by_ip) {
         let country = as_string(countries_by_ip[ip] || "");
         if (country == "")

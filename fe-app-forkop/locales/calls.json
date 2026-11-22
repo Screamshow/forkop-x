@@ -1179,10 +1179,10 @@
     ]
   },
   {
-    "call": "DNS server used to obtain IP addresses for upstream DNS and proxies. Enter an IPv4 or IPv6 address to avoid a DNS lookup during startup. If multiple servers are selected, a timeout switches to a backup.",
-    "key": "DNS server used to obtain IP addresses for upstream DNS and proxies. Enter an IPv4 or IPv6 address to avoid a DNS lookup during startup. If multiple servers are selected, a timeout switches to a backup.",
+    "call": "DNS server used to resolve upstream DNS and proxy hostnames directly through WAN. Enter an IPv4 or IPv6 address of a server that supports the selected protocol. If multiple servers are selected, a timeout switches to a backup.",
+    "key": "DNS server used to resolve upstream DNS and proxy hostnames directly through WAN. Enter an IPv4 or IPv6 address of a server that supports the selected protocol. If multiple servers are selected, a timeout switches to a backup.",
     "places": [
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:257"
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:356"
     ]
   },
   {
@@ -1277,6 +1277,13 @@
     ]
   },
   {
+    "call": "DoH (Bootstrap DNS over UDP)",
+    "key": "DoH (Bootstrap DNS over UDP)",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:169"
+    ]
+  },
+  {
     "call": "Domain and IP lists",
     "key": "Domain and IP lists",
     "places": [
@@ -1309,6 +1316,13 @@
     "key": "Dont Touch My DHCP!",
     "places": [
       "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:701"
+    ]
+  },
+  {
+    "call": "DoT (Bootstrap DNS over UDP)",
+    "key": "DoT (Bootstrap DNS over UDP)",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:170"
     ]
   },
   {
@@ -3794,10 +3808,10 @@
     ]
   },
   {
-    "call": "Select DNS protocol to use",
-    "key": "Select DNS protocol to use",
+    "call": "Select DNS protocol for main and Bootstrap DNS",
+    "key": "Select DNS protocol for main and Bootstrap DNS",
     "places": [
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:235"
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:331"
     ]
   },
   {
@@ -4546,10 +4560,10 @@
     ]
   },
   {
-    "call": "Use DNS supplied by online WAN interfaces for main and Bootstrap DNS. With mwan3, each DNS uses its own WAN.",
-    "key": "Use DNS supplied by online WAN interfaces for main and Bootstrap DNS. With mwan3, each DNS uses its own WAN.",
+    "call": "Use DNS supplied by online WAN interfaces for main and Bootstrap DNS over UDP. With mwan3, each DNS uses its own WAN.",
+    "key": "Use DNS supplied by online WAN interfaces for main and Bootstrap DNS over UDP. With mwan3, each DNS uses its own WAN.",
     "places": [
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:236"
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:274"
     ]
   },
   {

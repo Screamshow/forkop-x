@@ -51,6 +51,7 @@ function as_string(value) { return value == null ? "" : "" + value; }
 function object_or_empty(value) { return value || {}; }
 function read_json_file() { return { config_path: "current" }; }
 function config_get(path, fallback) { return fallback; }
+function applied_xrust_config_path(fallback) { return fallback; }
 function owner_pid() { return "42"; }
 function dns_failover_hot_apply() { return 3; }
 function release_reload_lock() { push(calls, "unlock"); }

@@ -33,6 +33,7 @@ export async function runDnsCheck() {
   }
 
   const data = dnsChecks.data;
+  const bootstrapAddress = `${data.bootstrap_dns_server} [${data.bootstrap_dns_type ?? 'udp'}]`;
   const { state, description, dhcpItemState, dhcpItemKey } =
     getDnsCheckPresentation(data);
 
@@ -58,8 +59,8 @@ export async function runDnsCheck() {
                 : _('Bootstrap DNS'),
             value:
               data.bootstrap_dns_server_count > 1
-                ? `${data.bootstrap_dns_server} (${data.bootstrap_dns_server_index + 1}/${data.bootstrap_dns_server_count})`
-                : data.bootstrap_dns_server,
+                ? `${bootstrapAddress} (${data.bootstrap_dns_server_index + 1}/${data.bootstrap_dns_server_count})`
+                : bootstrapAddress,
           },
         ],
       ),

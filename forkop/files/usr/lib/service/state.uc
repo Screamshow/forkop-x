@@ -11,6 +11,8 @@ let core_ip = require("core.ip");
 let rule_config = require("config.rule");
 let connections = require("config.connections");
 let provider_dns = require("xrust.provider_dns");
+let ntp = require("dns.ntp");
+let bootstrap_endpoint = require("dns.bootstrap_endpoint");
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
 const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
 const DEFAULT_PENDING_RELOAD_FILE = getenv("FORKOP_PENDING_RELOAD_FILE") || "/var/run/forkop/reload.pending";
@@ -20,6 +22,7 @@ const SB_DNS_INBOUND_ADDRESS = getenv("SB_DNS_INBOUND_ADDRESS") || "127.0.0.42";
 const SB_TPROXY_INBOUND_PORT = getenv("SB_TPROXY_INBOUND_PORT") || "1602";
 const SB_TPROXY_INBOUND6_ADDRESS = getenv("SB_TPROXY_INBOUND6_ADDRESS") || "::1";
 const DIAGNOSTICS_RUNTIME_UC = LIB_DIR + "/diagnostics/runtime.uc";
+const NTP_STARTUP_STATE = (getenv("FORKOP_RUNTIME_STATE_DIR") || "/var/run/forkop") + "/ntp-startup.json";
 
 function as_string(value) {
     return value == null ? "" : "" + value;
@@ -190,25 +193,48 @@ function current_year() {
     return numeric_text(value) ? int(value) : null;
 }
 
-function time_sync_needed(year) {
-    if (year == null)
+function time_sync_needed(year, encrypted, enabled, now, uptime, previous) {
+    if (year == null || (year >= 2024 && (!encrypted || !enabled)))
         return false;
-    return int(year) < 2024;
+
+    let synchronized = int(previous?.synchronized || 0);
+    let checked = previous?.uptime;
+    if (checked == null || uptime < checked)
+        return true;
+
+    // A successful sync covers the rest of this boot unless the wall clock
+    // steps away from the clock we synchronized by more than five minutes.
+    let expected = synchronized + uptime - checked;
+    if (year >= 2024 && synchronized > 0 && now >= expected - 300 && now <= expected + 300)
+        return false;
+    return synchronized > 0 || uptime - checked >= 45;
 }
 
 function sync_time_if_needed() {
-    if (!time_sync_needed(current_year()))
+    let settings = common.object_or_empty(uci_core.get_all(CONFIG_NAME, "settings"));
+    let ntp_config = ntp.configuration();
+    let transport = common.option(settings, "dns_type", "udp");
+    let encrypted = !common.bool_option(settings, "dns_use_provider", false) &&
+        (transport == "doh" || transport == "dot");
+    let previous = read_json_file(NTP_STARTUP_STATE);
+    if (!time_sync_needed(current_year(), encrypted, ntp_config.enabled, int(current_epoch()), int(clock(true)[0]), previous))
         return;
 
-    command_success_from_args([
-        "/usr/sbin/ntpd",
-        "-q",
-        "-p", "194.190.168.1",
-        "-p", "216.239.35.0",
-        "-p", "216.239.35.4",
-        "-p", "162.159.200.1",
-        "-p", "162.159.200.123"
-    ]);
+    // The ordinary sysntpd is already free to use configured hostnames.
+    // A startup probe must work without DNS or a valid TLS clock.
+    let peers = ntp_config.enabled ? filter(ntp_config.servers, value => core_ip.valid_ip(value)) : [];
+    if (length(peers) == 0)
+        peers = [ "194.190.168.1", "216.239.35.0", "216.239.35.4", "162.159.200.1", "162.159.200.123" ];
+    let args = [ "/usr/sbin/ntpd", "-n", "-q" ];
+    for (let address in peers)
+        push(args, "-p", address);
+    let synced = system(args, 12000) == 0;
+    common.write_private_json_file(NTP_STARTUP_STATE, {
+        uptime: int(clock(true)[0]),
+        synchronized: synced ? int(current_epoch()) : 0
+    });
+    if (!synced)
+        command_success_from_args([ "logger", "-t", "forkop", "[warn] Initial NTP synchronization unavailable" ]);
 }
 
 function mark_pending_reload(path, reason) {
@@ -1635,9 +1661,13 @@ function sing_box_signature_body(settings, sections, mwan3_active) {
     body = signature_add_value(body, "runtime.ipv6_tproxy", core_ip.ipv6_tproxy_enabled() ? "1" : "0");
 
     body = signature_add_value(body, "settings.dns_type", option(settings, "dns_type", "doh"));
+    body = signature_add_value(body, "runtime.bootstrap_dns_type", bootstrap_endpoint.protocol(settings));
     let provider_enabled = bool_option_value(settings, "dns_use_provider", false);
     body = signature_add_value(body, "settings.dns_use_provider", provider_enabled);
-    if (provider_enabled == "1")
+    let ntp_names = ntp.server_names();
+    if (length(ntp_names) > 0)
+        body = signature_add_value(body, "runtime.ntp_names", sprintf("%J", ntp_names));
+    if (provider_enabled == "1" || (length(ntp_names) > 0 && bootstrap_endpoint.protocol(settings) != "udp"))
         body = signature_add_value(body, "runtime.provider_dns", sprintf("%J", provider_dns.discover()));
     body = signature_add_value(body, "settings.dns_strategy", option(settings, "dns_strategy", "prefer_ipv4"));
     for (let value in list_option(settings, "dns_server", "77.88.8.8"))

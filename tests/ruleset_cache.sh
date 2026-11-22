@@ -29,11 +29,13 @@ output=''
 url=''
 speed_time=''
 speed_limit=''
+resolved=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --output) output="$2"; shift 2 ;;
     --speed-time) speed_time="$2"; shift 2 ;;
     --speed-limit) speed_limit="$2"; shift 2 ;;
+    --resolve) resolved="$2"; shift 2 ;;
     --proxy|--connect-timeout|--max-time) shift 2 ;;
     --fail|--location|--silent|--show-error) shift ;;
     *) url="$1"; shift ;;
@@ -41,8 +43,20 @@ while [ "$#" -gt 0 ]; do
 done
 [ "$speed_time" = 15 ] && [ "$speed_limit" = 1 ] || exit 1
 case "$url" in
-  *.json) cp "$RULESET_TEST_SOURCE_JSON" "$output" ;;
+  *.json)
+    if [ "${RULESET_TEST_BOOTSTRAP:-}" = 1 ] && [ "$resolved" != 'example.test:443:192.0.2.10' ]; then
+      exit 6
+    fi
+    cp "$RULESET_TEST_SOURCE_JSON" "$output" ;;
   *.srs) cp "$RULESET_TEST_SOURCE_SRS" "$output" ;;
+  *) exit 1 ;;
+esac
+EOF
+cat >"$WORK_DIR/bin/dig" <<'EOF'
+#!/bin/sh
+case "$*" in
+  *'@8.8.8.8 -p 853 -q example.test -t A '*' +tls +tls-ca=/etc/ssl/certs/ca-certificates.crt +tls-hostname=dns.google')
+    printf '192.0.2.10\n' ;;
   *) exit 1 ;;
 esac
 EOF
@@ -52,7 +66,7 @@ cat >"$FORKOP_XRUST_BIN" <<'EOF'
 [ "$3" = --format ] && [ "$4" = binary ] || exit 1
 [ -f "$5" ] && [ "$6" = forkop-validation.invalid ] || exit 1
 EOF
-chmod +x "$WORK_DIR/bin/curl" "$FORKOP_XRUST_BIN"
+chmod +x "$WORK_DIR/bin/curl" "$WORK_DIR/bin/dig" "$FORKOP_XRUST_BIN"
 
 cat >"$WORK_DIR/config.json" <<'EOF'
 {"route":{"rule_set":[
@@ -61,8 +75,10 @@ cat >"$WORK_DIR/config.json" <<'EOF'
 ]}}
 EOF
 cp "$WORK_DIR/config.json" "$WORK_DIR/config-prune.json"
+printf 'forkop.settings=settings\nforkop.settings.dns_type=dot\nforkop.settings.bootstrap_dns_server=8.8.8.8\n' >"$WORK_DIR/uci.state"
 
 PATH="$WORK_DIR/bin:$PATH" \
+RULESET_TEST_BOOTSTRAP=1 FORKOP_UCI_STATE_FILE="$WORK_DIR/uci.state" \
 RULESET_TEST_SOURCE_JSON="$WORK_DIR/source.json" \
 RULESET_TEST_SOURCE_SRS="$WORK_DIR/source.srs" \
 FORKOP_RULESET_CACHE_DIR="$WORK_DIR/cache" \

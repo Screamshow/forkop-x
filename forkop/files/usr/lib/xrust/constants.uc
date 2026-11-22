@@ -3,6 +3,7 @@
 const DNS_SERVER_TAG = "dns-server";
 const FAKEIP_DNS_SERVER_TAG = "fakeip-server";
 const BOOTSTRAP_DNS_SERVER_TAG = "bootstrap-dns-server";
+const NTP_DNS_SERVER_TAG = "ntp-dns-server";
 const DNSMASQ_DNS_SERVER_TAG = "dnsmasq-server";
 const FAKEIP_DNS_RULE_TAG = "fakeip-dns-rule-tag";
 const FAKEIP_RULESET_DNS_RULE_TAG = "fakeip-ruleset-dns-rule-tag";
@@ -43,6 +44,7 @@ const RESERVED_TAGS = {
     [DNS_SERVER_TAG]: true,
     [FAKEIP_DNS_SERVER_TAG]: true,
     [BOOTSTRAP_DNS_SERVER_TAG]: true,
+    [NTP_DNS_SERVER_TAG]: true,
     [DNSMASQ_DNS_SERVER_TAG]: true,
     [FAKEIP_DNS_RULE_TAG]: true,
     [FAKEIP_RULESET_DNS_RULE_TAG]: true,
@@ -84,6 +86,7 @@ return {
     DNS_SERVER_TAG,
     FAKEIP_DNS_SERVER_TAG,
     BOOTSTRAP_DNS_SERVER_TAG,
+    NTP_DNS_SERVER_TAG,
     DNSMASQ_DNS_SERVER_TAG,
     FAKEIP_DNS_RULE_TAG,
     FAKEIP_RULESET_DNS_RULE_TAG,

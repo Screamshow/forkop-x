@@ -719,8 +719,8 @@ msgstr ""
 msgid "DNS server used by the resolver"
 msgstr ""
 
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:257
-msgid "DNS server used to obtain IP addresses for upstream DNS and proxies. Enter an IPv4 or IPv6 address to avoid a DNS lookup during startup. If multiple servers are selected, a timeout switches to a backup."
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:356
+msgid "DNS server used to resolve upstream DNS and proxy hostnames directly through WAN. Enter an IPv4 or IPv6 address of a server that supports the selected protocol. If multiple servers are selected, a timeout switches to a backup."
 msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:246
@@ -775,6 +775,10 @@ msgstr ""
 msgid "Do not test specified servers."
 msgstr ""
 
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:169
+msgid "DoH (Bootstrap DNS over UDP)"
+msgstr ""
+
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:5472
 msgid "Domain and IP lists"
 msgstr ""
@@ -793,6 +797,10 @@ msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:701
 msgid "Dont Touch My DHCP!"
+msgstr ""
+
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:170
+msgid "DoT (Bootstrap DNS over UDP)"
 msgstr ""
 
 #: src/forkop/tabs/dashboard/initController.ts:1695
@@ -2269,8 +2277,8 @@ msgstr ""
 msgid "Select an intermediate section"
 msgstr ""
 
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:235
-msgid "Select DNS protocol to use"
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:331
+msgid "Select DNS protocol for main and Bootstrap DNS"
 msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:4961
@@ -2768,8 +2776,8 @@ msgstr ""
 msgid "Use another section as an intermediate hop to connect to servers in this section. Does not apply to network interfaces or JSON outbounds."
 msgstr ""
 
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:236
-msgid "Use DNS supplied by online WAN interfaces for main and Bootstrap DNS. With mwan3, each DNS uses its own WAN."
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:274
+msgid "Use DNS supplied by online WAN interfaces for main and Bootstrap DNS over UDP. With mwan3, each DNS uses its own WAN."
 msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:235

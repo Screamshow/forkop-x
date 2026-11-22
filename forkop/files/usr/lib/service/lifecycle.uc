@@ -965,11 +965,11 @@ function start_main() {
     if (status != 0)
         return start_phase_failed("bridge-netfilter", status);
 
-    module_success(STATE_UC, [ "sync-time-if-needed" ]);
-
     status = module_status(SUBSCRIPTION_CACHE_UC, [ "ensure-runtime-dirs" ]);
     if (status != 0)
         return start_phase_failed("runtime-dirs", status);
+
+    module_success(STATE_UC, [ "sync-time-if-needed" ]);
 
     if (!acquire_start_subscription_update_lock())
         return 1;

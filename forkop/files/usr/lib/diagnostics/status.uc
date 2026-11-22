@@ -624,6 +624,7 @@ function render_global_dns_check(dont_touch_dhcp) {
     let dns_type = object_value(value, "dns_type") || "unknown";
     let dns_server = object_value(value, "dns_server") || "unknown";
     let bootstrap_dns_server = object_value(value, "bootstrap_dns_server");
+    let bootstrap_dns_type = object_value(value, "bootstrap_dns_type") || "udp";
     let dns_position = number_value(value.dns_server_count) > 1
         ? " (priority " + as_string(number_value(value.dns_server_index) + 1) + "/" + as_string(number_value(value.dns_server_count)) + ")"
         : "";
@@ -633,7 +634,7 @@ function render_global_dns_check(dont_touch_dhcp) {
     let dump_dhcp_config = false;
 
     if (bootstrap_dns_server != "") {
-        print_line((flag_is_one(value.bootstrap_dns_status) ? "\u2705 Bootstrap DNS: " : "\u274c Bootstrap DNS: ") + bootstrap_dns_server + bootstrap_position);
+        print_line((flag_is_one(value.bootstrap_dns_status) ? "\u2705 Bootstrap DNS: " : "\u274c Bootstrap DNS: ") + bootstrap_dns_server + " [" + bootstrap_dns_type + "]" + bootstrap_position);
     }
 
     print_line((flag_is_one(value.dns_status) ? "\u2705 Main DNS: " : "\u274c Main DNS: ") + dns_server + " [" + dns_type + "]" + dns_position);

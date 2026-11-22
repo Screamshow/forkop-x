@@ -5,7 +5,7 @@ let common = require("core.common");
 let uci_core = require("core.uci");
 let connections = require("config.connections");
 let core_ip = require("core.ip");
-let core_url = require("core.url");
+let bootstrap_dns = require("dns.bootstrap");
 let xrust = require("xrust.binary");
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
 const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
@@ -2768,60 +2768,6 @@ function record_mirror_download_failure(state) {
     return true;
 }
 
-function list_bootstrap_dns_servers() {
-    let result = [];
-    let configured = uci_core.get(CONFIG_NAME + ".settings.bootstrap_dns_server");
-    if (type(configured) != "array")
-        configured = split(trim(as_string(configured)), /[ \t\r\n]+/);
-
-    for (let value in configured) {
-        let server = core_url.host(value);
-        if (core_ip.valid_ip(server))
-            push(result, server);
-    }
-    return result;
-}
-
-function list_bootstrap_resolve(url) {
-    let host = core_url.host(url);
-    if (host == "" || core_ip.valid_ip(host))
-        return null;
-
-    for (let server in list_bootstrap_dns_servers()) {
-        let output = command_output_from_args([ "nslookup", host, server ]);
-        let name_seen = false;
-        let ipv6_address = "";
-        for (let line in split(output, "\n")) {
-            line = trim(as_string(line));
-            if (index(line, "Name:") == 0) {
-                name_seen = true;
-                continue;
-            }
-            if (!name_seen)
-                continue;
-            let matched = match(line, /^Address([ \t]+[0-9]+)?:[ \t]*(.*)$/);
-            if (matched == null)
-                continue;
-            let address = trim(as_string(matched[2]));
-            if (core_ip.ip_family(address) == 4)
-                return {
-                    host,
-                    port: core_url.port(url) || (core_url.scheme(url) == "http" ? "80" : "443"),
-                    address
-                };
-            if (ipv6_address == "" && core_ip.ip_family(address) == 6)
-                ipv6_address = address;
-        }
-        if (ipv6_address != "")
-            return {
-                host,
-                port: core_url.port(url) || (core_url.scheme(url) == "http" ? "80" : "443"),
-                address: ipv6_address
-            };
-    }
-    return null;
-}
-
 function list_curl_args(url, filepath, proxy_address, resolve) {
     let args = [
         "curl", "-f", "-sS",
@@ -2873,7 +2819,7 @@ function download_to_file_with_bootstrap(url, filepath, proxy_address) {
     // Bootstrap connection; the direct path uses this fallback only on curl's
     // explicit name-resolution failure code.
     if (status == 6 && as_string(proxy_address) == "") {
-        let resolved = list_bootstrap_resolve(url);
+        let resolved = bootstrap_dns.resolve_url(url, bootstrap_dns.configured());
         if (resolved != null) {
             log_message("Retrying remote list download with Bootstrap DNS", "info");
             status = download_to_file_once(url, filepath, proxy_address, resolved);
@@ -2947,7 +2893,7 @@ function dns_probe_passed(proxy_address) {
         return true;
     }
 
-    let bootstrap_available = length(list_bootstrap_dns_servers()) > 0;
+    let bootstrap_available = length(bootstrap_dns.configured().servers) > 0;
     let attempt = 1;
     while (attempt <= 10) {
         let output = command_output_from_args([ "dig", "+short", "openwrt.org", "A", "+timeout=3", "+tries=1" ]);

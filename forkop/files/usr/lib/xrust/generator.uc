@@ -15,6 +15,7 @@ let subscription_previous_password_connections = {};
 let runtime_xray_client_features = [];
 let runtime_country = require("xrust.country");
 let runtime_dns = require("xrust.dns");
+let ntp = require("dns.ntp");
 let runtime_route = require("xrust.route");
 let runtime_rulesets = require("xrust.rulesets");
 let runtime_subscription = require("xrust.subscription");
@@ -494,33 +495,12 @@ function source_dns_inbound_matcher() {
     return [ runtime_constants.SOURCE_DNS_INBOUND_TAG ];
 }
 
-// The names sysntpd dials, from /etc/config/system. A router without a clock of
-// its own boots months in the past, and DNS over TLS or HTTPS then refuses the
-// server's certificate as not yet valid: the names get no address, sysntpd never
-// sets the clock, and the next boot repeats it. Addresses need no lookup, and
-// nothing is collected while sysntpd is off.
-function ntp_server_names() {
-    let ntp = object_or_empty(uci_core.get_all("system", "ntp"));
-    if (!bool_option(ntp, "enabled", true))
-        return [];
-
-    let names = [];
-    let seen = {};
-    for (let value in list_option(ntp, "server")) {
-        value = trim(as_string(value));
-        if (value == "" || seen[value] || core_ip.valid_ip(value))
-            continue;
-        seen[value] = true;
-        push(names, value);
-    }
-    return names;
-}
-
 function base_config(settings, service_address, runtime_context) {
     let log_level = option(settings, "log_level", "warn");
     let rewrite_ttl = int_option(settings, "dns_rewrite_ttl", "60");
     let cache_path = cache_identity.path(option(settings, "cache_path", "/tmp/xrust/cache.db"));
-    let dns_config = runtime_dns.config_from_state(runtime_context.dns_state);
+    let ntp_servers = runtime_context.ntp_servers;
+    let dns_config = runtime_dns.config_from_state(runtime_context.dns_state, length(ntp_servers) > 0);
     if (dns_config.provider_unavailable) {
         warn(dns_config.unsupported, "\n");
         exit(runtime_constants.PROVIDER_DNS_UNAVAILABLE);
@@ -546,13 +526,12 @@ function base_config(settings, service_address, runtime_context) {
 
     // The router's own lookups share dns-in with the clients dnsmasq forwards,
     // so the rule cannot be narrowed to one listener. It stands ahead of the
-    // sections, so a FakeIP address cannot reach sysntpd either; the bootstrap
-    // servers are plain and answer with a clock months behind.
-    let ntp_servers = ntp_server_names();
+    // sections, so a FakeIP address cannot reach sysntpd. NTP name resolution
+    // uses plain DNS even when the configured DNS transport requires TLS.
     if (length(ntp_servers) > 0)
         push(dns_rules, {
             action: "route",
-            server: runtime_constants.BOOTSTRAP_DNS_SERVER_TAG,
+            server: dns_config.ntp_server,
             domain: ntp_servers
         });
 
@@ -2698,7 +2677,7 @@ function add_connection_json_outbounds(config, state, section, taken, selector_t
     }
 }
 
-function add_connections_outbound(config, section, taken) {
+function add_connections_outbound(config, section, taken, dns_state) {
     let section_name = section[".name"];
     let selector_tags = [];
     let urltest_candidate_tags = [];
@@ -2769,7 +2748,7 @@ function add_connections_outbound(config, section, taken) {
         state.outboundMetadata.countries = runtime_country.detect(
             state.servers,
             previous_state,
-            option(runtime_settings(), "bootstrap_dns_server", "77.88.8.8")
+            dns_state
         );
     }
     if (section_has_direct_priority_level(section))
@@ -3618,7 +3597,7 @@ function unsupported_matcher_key(section) {
     return "";
 }
 
-function add_outbound_for_section(config, section, taken, sections) {
+function add_outbound_for_section(config, section, taken, dns_state) {
     let action = option(section, "action", "");
     let section_name = section[".name"];
     if (!valid_section_name(section_name))
@@ -3628,7 +3607,7 @@ function add_outbound_for_section(config, section, taken, sections) {
         runtime_generate_unsupported("section has unsupported matcher " + unsupported_matcher);
 
     if (connections.is_connections_action(action))
-        add_connections_outbound(config, section, taken);
+        add_connections_outbound(config, section, taken, dns_state);
     else if (action == "bypass") {
         /* route-only action */
     }
@@ -3752,6 +3731,7 @@ function generate_config(output_path, service_address, mwan3_active, supports_xh
     let dns_state = runtime_dns.runtime_state(settings);
     let config = base_config(settings, service_address, {
         dns_state,
+        ntp_servers: bootstrap_lists ? [] : ntp.server_names(),
         supports_bittorrent_direct: cli_bool(supports_bittorrent_direct),
         mwan3_active: cli_bool(mwan3_active),
         source_aware_dns: length(source_aware_dns) > 0
@@ -3762,7 +3742,7 @@ function generate_config(output_path, service_address, mwan3_active, supports_xh
     let taken = reserved_runtime_tag_set(config.outbounds);
     reserve_section_outbound_tags(sections, taken);
     for (let section in sections)
-        add_outbound_for_section(config, section, taken, sections);
+        add_outbound_for_section(config, section, taken, dns_state);
     if (bootstrap_lists) {
         // Only the selected connection is exposed locally. No list-dependent
         // routes, traffic interception, DNS listener or shared runtime cache.

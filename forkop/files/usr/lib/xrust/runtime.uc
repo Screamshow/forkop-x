@@ -619,7 +619,10 @@ function commit_config_stage(stage_path, backup_path, applied_path) {
 function replace_dns_server(config, replacement) {
     let servers = array_or_empty(object_or_empty(config.dns).servers);
     for (let i = 0; i < length(servers); i++) {
-        if (as_string(object_or_empty(servers[i]).tag) == as_string(replacement.tag)) {
+        let current = object_or_empty(servers[i]);
+        if (current.tag == replacement.tag) {
+            if (current.type != replacement.type)
+                return false;
             servers[i] = replacement;
             return true;
         }
@@ -644,7 +647,7 @@ function patch_dns_config(state_path, prepare_only) {
 
     let main = runtime_dns.server_config_from_state(candidate);
     let bootstrap = runtime_dns.bootstrap_config_from_state(candidate);
-    if (main.unsupported || !replace_dns_server(config, main) || !replace_dns_server(config, bootstrap)) {
+    if (main.unsupported || bootstrap.unsupported || !replace_dns_server(config, main) || !replace_dns_server(config, bootstrap)) {
         log_message("Cannot locate or build canonical DNS servers for failover", "error");
         exit(1);
     }
@@ -652,6 +655,9 @@ function patch_dns_config(state_path, prepare_only) {
     let servers = config.dns.servers;
     for (let i = 0; i < length(servers); i++) {
         let server = servers[i];
+        if (server.type == "udp" && (server.tag == runtime_dns.NTP_BOOTSTRAP_FALLBACK_TAG ||
+            (server.tag == runtime_constants.NTP_DNS_SERVER_TAG && server.detour == null)))
+            server.server = bootstrap.server;
         if (index(as_string(server.tag), runtime_dns.TUNNEL_DNS_TAG_PREFIX) != 0)
             continue;
         let section_name = substr(server.tag, length(runtime_dns.TUNNEL_DNS_TAG_PREFIX));

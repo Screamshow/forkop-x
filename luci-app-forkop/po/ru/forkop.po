@@ -500,8 +500,8 @@ msgstr "Адрес DNS-сервера не может быть пустым"
 msgid "DNS server used by the resolver"
 msgstr "DNS-сервер, который будет использовать резолвер"
 
-msgid "DNS server used to obtain IP addresses for upstream DNS and proxies. Enter an IPv4 or IPv6 address to avoid a DNS lookup during startup. If multiple servers are selected, a timeout switches to a backup."
-msgstr "DNS-сервер для получения IP вышестоящих DNS и прокси. Укажите адрес IPv4 или IPv6, чтобы при запуске не требовалось разрешать доменное имя. Если выбрать несколько серверов, при таймауте произойдёт переключение на резервный."
+msgid "DNS server used to resolve upstream DNS and proxy hostnames directly through WAN. Enter an IPv4 or IPv6 address of a server that supports the selected protocol. If multiple servers are selected, a timeout switches to a backup."
+msgstr "Определяет IP-адреса вышестоящих DNS-серверов и прокси напрямую через WAN. Укажите IPv4 или IPv6 сервера, который поддерживает выбранный протокол. Если указано несколько серверов, при тайм-ауте используется резервный."
 
 msgid "DNS Servers"
 msgstr "DNS-серверы"
@@ -542,6 +542,9 @@ msgstr "Не тестировать серверы с одним из выбра
 msgid "Do not test specified servers."
 msgstr "Не тестировать указанные серверы."
 
+msgid "DoH (Bootstrap DNS over UDP)"
+msgstr "DoH (Bootstrap DNS по UDP)"
+
 msgid "Domain and IP lists"
 msgstr "Списки доменов и IP"
 
@@ -556,6 +559,9 @@ msgstr "Домены"
 
 msgid "Dont Touch My DHCP!"
 msgstr "Отключить управление DHCP"
+
+msgid "DoT (Bootstrap DNS over UDP)"
+msgstr "DoT (Bootstrap DNS по UDP)"
 
 msgid "Downlink"
 msgstr "Входящий"
@@ -1586,8 +1592,8 @@ msgstr "Выберите существующий сетевой интерфе�
 msgid "Select an intermediate section"
 msgstr "Выберите промежуточную секцию"
 
-msgid "Select DNS protocol to use"
-msgstr "Выберите протокол DNS"
+msgid "Select DNS protocol for main and Bootstrap DNS"
+msgstr "Выберите протокол для основного и Bootstrap DNS"
 
 msgid "Select network interface for VPN connection"
 msgstr "Выберите сетевой интерфейс для VPN-подключения"
@@ -1931,8 +1937,8 @@ msgstr "Настройки URLTest сохранены"
 msgid "Use another section as an intermediate hop to connect to servers in this section. Does not apply to network interfaces or JSON outbounds."
 msgstr "Использовать другую секцию как промежуточный узел подключения к серверам этой секции. Не применяется к сетевым интерфейсам и JSON outbound."
 
-msgid "Use DNS supplied by online WAN interfaces for main and Bootstrap DNS. With mwan3, each DNS uses its own WAN."
-msgstr "Основной и Bootstrap DNS берутся с доступных WAN. С mwan3 каждый DNS использует свой WAN."
+msgid "Use DNS supplied by online WAN interfaces for main and Bootstrap DNS over UDP. With mwan3, each DNS uses its own WAN."
+msgstr "Основной и Bootstrap DNS используют UDP и адреса с доступных WAN-интерфейсов. С mwan3 каждый DNS использует свой WAN."
 
 msgid "Use provider DNS"
 msgstr "Использовать DNS провайдера"

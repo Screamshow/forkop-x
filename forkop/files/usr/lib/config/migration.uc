@@ -1084,6 +1084,13 @@ function migrate_dns_server_lists(ctx) {
     normalize_existing_list_option(ctx, ctx.model.settings, "bootstrap_dns_server");
 }
 
+function migrate_bootstrap_dns_protocol(ctx) {
+    let settings = ctx.model.settings;
+    let protocol = option(settings, "dns_type", "udp");
+    if (protocol == "doh" || protocol == "dot")
+        set_option(ctx, settings, "bootstrap_dns_legacy_type", protocol);
+}
+
 function migrate_download_via_proxy_flags(ctx) {
     let settings = ctx.model.settings;
     let legacy_section = option(settings, "download_lists_via_proxy_section", "");
@@ -1499,7 +1506,8 @@ const MIGRATIONS = [
     { id: "secondary_rulesets_mirror_v1", run: migrate_secondary_rulesets_to_mirror },
     { id: "default_subscription_exclude_regex_v1", run: migrate_default_subscription_exclude_regex },
     { id: "support_operator_ip_v1", run: migrate_support_operator_ip },
-    { id: "xrust_paths_v1", run: migrate_xrust_paths }
+    { id: "xrust_paths_v1", run: migrate_xrust_paths },
+    { id: "bootstrap_dns_protocol_v1", run: migrate_bootstrap_dns_protocol }
 ];
 
 function apply_migrations(ctx) {

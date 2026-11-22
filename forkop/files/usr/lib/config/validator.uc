@@ -8,6 +8,7 @@ let subscription_parser_module = null;
 let constants_module = null;
 let core_url = require("core.url");
 let core_ip = require("core.ip");
+let bootstrap_endpoint = require("dns.bootstrap_endpoint");
 let rule_config = require("config.rule");
 let connections = require("config.connections");
 
@@ -675,6 +676,8 @@ function validate_dns_settings(settings, sections, context) {
 
     let main_servers = dns_setting_values(settings, "dns_server");
     let bootstrap_servers = dns_setting_values(settings, "bootstrap_dns_server");
+    let use_provider = bool_option(settings, "dns_use_provider", false);
+    let bootstrap_protocol = bootstrap_endpoint.protocol(settings);
     if (length(main_servers) == 0)
         fail_validation("At least one main DNS server is required. Aborted.");
     if (length(bootstrap_servers) == 0)
@@ -683,10 +686,11 @@ function validate_dns_settings(settings, sections, context) {
         if (!dns_server_value_valid(value))
             fail_validation("Invalid main DNS server '" + value + "'. Aborted.");
     for (let value in bootstrap_servers) {
-        if (!dns_server_value_valid(value))
-            fail_validation("Invalid Bootstrap DNS server '" + value + "'. Aborted.");
-        if (!core_ip.valid_ip(core_url.host(value)))
-            log_message("Bootstrap DNS server '" + value + "' uses a hostname; set an IP address to avoid a startup DNS dependency", "warn");
+        let endpoint = bootstrap_endpoint.parse(value, bootstrap_protocol, true);
+        if (use_provider ? !dns_server_value_valid(value) : !endpoint)
+            fail_validation("Invalid Bootstrap DNS server. Use an IPv4 or IPv6 address, optionally with a port and a DoH path. Aborted.");
+        if (!use_provider && !core_ip.valid_ip(endpoint.address))
+            log_message("Bootstrap DNS server '" + endpoint.address + "' uses a hostname; set an IP address to avoid a startup DNS dependency", "warn");
     }
 
     if (length(main_servers) > 1 || length(bootstrap_servers) > 1) {
@@ -697,7 +701,7 @@ function validate_dns_settings(settings, sections, context) {
             fail_validation("DNS failover failure threshold must be a positive integer. Aborted.");
     }
 
-    if (bool_option(settings, "dns_use_provider", false) || !bool_option(settings, "dns_detour_enabled", false))
+    if (use_provider || !bool_option(settings, "dns_detour_enabled", false))
         return;
 
     let target_name = option(settings, "dns_detour_section", "");

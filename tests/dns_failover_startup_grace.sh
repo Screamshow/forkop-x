@@ -116,6 +116,15 @@ assert(selection.config_path == "/active/config.json");
 assert(dns.server_config_from_state(selection).server == "192.0.2.2");
 assert(dns.failover_selection(applied, {...applied, main_index: 2}) == null);
 assert(dns.failover_selection(applied, {...applied, main_servers: ["192.0.2.3"]}) == null);
+
+let encrypted = dns.state_template({dns_type: "doh", bootstrap_dns_server: ["77.88.8.8", "[2001:db8::53]:8443/custom"]});
+let failover = dns.failover_selection(encrypted, {...encrypted, bootstrap_index: 1});
+let resolver = dns.bootstrap_config_from_state(failover);
+assert(resolver.type == "https" && resolver.server == "2001:db8::53" && resolver.server_port == 8443);
+assert(resolver.path == "/custom" && resolver.detour == null && resolver.domain_resolver == null);
+assert(resolver.tls.server_name == "[2001:db8::53]" && resolver.tls.disable_sni &&
+    resolver.tls.verify_server_name == "2001:db8::53" && resolver.tls.insecure == null);
+assert(dns.failover_selection(encrypted, {...encrypted, dns_type: "udp"}) == null);
 '
 
 cat > "$WORK/uci" <<'UCI'

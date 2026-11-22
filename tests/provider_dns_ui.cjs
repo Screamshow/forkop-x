@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname,'../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js'),'utf8');
 const start = source.indexOf('  const providerOption =');
-const end = source.indexOf('  let o = section.option(', start);
+const end = source.indexOf('  const dnsProtocol = section.option(', start);
 let enabled='0';
 const flag={formvalue:()=>enabled,cfgvalue:()=>enabled};
 const create = new Function('section','form','_','E','fs','uci','UCI_PACKAGE',source.slice(start,end)+';return {renderProviderList,providerOption};');
@@ -12,6 +12,103 @@ const ui=create({option:()=>flag},{Flag:{}},x=>x,(tag,attrs,children)=>({tag,...
   {get:()=>enabled},'forkop');
 const manual={saved:['https://dns.example/dns-query'],renderWidget(){return {manual:true};}};
 ui.renderProviderList(manual);
+
+const helpers = source.slice(
+  source.indexOf('function optionListValues('),
+  source.indexOf('function configureDnsFailoverVisibility('),
+);
+const fields = source.slice(
+  source.indexOf('  const dnsProtocol = section.option('),
+  source.indexOf('  let o = section.option('),
+);
+const createDnsFields = new Function('section', 'form', 'main', '_', 'uci', 'UCI_PACKAGE',
+  'L', 'providerEnabled', 'renderProviderList',
+  `${helpers}\n${fields}\nreturn { dnsProtocol, bootstrapOption };`);
+
+function fixture(type, legacy, savedServers) {
+  const saved = { dns_type: type, bootstrap_dns_server: savedServers };
+  if (legacy !== undefined) saved.bootstrap_dns_legacy_type = legacy;
+  const writes = [];
+  const uci = {
+    get(_package, _section, name) { return saved[name]; },
+    unset(_package, _section, name) { delete saved[name]; writes.push([name]); },
+  };
+  const section = {
+    option(_type, name) {
+      return {
+        keylist: [], vallist: [], current: saved[name], configured: saved[name], active: true,
+        value(value, label) { this.keylist.push(value); this.vallist.push(label); },
+        depends() {},
+        isActive() { return this.active; },
+        formvalue() { return this.current; },
+        cfgvalue() { return this.configured; },
+        write(_section, value) { saved[name] = value; writes.push([name, value]); },
+        parse(id) {
+          if (!this.active && this.retain) return;
+          if (this.current !== this.configured) this.write(id, this.current);
+        },
+      };
+    },
+  };
+  const main = {
+    DNS_SERVER_OPTIONS: {}, BOOTSTRAP_DNS_SERVER_OPTIONS: {},
+    validateDNS: () => ({ valid: true }),
+    validateBootstrapDNS: (value) => ({
+      valid: /^\d/.test(value),
+      message: 'Bootstrap DNS must use an IPv4 or IPv6 address',
+    }),
+  };
+  const state = { provider: false };
+  const L = { toArray: (value) => Array.isArray(value) ? value : value == null ? [] : [value] };
+  const { dnsProtocol, bootstrapOption } = createDnsFields(section, {}, main, (value) => value,
+    uci, 'forkop', L, () => state.provider, () => {});
+  dnsProtocol.configured = dnsProtocol.load('settings');
+  dnsProtocol.current = dnsProtocol.configured;
+  return { saved, writes, dnsProtocol, bootstrapOption, state };
+}
+
+async function testLegacyProtocolSelection() {
+  for (const type of ['doh', 'dot']) {
+    const { saved, writes, dnsProtocol, bootstrapOption, state } =
+      fixture(type, type, ['resolver.lan', '1.1.1.1:53']);
+    assert.equal(dnsProtocol.current, `legacy-${type}`);
+    assert.equal(dnsProtocol.keylist.length, 4);
+    assert.match(dnsProtocol.vallist[3], /Bootstrap DNS over UDP/);
+    await dnsProtocol.parse('settings');
+    await dnsProtocol.write('settings', `legacy-${type}`);
+    assert.deepEqual(writes, []);
+    assert.equal(saved.bootstrap_dns_legacy_type, type);
+    assert.equal(bootstrapOption.validate('settings', 'resolver.lan'), true);
+    assert.notEqual(bootstrapOption.validate('settings', 'new-resolver.lan'), true);
+
+    dnsProtocol.active = false;
+    state.provider = true;
+    dnsProtocol.current = type;
+    await dnsProtocol.parse('settings');
+    assert.deepEqual(writes, []);
+    assert.equal(bootstrapOption.validate('settings', 'resolver.lan'), true);
+
+    dnsProtocol.active = true;
+    state.provider = false;
+    await assert.rejects(dnsProtocol.parse('settings'), /IPv4 or IPv6 address/);
+    assert.deepEqual(writes, []);
+    assert.notEqual(bootstrapOption.validate('settings', 'resolver.lan'), true);
+    bootstrapOption.current = ['1.1.1.1'];
+    await dnsProtocol.parse('settings');
+    assert.deepEqual(writes, [['dns_type', type], ['bootstrap_dns_legacy_type']]);
+    assert.equal(dnsProtocol.load('settings'), type);
+    assert.deepEqual(dnsProtocol.keylist, ['doh', 'dot', 'udp']);
+  }
+
+  const fresh = fixture('udp', undefined, ['1.1.1.1']);
+  assert.equal(fresh.dnsProtocol.current, 'udp');
+  assert.deepEqual(fresh.dnsProtocol.keylist, ['doh', 'dot', 'udp']);
+  const mismatched = fixture('dot', 'doh', ['1.1.1.1']);
+  assert.equal(mismatched.dnsProtocol.current, 'dot');
+  assert.equal(mismatched.dnsProtocol.keylist.length, 3);
+  console.log('Bootstrap DNS legacy selection, save and validation checks passed');
+}
+
 (async()=>{
  const widget=await manual.renderWidget('settings');
  await Promise.resolve();
@@ -35,4 +132,5 @@ ui.renderProviderList(manual);
  assert.equal(initial.children[0].style.display,'none');
  assert.equal(initial.children[1].style.display,'');
  console.log('Provider DNS UI toggle and manual preservation checks passed');
+ await testLegacyProtocolSelection();
 })().catch(e=>{console.error(e);process.exitCode=1;});
