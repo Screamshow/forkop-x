@@ -28,6 +28,7 @@ const LEGACY_PERSISTENT_LIST_CACHE_FORMAT = "1";
 const LIST_GENERATION_FAIL_PHASE = getenv("FORKOP_LIST_GENERATION_FAIL_PHASE") || "";
 const LIST_UPDATE_STATE_FILE = getenv("FORKOP_LIST_UPDATE_STATE_FILE") || PERSISTENT_LIST_CACHE_DIR + "/last-success.timestamp";
 const LIST_UPDATE_RUNTIME_STATE_FILE = getenv("FORKOP_LIST_UPDATE_RUNTIME_STATE_FILE") || RUNTIME_STATE_DIR + "/list-update-last-success.timestamp";
+const LIST_UPDATE_ATTEMPT_FILE = RUNTIME_STATE_DIR + "/list-update-last-attempt.timestamp";
 const LIST_UPDATE_RUNTIME_SIGNATURE_FILE = getenv("FORKOP_LIST_UPDATE_RUNTIME_SIGNATURE_FILE") || RUNTIME_STATE_DIR + "/list-update-signature";
 const LIST_CACHE_LOG_STATE_FILE = getenv("FORKOP_LIST_CACHE_LOG_STATE_FILE") || RUNTIME_STATE_DIR + "/list-cache-restore.log-state";
 const LIST_SRS_VALIDATION_DIR = getenv("FORKOP_LIST_SRS_VALIDATION_DIR") || RUNTIME_STATE_DIR + "/validated-list-srs";
@@ -65,6 +66,9 @@ const COMPONENT_JOB_DIR = getenv("UPDATES_JOB_DIR") || getenv("FORKOP_UI_COMPONE
 const COMPONENT_UPDATE_CHECK_CACHE_DIR = getenv("FORKOP_COMPONENT_UPDATE_CHECK_CACHE_DIR") || RUNTIME_STATE_DIR + "/component-update-checks";
 const COMPONENT_UPDATE_CHECK_STATE_FILE = getenv("FORKOP_COMPONENT_UPDATE_CHECK_STATE_FILE") || RUNTIME_STATE_DIR + "/component-update-check.timestamp";
 const COMPONENT_UPDATE_CHECK_LOCK_DIR = getenv("FORKOP_COMPONENT_UPDATE_CHECK_LOCK_DIR") || RUNTIME_STATE_DIR + "/component-update-check.lock";
+// These jobs use the elapsed time from their timestamps. Calendar steps
+// such as */45 can skip the first eligible minute after an hour boundary.
+const SCHEDULED_UPDATE_POLL_CRON = "* * * * *";
 const COMPONENT_JOB_FINISHED_TTL_MINUTES = getenv("UPDATES_JOB_FINISHED_TTL_MINUTES") || "60";
 const COMPONENT_JOB_ORPHAN_OUTPUT_TTL_MINUTES = getenv("UPDATES_JOB_ORPHAN_OUTPUT_TTL_MINUTES") || "60";
 const COMPONENT_JOB_STALE_GRACE_SECONDS = getenv("UPDATES_JOB_STALE_GRACE_SECONDS") || getenv("FORKOP_UI_ACTION_STALE_GRACE_SECONDS") || "15";
@@ -1344,6 +1348,14 @@ function duration_to_seconds_value(value) {
     return int(total + 0.5);
 }
 
+function scheduled_update_seconds(interval) {
+    let seconds = duration_to_seconds_value(interval);
+    if (seconds == null || seconds < 0 || seconds > 9007199254740991)
+        return null;
+    // Older LuCI builds accepted positive intervals below the cron tick.
+    return max(60, seconds);
+}
+
 function due_check_cron_schedule_text(value) {
     let seconds = arg_number(value);
 
@@ -1423,6 +1435,14 @@ function settings_component_update_check_interval(settings) {
     return value != "" ? value : "1d";
 }
 
+function scheduled_list_update_status(settings, now) {
+    let interval = settings_update_interval(settings);
+    if (interval == "")
+        return 1;
+    let last_attempt = unsigned_number(file_first_line_value(LIST_UPDATE_ATTEMPT_FILE)) ?? 0;
+    return update_due_status(now, max(list_update_last_success(), last_attempt), scheduled_update_seconds(interval));
+}
+
 function section_subscription_update_interval(section) {
     let result = "";
     let result_seconds = 0;
@@ -1492,13 +1512,13 @@ function cron_refresh_plan_rows(settings, sections, bin, list_marker, subscripti
             push(rows, "list-disabled");
         }
         else {
-            let seconds = duration_to_seconds_value(interval);
+            let seconds = scheduled_update_seconds(interval);
             if (seconds == null) {
                 push(rows, "list-error\t" + as_string(interval));
                 status = 1;
             }
             else {
-                push(rows, "list\t" + due_check_cron_schedule_text(seconds) + " " + as_string(bin) + " list_update_if_due " + as_string(list_marker));
+                push(rows, "list\t" + SCHEDULED_UPDATE_POLL_CRON + " " + as_string(bin) + " list_update_if_due " + as_string(list_marker));
             }
         }
     }
@@ -1534,13 +1554,13 @@ function cron_refresh_plan_rows(settings, sections, bin, list_marker, subscripti
 
     let component_interval = settings_component_update_check_interval(settings);
     if (component_interval != "") {
-        let component_seconds = duration_to_seconds_value(component_interval);
+        let component_seconds = scheduled_update_seconds(component_interval);
         if (component_seconds == null) {
             push(rows, "component-error\t" + as_string(component_interval));
             status = 1;
         }
         else {
-            push(rows, "component\t" + due_check_cron_schedule_text(component_seconds) + " " + as_string(bin) + " component_updates_if_due " + as_string(component_marker));
+            push(rows, "component\t" + SCHEDULED_UPDATE_POLL_CRON + " " + as_string(bin) + " component_updates_if_due " + as_string(component_marker));
         }
     }
 
@@ -1660,7 +1680,7 @@ function list_update_due_status(settings, timestamp_path, now) {
     if (interval == "")
         exit(1);
 
-    let seconds = duration_to_seconds_value(interval);
+    let seconds = scheduled_update_seconds(interval);
     if (seconds == null) {
         print("error\t", interval, "\n");
         exit(2);
@@ -2595,7 +2615,7 @@ function component_updates_if_due() {
     if (interval == "")
         exit(0);
 
-    let seconds = duration_to_seconds_value(interval);
+    let seconds = scheduled_update_seconds(interval);
     if (seconds == null) {
         log_message("Invalid component_update_check_interval value: " + interval, "error");
         exit(1);
@@ -3719,7 +3739,7 @@ function finish_list_update(status, applied, generation_changed) {
     exit(status == 0 ? 0 : 1);
 }
 
-function list_update(reuse_sources) {
+function list_update(reuse_sources, scheduled) {
     log_message(reuse_sources ? "Preparing changed list sources; reusing validated cache" : "Starting lists update", "info");
     if (!list_update_pid_begin()) {
         if (as_string(getenv("FORKOP_MANUAL_RESTART_LOCK_HELD") || "0") == "1") {
@@ -3733,14 +3753,32 @@ function list_update(reuse_sources) {
     // a startup or config reload must settle before this worker opens requests
     // through the Xrust service proxy.  Conversely, init.d queues reloads
     // that arrive while this lock is held, and finish_list_update() runs them.
-    if (as_string(getenv("FORKOP_MANUAL_RESTART_LOCK_HELD") || "0") != "1" && !acquire_runtime_lock(RELOAD_LOCK_DIR, true)) {
+    let owns_reload_lock = getenv("FORKOP_MANUAL_RESTART_LOCK_HELD") != "1";
+    if (owns_reload_lock && !acquire_runtime_lock(RELOAD_LOCK_DIR, true)) {
         log_message("Lists update skipped because Forkop reload did not release the runtime lock", "warn");
         list_update_pid_end();
         exit(1);
     }
 
-    list_mirror_download_state = {};
     let settings = uci_settings();
+    if (scheduled) {
+        // Recheck under the lifecycle lock in case a manual update completed
+        // while cron was waiting. Record attempts separately from cache success.
+        let now = now_seconds();
+        let due = scheduled_list_update_status(settings, now);
+        if (due == 0 && (!ensure_parent_dir(LIST_UPDATE_ATTEMPT_FILE) ||
+                !write_file(LIST_UPDATE_ATTEMPT_FILE, as_string(now) + "\n"))) {
+            log_message("Failed to write list update attempt timestamp", "error");
+            due = 2;
+        }
+        if (due != 0) {
+            list_update_pid_end();
+            if (owns_reload_lock)
+                release_runtime_lock(RELOAD_LOCK_DIR);
+            exit(due == 1 ? 0 : 1);
+        }
+    }
+    list_mirror_download_state = {};
     list_update_signature_at_start = current_list_update_signature();
     if (list_update_signature_at_start == "")
         finish_list_update(1, false);
@@ -3828,39 +3866,24 @@ function list_update_after_start() {
         list_update();
     }
 
-    let interval = settings_update_interval(uci_settings());
-    if (interval == "") {
-        run_deferred_ruleset_refresh();
-        exit(0);
-    }
-    let seconds = duration_to_seconds_value(interval);
-    if (seconds == null)
-        exit(1);
-    let status = update_due_status(now_seconds(), list_update_last_success(), seconds);
+    let status = scheduled_list_update_status(uci_settings(), now_seconds());
     if (status == 0)
-        list_update();
+        list_update(false, true);
     run_deferred_ruleset_refresh();
     exit(status == 1 ? 0 : 1);
 }
 
 function list_update_if_due() {
-    let interval = settings_update_interval(uci_settings());
+    let settings = uci_settings();
+    let interval = settings_update_interval(settings);
     if (interval == "")
         exit(1);
-
-    let seconds = duration_to_seconds_value(interval);
-    if (seconds == null) {
-        log_message("Invalid update_interval value: " + interval, "error");
-        exit(1);
-    }
-
-    let status = update_due_status(now_seconds(), list_update_last_success(), seconds);
+    let status = scheduled_list_update_status(settings, now_seconds());
     if (status == 0)
-        list_update();
-    if (status == 1)
-        exit(0);
-
-    exit(1);
+        list_update(false, true);
+    if (status == 2)
+        log_message("Invalid update_interval value: " + interval, "error");
+    exit(status == 1 ? 0 : 1);
 }
 
 function stop_list_update() {

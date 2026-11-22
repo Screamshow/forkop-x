@@ -4,7 +4,7 @@
 8f8391cb39618ba976e1df24422f2d5e3f19e9e811708e590fcb477387369492  htdocs/luci-static/resources/view/forkop/local_devices.js
 715d6f41fd9cc4603f4a676dd3c46166e60b33e87b1514acaccc220df855fcd1  htdocs/luci-static/resources/view/forkop/monitoring.js
 5dc2e5629aec2e16b72f0cf9184f10f77d91764331076edb82f0d0f6cc08871a  htdocs/luci-static/resources/view/forkop/section.js
-4b0624231ebc0794ca2d60cf14872f66d2b2b968d77b94a9338aff15dd9b085a  htdocs/luci-static/resources/view/forkop/settings.js
+845b4f171689d0a046c88da5e3ad1de7a7ed2806c6adb07736d585822a924d4f  htdocs/luci-static/resources/view/forkop/settings.js
 3268c3a44e6d4318d0995df2c893535c5afe704de66b44cbaf7311136ee54d55  htdocs/luci-static/resources/view/forkop/tailscale.js
 8ae43432f6ca9113ae27e456e7e7d54f35fd9f1b823d9e2b39b0e0d809dc9507  htdocs/luci-static/resources/view/forkop/updates.js
 31887c812fa99312d502783496368d39b5fae940bddb17558e26ede1f1401cf3  htdocs/luci-static/resources/view/forkop/whatsapp.js

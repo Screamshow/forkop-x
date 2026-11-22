@@ -1320,10 +1320,7 @@ describe('getDashboardSections', () => {
   });
 
   it('fetches Clash API proxies directly in the browser to avoid rpcd output limits', async () => {
-    mocks.getConfigSections.mockResolvedValue([
-      { '.name': 'settings', '.type': 'settings', yacd_secret_key: 'secret' },
-      proxySection(),
-    ]);
+    mocks.getConfigSections.mockResolvedValue([proxySection()]);
     mocks.canUseDirectClashApi.mockReturnValue(true);
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -1338,10 +1335,7 @@ describe('getDashboardSections', () => {
     expect(result.success).toBe(true);
     expect(fetchMock).toHaveBeenCalledWith(
       'http://router.example:9090/proxies',
-      expect.objectContaining({
-        headers: { Authorization: 'Bearer secret' },
-        signal: expect.anything(),
-      }),
+      { signal: expect.anything() },
     );
     expect(mocks.getClashApiProxies).not.toHaveBeenCalled();
   });

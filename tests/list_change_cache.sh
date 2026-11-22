@@ -166,4 +166,67 @@ for attempt in 1 2; do
 done
 [ "$(wc -l <"$TEST_CRON_LOG")" -eq 1 ] || fail 'unchanged cron was rewritten'
 grep -q 'unrelated-job' "$FORKOP_CRONTAB_FILE" || fail 'unrelated cron was removed'
+
+# With */45, cron skips 01:30 even though a job completed at 00:45 is due.
+write_section scheduled 'https://lists.test/unavailable.txt' >>"$WORK/uci.state"
+sed -i 's/^forkop.settings.update_interval=1d$/forkop.settings.update_interval=45m/' "$WORK/uci.state"
+printf 'forkop.settings.component_update_check_enabled=1\nforkop.settings.component_update_check_interval=45m\n' >>"$WORK/uci.state"
+printf '%s\n' '*/45 * * * * /usr/bin/forkop list_update_if_due # forkop-list-update' \
+  '*/45 * * * * /usr/bin/forkop component_updates_if_due # forkop-component-update-check' >>"$FORKOP_CRONTAB_FILE"
+updates() { ucode -L "$LIB" "$LIB/components/updates.uc" "$@"; }
+updates refresh-cron-from-uci /usr/bin/forkop '# forkop-list-update' '# forkop-subscription-update' '# forkop-component-update-check'
+grep -Fxq '* * * * * /usr/bin/forkop list_update_if_due # forkop-list-update' "$FORKOP_CRONTAB_FILE" ||
+  fail 'list checks must see the first eligible minute'
+grep -Fxq '* * * * * /usr/bin/forkop component_updates_if_due # forkop-component-update-check' "$FORKOP_CRONTAB_FILE" ||
+  fail 'component checks must see the first eligible minute'
+! grep -q '^\*/45 ' "$FORKOP_CRONTAB_FILE" || fail 'old calendar steps survived'
+
+expect_list_due() {
+  local interval="$1" last="$2" now="$3" expected="$4" status=0
+  printf '{"settings":{"update_interval":"%s"}}\n' "$interval" >"$WORK/list-interval.json"
+  printf '%s\n' "$last" >"$WORK/last-update"
+  updates list-update-due-status-fixture "$WORK/list-interval.json" "$WORK/last-update" "$now" || status=$?
+  [ "$status" -eq "$expected" ] || fail "unexpected due result for $interval at $now"
+}
+expect_list_due 45m 2700 5399 1
+expect_list_due 45m 2700 5400 0
+expect_list_due 1d 86405 172800 1
+expect_list_due 1d 86405 172860 0
+expect_list_due 100ms 2700 2759 1
+expect_list_due 100ms 2700 2760 0
+
+export TEST_REAL_UCODE="$(command -v ucode)" TEST_COMPONENT_CALLS="$WORK/component-calls"
+cat >"$WORK/bin/ucode" <<'EOF'
+#!/bin/sh
+case "$*" in
+  *'/components/action.uc component-action forkop check_update')
+    echo check >>"$TEST_COMPONENT_CALLS"
+    exit 1
+    ;;
+esac
+exec "$TEST_REAL_UCODE" "$@"
+EOF
+chmod +x "$WORK/bin/ucode"
+now=$(date +%s)
+printf '%s\n' "$((now - 44 * 60))" >"$WORK/state/component-update-check.timestamp"
+updates component-updates-if-due || fail 'early component poll failed'
+[ ! -e "$TEST_COMPONENT_CALLS" ] || fail 'component poll started an early request'
+printf '%s\n' "$((now - 46 * 60))" >"$WORK/state/component-update-check.timestamp"
+updates component-updates-if-due || fail 'due component check failed'
+updates component-updates-if-due || fail 'component poll after the attempt failed'
+[ "$(cat "$TEST_COMPONENT_CALLS")" = check ] || fail 'due component check did not run exactly once'
+
+sed -i 's/component_update_check_interval=45m/component_update_check_interval=100ms/' "$WORK/uci.state"
+date +%s >"$WORK/state/component-update-check.timestamp"
+updates component-updates-if-due || fail 'a saved sub-minute component interval must use a one-minute minimum'
+
+printf '1234\n' >"$WORK/state/list-update-last-success.timestamp"
+if TEST_ACCEPT_NEW=0 updates list-update-if-due; then
+  fail 'scheduled download failure was not detected'
+fi
+test -s "$WORK/state/list-update-last-attempt.timestamp" || fail 'scheduled attempt was not recorded'
+test "$(cat "$WORK/state/list-update-last-success.timestamp")" = 1234 || fail 'failed attempt became a success'
+: >"$TEST_NETWORK_LOG"
+TEST_ACCEPT_NEW=0 updates list-update-if-due || fail 'immediate repeat did not skip the failed download'
+[ ! -s "$TEST_NETWORK_LOG" ] || fail 'the next tick retried the failed download early'
 echo 'list composition cache checks passed'

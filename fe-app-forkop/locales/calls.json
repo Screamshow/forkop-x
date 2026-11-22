@@ -270,13 +270,6 @@
     ]
   },
   {
-    "call": "Allows access to YACD from the WAN. Make sure to open the appropriate port in your firewall.",
-    "key": "Allows access to YACD from the WAN. Make sure to open the appropriate port in your firewall.",
-    "places": [
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:498"
-    ]
-  },
-  {
     "call": "Allows limiting the list of servers for URLTest",
     "key": "Allows limiting the list of servers for URLTest",
     "places": [
@@ -1533,13 +1526,6 @@
     ]
   },
   {
-    "call": "Enable YACD WAN Access",
-    "key": "Enable YACD WAN Access",
-    "places": [
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:497"
-    ]
-  },
-  {
     "call": "Enabled",
     "key": "Enabled",
     "places": [
@@ -1570,6 +1556,15 @@
     "key": "Enter a valid DNS server address",
     "places": [
       "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:4851"
+    ]
+  },
+  {
+    "call": "Enter an interval of at least 1 minute, for example 45m, 12h or 1d",
+    "key": "Enter an interval of at least 1 minute, for example 45m, 12h or 1d",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:43",
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:746",
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:764"
     ]
   },
   {
@@ -3709,13 +3704,6 @@
     ]
   },
   {
-    "call": "Secret key for authenticating remote access to YACD when WAN access is enabled.",
-    "key": "Secret key for authenticating remote access to YACD when WAN access is enabled.",
-    "places": [
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:510"
-    ]
-  },
-  {
     "call": "Section",
     "key": "Section",
     "places": [
@@ -4711,13 +4699,6 @@
     ]
   },
   {
-    "call": "YACD Secret Key",
-    "key": "YACD Secret Key",
-    "places": [
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:509"
-    ]
-  },
-  {
     "call": "Yes",
     "key": "Yes",
     "places": [
@@ -4889,12 +4870,7 @@
       "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:2733",
       "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3973",
       "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3980",
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3987",
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:663",
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:685",
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:692",
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:708",
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:736"
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:3987"
     ]
   },
   {

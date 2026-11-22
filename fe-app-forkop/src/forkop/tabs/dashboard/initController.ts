@@ -29,7 +29,6 @@ import {
   renderWidget,
 } from './partials';
 import { fetchServicesInfo } from '../../fetchers/fetchServicesInfo';
-import { getClashApiSecret } from '../../methods/custom/getClashApiSecret';
 import { Forkop } from '../../types';
 import { ensureSystemInfo } from '../../services/systemInfo.service';
 import {
@@ -553,17 +552,14 @@ function startMetricsPolling(dataUpdatesId: number) {
   });
 }
 
-async function connectToClashSockets(dataUpdatesId: number) {
-  const mountId = dashboardMountId;
+function connectToClashSockets(dataUpdatesId: number) {
   if (!canUseDirectClashApi()) {
     startMetricsPolling(dataUpdatesId);
     return;
   }
-  const clashApiSecret = await getClashApiSecret();
 
   if (
     !dashboardMounted ||
-    mountId !== dashboardMountId ||
     dataUpdatesId !== dashboardDataUpdatesId ||
     getDashboardServiceAvailability() === 'stopped'
   ) {
@@ -579,7 +575,7 @@ async function connectToClashSockets(dataUpdatesId: number) {
 
   dashboardSocketUnsubscribes.push(
     socket.subscribe(
-      `${getClashWsUrl()}/traffic?token=${clashApiSecret}`,
+      `${getClashWsUrl()}/traffic`,
       (msg) => {
         if (
           dataUpdatesId !== dashboardDataUpdatesId ||
@@ -614,7 +610,7 @@ async function connectToClashSockets(dataUpdatesId: number) {
 
   dashboardSocketUnsubscribes.push(
     socket.subscribe(
-      `${getClashWsUrl()}/connections?token=${clashApiSecret}`,
+      `${getClashWsUrl()}/connections`,
       (msg) => {
         if (
           dataUpdatesId !== dashboardDataUpdatesId ||
@@ -701,7 +697,7 @@ function startDashboardDataUpdates() {
   dashboardDataUpdatesStarted = true;
   const dataUpdatesId = ++dashboardDataUpdatesId;
   void fetchDashboardSections({ force: true });
-  void connectToClashSockets(dataUpdatesId);
+  connectToClashSockets(dataUpdatesId);
   sectionsRefreshTimer = setInterval(() => {
     void fetchDashboardSections();
   }, SECTIONS_REFRESH_INTERVAL_MS);

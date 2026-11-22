@@ -1,90 +1,60 @@
 #!/usr/bin/env ucode
 // ucode -L LIB tests/clash_api_auth.uc WORK LIB
-// Router-side Clash API calls must send the Bearer token exactly when the
-// generated config carries a secret. A fake curl plays the controller: it
-// answers 401 unless the request carries the generated secret.
 let fs = require("fs");
-let work = ARGV[0];
-let lib = ARGV[1];
-let checks = 0, failures = 0;
-function expect(value, message) {
-    checks++;
-    if (value) return true;
-    print("FAIL: ", message, "\n");
-    failures++;
-    return false;
-}
-function quote(value) { return "'" + replace("" + value, /'/g, "'\\''") + "'"; }
+let work = ARGV[0], lib = ARGV[1];
+let source_path = work + "/legacy.json";
+let migrated_path = work + "/migrated.json";
+let generated_path = work + "/xrust.json";
 
-// The secret the generator writes, from its own clash_api_config.
-let source = fs.readfile(lib + "/xrust/generator.uc");
-let start = index(source, "function clash_api_config(");
-if (!expect(start >= 0, "generator clash_api_config exists"))
-    die("generator clash_api_config not found\n");
-let tail = substr(source, start);
-let generator_code = substr(tail, 0, index(tail, "\n}") + 2);
-function generated_secret(settings) {
-    let path = work + "/generated.uc";
-    fs.writefile(path, 'let common = require("core.common");\n' +
-        'let as_string = common.as_string, option = common.option, bool_option = common.bool_option;\n' +
-        generator_code + '\n' +
-        'let api = clash_api_config(' + sprintf("%J", settings) + ', "127.0.0.1");\n' +
-        'print(api.secret == null ? "" : api.secret);\n');
-    let pipe = fs.popen("ucode -L " + quote(lib) + " " + quote(path), "r");
+function expect(value, message) {
+    if (!value) die(message + "\n");
+}
+
+function quote(value) {
+    return "'" + replace("" + value, /'/g, "'\\''") + "'";
+}
+
+function call(module, args) {
+    let command = [ "env", "FORKOP_LIB=" + lib, "ucode", "-L", lib, lib + "/" + module, ...args ];
+    let pipe = fs.popen(join(" ", map(command, quote)), "r");
     let output = pipe.read("all");
-    if (!expect(pipe.close() == 0, "generator function runs"))
-        die("cannot evaluate the generator\n");
+    expect(pipe.close() == 0, "failed " + module + " " + args[0]);
     return output;
 }
 
-system("mkdir -p " + quote(work + "/bin"));
-fs.writefile(work + "/bin/curl", '#!/bin/sh\n' +
-    'printf "%s\\n" "$@" > "$CLASH_TEST_WORK/curl.args"\n' +
-    'secret=$(cat "$CLASH_TEST_WORK/secret")\n' +
-    'if [ -n "$secret" ] && ! grep -qxF "Authorization: Bearer $secret" "$CLASH_TEST_WORK/curl.args"; then\n' +
-    '    printf \'{"message":"Unauthorized"}\'\n' +
-    '    exit 0\n' +
-    'fi\n' +
-    'printf \'{"proxies":{"GLOBAL":{"type":"Selector"}}}\'\n');
-fs.chmod(work + "/bin/curl", 0755);
+let fixture = {
+    settings: { ".name":"settings", ".type":"settings", enable_yacd:"1", enable_yacd_wan_access:"1",
+        yacd_secret_key:"legacy-test-key", dns_server:"1.1.1.1", log_level:"error",
+        subscription_exclude_regex:["archive"] },
+    section: [{ ".name":"vpn", ".type":"section", enabled:"1", action:"connection",
+        outbound_jsons:["{\"type\":\"direct\",\"tag\":\"local-test\"}"], domain_suffix:["fixture.test"] }]
+};
+fs.writefile(source_path, sprintf("%J", fixture));
+let result = json(call("config/migration.uc", [ "migrate-fixture", source_path ]));
+expect(result.config.settings.enable_yacd == "1", "local YACD must stay enabled on upgrade");
+expect(result.config.settings.enable_yacd_wan_access == null, "legacy WAN flag survived migration");
+expect(result.config.settings.yacd_secret_key == null, "legacy WAN key survived migration");
+expect(result.config.settings.log_level == "error" &&
+    result.config.settings.subscription_exclude_regex[0] == "archive" &&
+    result.config.section[0].domain_suffix[0] == "fixture.test", "unrelated configuration changed");
+fs.writefile(migrated_path, sprintf("%J", result.config));
+let repeated = json(call("config/migration.uc", [ "migrate-fixture", migrated_path ]));
+expect(repeated.changed == false, "migration must be idempotent");
 
-function runtime(args) {
-    let env = ["env", "PATH=" + work + "/bin:" + getenv("PATH"),
-        "CLASH_TEST_WORK=" + work,
-        "FORKOP_LIB=" + lib,
-        "FORKOP_UCI_STATE_FILE=" + work + "/uci.state",
-        "FORKOP_RUNTIME_STATE_DIR=" + work + "/run"];
-    let command = map([...env, "ucode", "-L", lib, lib + "/diagnostics/runtime.uc", ...args], quote);
-    return system(join(" ", command) + " >/dev/null 2>&1");
+function check_controller(path, address, expected, local_ui) {
+    call("xrust/generator.uc", [ "generate-config-fixture", path, generated_path, address,
+        "0", "1", "", "0.0.45" ]);
+    let api = json(fs.readfile(generated_path)).experimental.clash_api;
+    expect(api.external_controller == expected + ":9090", "unexpected Clash API binding for " + address);
+    expect(api.external_ui == (local_ui ? "ui" : null), "local YACD toggle was ignored");
+    expect(api.secret == null, "retired key leaked into generated configuration");
 }
 
-let cases = [
-    { name: "dashboard off", enable_yacd: "0", wan: "0", key: "s3cret" },
-    { name: "dashboard off, WAN flag left on", enable_yacd: "0", wan: "1", key: "s3cret" },
-    { name: "dashboard with secret, LAN only", enable_yacd: "1", wan: "0", key: "s3cret" },
-    { name: "dashboard with secret and WAN access", enable_yacd: "1", wan: "1", key: "s3cret" },
-    { name: "dashboard without secret, WAN access", enable_yacd: "1", wan: "1", key: "" },
-    { name: "dashboard without secret, LAN only", enable_yacd: "1", wan: "0", key: "" }
-];
-for (let c in cases) {
-    let settings = { enable_yacd: c.enable_yacd, enable_yacd_wan_access: c.wan, yacd_secret_key: c.key };
-    let secret = generated_secret(settings);
-    fs.writefile(work + "/secret", secret);
-    fs.writefile(work + "/uci.state", "forkop.settings=settings\n" +
-        "forkop.settings.service_listen_address=127.0.0.1\n" +
-        "forkop.settings.enable_yacd=" + c.enable_yacd + "\n" +
-        "forkop.settings.enable_yacd_wan_access=" + c.wan + "\n" +
-        "forkop.settings.yacd_secret_key=" + c.key + "\n");
-    fs.unlink(work + "/curl.args");
-    expect(runtime(["clash-api-ready"]) == 0, c.name + ": readiness probe is authorized");
-    let args = fs.readfile(work + "/curl.args") || "";
-    expect((index(args, "Authorization:") >= 0) == (secret != ""),
-        c.name + ": token sent exactly when the generated config has a secret");
-    expect(runtime(["clash-api", "get_proxies"]) == 0, c.name + ": get_proxies runs");
-    args = fs.readfile(work + "/curl.args") || "";
-    expect((index(args, "Authorization:") >= 0) == (secret != ""),
-        c.name + ": get_proxies token matches the generated secret");
-}
-if (failures > 0)
-    die(sprintf("clash API auth: %d of %d checks failed\n", failures, checks));
-print("clash API auth checks passed: ", checks, "\n");
+check_controller(source_path, "192.0.2.1", "192.0.2.1", true);
+check_controller(migrated_path, "192.0.2.1", "192.0.2.1", true);
+for (let address in [ "", "0.0.0.0", "::", "[::]" ])
+    check_controller(source_path, address, "127.0.0.1", true);
+fixture.settings.enable_yacd = "0";
+fs.writefile(source_path, sprintf("%J", fixture));
+check_controller(source_path, "192.0.2.1", "192.0.2.1", false);
+print("PASS: legacy YACD migration, local toggle and Clash API binding\n");

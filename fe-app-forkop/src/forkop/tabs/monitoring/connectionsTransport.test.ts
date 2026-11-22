@@ -7,8 +7,7 @@ function fixture() {
   let error!: () => void;
   const cleanup = vi.fn();
   const options = {
-    loadSecret: vi.fn().mockResolvedValue('secret'),
-    subscribe: vi.fn((_secret, onData, onError) => {
+    subscribe: vi.fn((onData, onError) => {
       data = onData;
       error = onError;
       return cleanup;
@@ -26,10 +25,9 @@ function fixture() {
 }
 afterEach(() => vi.useRealTimers());
 describe('direct connections fallback', () => {
-  it('falls back once on error and ignores delayed direct data', async () => {
+  it('falls back once on error and ignores delayed direct data', () => {
     const f = fixture();
     startDirectConnections(f.options);
-    await Promise.resolve();
     f.error();
     f.error();
     f.data('{}');
@@ -37,10 +35,9 @@ describe('direct connections fallback', () => {
     expect(f.cleanup).toHaveBeenCalledTimes(1);
     expect(f.options.onData).not.toHaveBeenCalled();
   });
-  it('bounds both connection setup and a silent established stream', async () => {
+  it('bounds a silent established stream', () => {
     const f = fixture();
     startDirectConnections(f.options);
-    await Promise.resolve();
     vi.advanceTimersByTime(4000);
     f.data('{}');
     vi.advanceTimersByTime(4000);
@@ -48,42 +45,37 @@ describe('direct connections fallback', () => {
     vi.advanceTimersByTime(1000);
     expect(f.options.onFallback).toHaveBeenCalledTimes(1);
   });
-  it('falls back when secret retrieval hangs', () => {
+  it('falls back when the socket never delivers an initial message', () => {
     const f = fixture();
-    f.options.loadSecret.mockReturnValue(new Promise(() => {}));
     startDirectConnections(f.options);
     vi.advanceTimersByTime(5000);
     expect(f.options.onFallback).toHaveBeenCalledOnce();
   });
-  it('cleans up a synchronous socket construction failure', async () => {
+  it('cleans up a synchronous socket construction failure', () => {
     const f = fixture();
-    f.options.subscribe.mockImplementation((_secret, _data, error) => {
+    f.options.subscribe.mockImplementation((_data, error) => {
       error();
       return f.cleanup;
     });
     startDirectConnections(f.options);
-    await Promise.resolve();
     expect(f.cleanup).toHaveBeenCalledOnce();
     expect(f.options.onFallback).toHaveBeenCalledOnce();
   });
-  it('cancels pending setup on unmount or service restart', async () => {
+  it('cleans up the socket on unmount or service restart', () => {
     const f = fixture();
     const stop = startDirectConnections(f.options);
     stop();
-    await Promise.resolve();
     vi.advanceTimersByTime(10000);
-    expect(f.options.subscribe).not.toHaveBeenCalled();
+    expect(f.cleanup).toHaveBeenCalledOnce();
     expect(f.options.onFallback).not.toHaveBeenCalled();
   });
-  it('rejects malformed messages and stale generations', async () => {
+  it('rejects malformed messages and stale generations', () => {
     const f = fixture();
     startDirectConnections(f.options);
-    await Promise.resolve();
     f.data('bad');
     expect(f.options.onFallback).toHaveBeenCalledOnce();
     const g = fixture();
     startDirectConnections(g.options);
-    await Promise.resolve();
     g.options.isCurrent.mockReturnValue(false);
     g.error();
     expect(g.options.onFallback).not.toHaveBeenCalled();

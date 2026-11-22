@@ -313,7 +313,6 @@ export namespace Forkop {
     include_urltest_groups?: '0' | '1';
     hide_urltest_group_outbounds?: '0' | '1';
     hide_detour_outbounds?: '0' | '1';
-    yacd_secret_key?: string;
     config_path?: string;
   }
 

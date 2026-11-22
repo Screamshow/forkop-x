@@ -13,6 +13,37 @@ function isXrustDuration(value) {
   return /^(?=.*[1-9])([0-9]+(?:\.[0-9]+)?(?:ns|us|ms|s|m|h|d))+$/.test(value);
 }
 
+function scheduledUpdateSeconds(value) {
+  if (!isXrustDuration(value)) return null;
+  const units = { ns: 1e-9, us: 1e-6, ms: 1e-3, s: 1, m: 60, h: 3600, d: 86400 };
+  let seconds = 0;
+  for (const [, amount, unit] of value.matchAll(/([0-9]+(?:\.[0-9]+)?)(ns|us|ms|s|m|h|d)/g)) {
+    seconds += Number(amount) * units[unit];
+  }
+  return Number.isSafeInteger(Math.round(seconds)) ? seconds : null;
+}
+
+function configureScheduledUpdateInterval(option) {
+  option.placeholder = "1d";
+  option.default = "1d";
+  option.rmempty = false;
+  option.cfgvalue = function (sectionId) {
+    const saved = uci.get(UCI_PACKAGE, sectionId, this.option) || "1d";
+    const seconds = scheduledUpdateSeconds(saved);
+    // Show the effective interval for settings saved by older versions.
+    return seconds !== null && seconds < 60 ? "1m" : saved;
+  };
+  option.write = function (sectionId, value) {
+    uci.set(UCI_PACKAGE, sectionId, this.option, `${value || ""}`.trim() || "1d");
+  };
+  option.validate = function (_sectionId, value) {
+    const seconds = scheduledUpdateSeconds(`${value || ""}`.trim());
+    return seconds !== null && seconds >= 60
+      ? true
+      : _("Enter an interval of at least 1 minute, for example 45m, 12h or 1d");
+  };
+}
+
 function latencyTestUrlChoices() {
   return Array.isArray(main.LATENCY_TEST_URL_OPTIONS)
     ? main.LATENCY_TEST_URL_OPTIONS
@@ -660,29 +691,6 @@ function createSettingsContent(section) {
 
   o = section.option(
     form.Flag,
-    "enable_yacd_wan_access",
-    _("Enable YACD WAN Access"),
-    _(
-      "Allows access to YACD from the WAN. Make sure to open the appropriate port in your firewall.",
-    ),
-  );
-  o.depends("enable_yacd", "1");
-  o.default = "0";
-  o.rmempty = false;
-
-  o = section.option(
-    form.Value,
-    "yacd_secret_key",
-    _("YACD Secret Key"),
-    _(
-      "Secret key for authenticating remote access to YACD when WAN access is enabled.",
-    ),
-  );
-  o.depends("enable_yacd_wan_access", "1");
-  o.rmempty = false;
-
-  o = section.option(
-    form.Flag,
     "disable_quic",
     _("Disable QUIC globally"),
     _(
@@ -735,37 +743,10 @@ function createSettingsContent(section) {
     form.Value,
     "update_interval",
     _("List Update Frequency"),
-    _("Use Xrust duration format like 1d, 12h or 30m"),
+    _("Enter an interval of at least 1 minute, for example 45m, 12h or 1d"),
   );
   o.depends("list_update_enabled", "1");
-  o.placeholder = "1d";
-  o.default = "1d";
-  o.rmempty = false;
-  o.cfgvalue = function (section_id) {
-    return uci.get(UCI_PACKAGE, section_id, "update_interval") || "1d";
-  };
-  o.write = function (section_id, value) {
-    const normalized = value ? `${value}`.trim() : "";
-
-    if (normalized.length) {
-      uci.set(UCI_PACKAGE, section_id, "update_interval", normalized);
-    } else {
-      uci.set(UCI_PACKAGE, section_id, "update_interval", "1d");
-    }
-  };
-  o.validate = function (_section_id, value) {
-    const normalized = value ? `${value}`.trim() : "";
-
-    if (!normalized.length) {
-      return _("Use Xrust duration format like 1d, 12h or 30m");
-    }
-
-    if (isXrustDuration(normalized)) {
-      return true;
-    }
-
-    return _("Use Xrust duration format like 1d, 12h or 30m");
-  };
+  configureScheduledUpdateInterval(o);
 
   o = section.option(
     form.Flag,
@@ -780,36 +761,10 @@ function createSettingsContent(section) {
     form.Value,
     "component_update_check_interval",
     _("Component update check interval"),
-    _("Use Xrust duration format like 1d, 12h or 30m"),
+    _("Enter an interval of at least 1 minute, for example 45m, 12h or 1d"),
   );
   o.depends("component_update_check_enabled", "1");
-  o.placeholder = "1d";
-  o.default = "1d";
-  o.rmempty = false;
-  o.cfgvalue = function (section_id) {
-    return (
-      uci.get(UCI_PACKAGE, section_id, "component_update_check_interval") ||
-      "1d"
-    );
-  };
-  o.write = function (section_id, value) {
-    const normalized = value ? `${value}`.trim() : "";
-    uci.set(
-      UCI_PACKAGE,
-      section_id,
-      "component_update_check_interval",
-      normalized.length ? normalized : "1d",
-    );
-  };
-  o.validate = function (_section_id, value) {
-    const normalized = value ? `${value}`.trim() : "";
-
-    if (normalized.length && isXrustDuration(normalized)) {
-      return true;
-    }
-
-    return _("Use Xrust duration format like 1d, 12h or 30m");
-  };
+  configureScheduledUpdateInterval(o);
 
   o = section.option(
     form.Value,

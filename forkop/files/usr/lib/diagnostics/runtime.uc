@@ -1166,19 +1166,8 @@ function clash_json_output(args) {
 }
 
 function clash_api_url() {
-    let address = replace(module_output(XRUST_RUNTIME_UC, [ "service-listen-address" ]), /[\r\n]+$/g, "");
-    if (address == "")
-        address = "127.0.0.1";
+    let address = common.clash_api_listen_address(module_output(XRUST_RUNTIME_UC, [ "service-listen-address" ]));
     return address + ":" + SB_CLASH_API_CONTROLLER_PORT;
-}
-
-function clash_auth_args() {
-    // Same condition as the generated config, not the WAN switch: the
-    // controller requires the token whenever it has a secret.
-    let secret = common.clash_api_secret(settings());
-    if (secret == "")
-        return [];
-    return [ "--header", "Authorization: Bearer " + secret ];
 }
 
 function clash_urlencode(value) {
@@ -1223,10 +1212,9 @@ function clash_latency_output(args, group) {
     return 0;
 }
 
-function clash_proxy_entries(base_url, auth, timeout_seconds) {
-    let args = [ "curl", "--max-time", timeout_seconds || CLASH_PROXY_LIST_TIMEOUT_SECONDS, "-fs" ];
-    for (let item in auth) push(args, item);
-    push(args, base_url + "/proxies");
+function clash_proxy_entries(base_url, timeout_seconds) {
+    let args = [ "curl", "--max-time", timeout_seconds || CLASH_PROXY_LIST_TIMEOUT_SECONDS, "-fs",
+        base_url + "/proxies" ];
 
     let value = null;
     try {
@@ -1242,8 +1230,8 @@ function clash_proxy_entries(base_url, auth, timeout_seconds) {
     return object_or_empty(value.proxies);
 }
 
-function clash_proxy_type_map(base_url, auth, timeout_seconds) {
-    let entries = clash_proxy_entries(base_url, auth, timeout_seconds);
+function clash_proxy_type_map(base_url, timeout_seconds) {
+    let entries = clash_proxy_entries(base_url, timeout_seconds);
     if (entries == null)
         return null;
 
@@ -1254,7 +1242,7 @@ function clash_proxy_type_map(base_url, auth, timeout_seconds) {
 }
 
 function clash_api_ready() {
-    return clash_proxy_type_map(clash_api_url(), clash_auth_args()) != null;
+    return clash_proxy_type_map(clash_api_url()) != null;
 }
 
 function latency_testable_proxy_type(proxy_type) {
@@ -1504,9 +1492,8 @@ function latency_curl_args(endpoint, timeout) {
     return [ "curl", "--max-time", as_string(seconds), "-G", "-fs", endpoint ];
 }
 
-function latency_probe_command(base_url, auth, proxy_tag, proxy_type, test_url, timeout) {
+function latency_probe_command(base_url, proxy_tag, proxy_type, test_url, timeout) {
     let args = latency_curl_args(clash_latency_endpoint(base_url, proxy_tag, proxy_type), timeout);
-    for (let item in auth) push(args, item);
     push(args, "--data-urlencode");
     push(args, "url=" + as_string(test_url));
     push(args, "--data-urlencode");
@@ -1533,7 +1520,7 @@ function probe_proxy_latencies(plan, proxy_tags, progress) {
         let probes = [];
         let script = "";
         for (let proxy_tag in batch) {
-            let command = latency_probe_command(plan.base_url, plan.auth, proxy_tag,
+            let command = latency_probe_command(plan.base_url, proxy_tag,
                 plan.proxy_types[proxy_tag], plan.test_url, plan.timeout);
             let path = length(batch) > 1 ? trim(command_output_from_args([ "mktemp" ])) : "";
             if (path == "") {
@@ -1571,18 +1558,15 @@ function probe_proxy_latencies(plan, proxy_tags, progress) {
 function clash_api(action, arg1, arg2, arg3) {
     let base_url = clash_api_url();
     let test_url = latency_test_url();
-    let auth = clash_auth_args();
 
     if (action == "get_proxies") {
         let args = [ "curl", "--max-time", CLASH_PROXY_LIST_TIMEOUT_SECONDS, "-s" ];
-        for (let item in auth) push(args, item);
         push(args, base_url + "/proxies");
         return clash_json_output(args);
     }
 
     if (action == "get_connections") {
         let args = [ "curl", "--max-time", "5", "--fail", "-s" ];
-        for (let item in auth) push(args, item);
         push(args, base_url + "/connections");
         return clash_json_output(args);
     }
@@ -1595,7 +1579,6 @@ function clash_api(action, arg1, arg2, arg3) {
             url = test_url;
         let timeout = as_string(arg2 || "2000");
         let args = latency_curl_args(base_url + "/proxies/" + clash_urlencode(arg1) + "/delay", timeout);
-        for (let item in auth) push(args, item);
         push(args, "--data-urlencode");
         push(args, "url=" + url);
         push(args, "--data-urlencode");
@@ -1624,7 +1607,7 @@ function clash_api(action, arg1, arg2, arg3) {
             module_success(SERVICE_UI_UC, [ "latency-progress-state", progress_path, count, total, failed ]);
 
         // A requested batch can wait longer than a readiness or polling request.
-        let proxy_types = clash_proxy_type_map(base_url, auth, CLASH_BATCH_PROXY_LIST_TIMEOUT_SECONDS);
+        let proxy_types = clash_proxy_type_map(base_url, CLASH_BATCH_PROXY_LIST_TIMEOUT_SECONDS);
         if (proxy_types == null)
             return clash_json_error("Could not read proxy list from Clash API");
 
@@ -1636,7 +1619,6 @@ function clash_api(action, arg1, arg2, arg3) {
 
         let plan = {
             base_url,
-            auth,
             proxy_types,
             test_url,
             timeout: as_string(arg2 || "5000")
@@ -1658,7 +1640,6 @@ function clash_api(action, arg1, arg2, arg3) {
             return clash_json_error("group_tag required");
         let timeout = as_string(arg2 || "5000");
         let args = latency_curl_args(base_url + "/group/" + clash_urlencode(arg1) + "/delay", timeout);
-        for (let item in auth) push(args, item);
         push(args, "--data-urlencode");
         push(args, "url=" + test_url);
         push(args, "--data-urlencode");
@@ -1671,7 +1652,6 @@ function clash_api(action, arg1, arg2, arg3) {
             return clash_json_error("group_tag and proxy_tag required");
         let payload = status_output([ "clash-set-group-proxy-payload", arg2 ], null);
         let args = [ "curl", "-X", "PUT", "-s", "-w", "\n%{http_code}", base_url + "/proxies/" + clash_urlencode(arg1) ];
-        for (let item in auth) push(args, item);
         push(args, "--data-raw");
         push(args, payload);
         let result = status_capture([ "clash-set-group-proxy-result", arg1, arg2 ], command_output(command_from_args(args)));
@@ -1684,7 +1664,6 @@ function clash_api(action, arg1, arg2, arg3) {
         if (as_string(arg1) == "")
             return clash_json_error("connection_id required");
         let args = [ "curl", "-X", "DELETE", "-s", "-w", "\n%{http_code}", base_url + "/connections/" + clash_urlencode(arg1) ];
-        for (let item in auth) push(args, item);
         let result = status_capture([ "clash-close-connection-result", arg1 ], command_output(command_from_args(args)));
         if (result.output != "")
             print(result.output);
@@ -1693,7 +1672,6 @@ function clash_api(action, arg1, arg2, arg3) {
 
     if (action == "close_all_connections") {
         let args = [ "curl", "-X", "DELETE", "-s", "-w", "\n%{http_code}", base_url + "/connections" ];
-        for (let item in auth) push(args, item);
         let result = status_capture([ "clash-close-all-connections-result" ], command_output(command_from_args(args)));
         if (result.output != "")
             print(result.output);
@@ -1713,7 +1691,7 @@ function automatic_latency_sweep(start_kind, proxy_tags, pending_signature,
     let completed = 0;
     let batch_size = AUTOMATIC_LATENCY_BATCH_SIZE > 0 ? AUTOMATIC_LATENCY_BATCH_SIZE : 4;
     let progress = { completed: 0, failed: 0, total: length(proxy_tags), path: progress_path };
-    let plan = { base_url: clash_api_url(), auth: clash_auth_args(), proxy_types: {},
+    let plan = { base_url: clash_api_url(), proxy_types: {},
         test_url: latency_test_url(), timeout: "5000" };
     for (let offset = 0; offset < length(proxy_tags); offset += batch_size) {
         if (!automatic_latency_marker_matches(pending_signature, pending_generation)) {
@@ -1881,7 +1859,7 @@ function automatic_latency_test(start_kind) {
     let proxy_entries = null;
     let readiness_attempts = AUTOMATIC_LATENCY_CLASH_READY_ATTEMPTS > 0 ? AUTOMATIC_LATENCY_CLASH_READY_ATTEMPTS : 15;
     for (let readiness_attempt = 0; readiness_attempt < readiness_attempts; readiness_attempt++) {
-        proxy_entries = clash_proxy_entries(clash_api_url(), clash_auth_args());
+        proxy_entries = clash_proxy_entries(clash_api_url());
         if (proxy_entries != null)
             break;
         if (readiness_attempt + 1 < readiness_attempts)

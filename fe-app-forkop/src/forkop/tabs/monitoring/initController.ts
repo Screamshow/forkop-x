@@ -20,7 +20,6 @@ import {
 } from '../../../icons';
 import { CustomForkopMethods, ForkopShellMethods } from '../../methods';
 import { getOutboundTagBySection } from '../../runtimeTags';
-import { getClashApiSecret } from '../../methods/custom/getClashApiSecret';
 import { logger, socket, store, StoreType } from '../../services';
 import { Forkop } from '../../types';
 import { formatRouteReason } from './routeReason';
@@ -1374,18 +1373,13 @@ function startConnectionsPolling() {
 function connectToConnectionsSocket(updatesId: number) {
   const mountId = monitoringMountId;
   connectionsSocketUnsubscribe = startDirectConnections({
-    loadSecret: getClashApiSecret,
     isCurrent: () =>
       monitoringMounted &&
       mountId === monitoringMountId &&
       updatesId === connectionsUpdatesId &&
       serviceAvailability === 'running',
-    subscribe: (secret, onData, onError) =>
-      socket.subscribe(
-        `${getClashWsUrl()}/connections?token=${secret}`,
-        onData,
-        onError,
-      ),
+    subscribe: (onData, onError) =>
+      socket.subscribe(`${getClashWsUrl()}/connections`, onData, onError),
     onData: (message) =>
       applyConnectionsPayload(JSON.parse(message) as ClashConnectionsPayload),
     onFallback: () => {

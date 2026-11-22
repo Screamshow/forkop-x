@@ -1,8 +1,6 @@
 // A silent or broken direct API must not prevent same-origin LuCI polling.
 export function startDirectConnections(options: {
-  loadSecret: () => Promise<string>;
   subscribe: (
-    secret: string,
     onData: (message: string) => void,
     onError: () => void,
   ) => () => void;
@@ -29,28 +27,23 @@ export function startDirectConnections(options: {
     clearTimeout(timer);
     timer = setTimeout(fallback, 5000);
   };
+  if (!options.isCurrent()) return stop;
   arm();
-  void options
-    .loadSecret()
-    .then((secret) => {
+  try {
+    const cleanup = options.subscribe((message) => {
       if (stopped || !options.isCurrent()) return;
-      const cleanup = options.subscribe(
-        secret,
-        (message) => {
-          if (stopped || !options.isCurrent()) return;
-          try {
-            options.onData(message);
-            arm();
-          } catch (_error) {
-            fallback();
-          }
-        },
-        fallback,
-      );
-      // subscribe can synchronously report a construction failure.
-      if (stopped) cleanup();
-      else unsubscribe = cleanup;
-    })
-    .catch(fallback);
+      try {
+        options.onData(message);
+        arm();
+      } catch (_error) {
+        fallback();
+      }
+    }, fallback);
+    // subscribe can synchronously report a construction failure.
+    if (stopped) cleanup();
+    else unsubscribe = cleanup;
+  } catch (_error) {
+    fallback();
+  }
   return stop;
 }

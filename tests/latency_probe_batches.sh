@@ -73,7 +73,6 @@ let fs = {
 function new_progress(total) { return { completed: 0, failed: 0, total, path: "job.json" }; }
 const PLAN = {
     base_url: "http://127.0.0.1:9090",
-    auth: [ "-H", "Authorization: Bearer x" ],
     proxy_types: { a: "vless", b: "vless", c: "vless", d: "vless", group: "urltest" },
     test_url: "http://example.invalid/generate_204",
     timeout: "5000"
@@ -103,7 +102,7 @@ rm -f "${TMPDIR:-/tmp}/latency_probe_case.uc"
 # Every proxy is probed exactly once, in order, and progress counts each answer.
 { mocks; extract; cat <<'UCODE'
 bodies = { b: "not json" };
-assert(index(latency_probe_command(PLAN.base_url, PLAN.auth, "a", "vless", PLAN.test_url, "5000"),
+assert(index(latency_probe_command(PLAN.base_url, "a", "vless", PLAN.test_url, "5000"),
     "--max-time 8") >= 0, "curl deadline must include the core timeout and HTTP grace");
 let progress = probe_proxy_latencies(PLAN, [ "a", "b", "c", "d" ], new_progress(5));
 assert(length(probed) == 4, "probe count is wrong");

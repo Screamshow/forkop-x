@@ -1514,6 +1514,8 @@ function apply_migrations(ctx) {
     ctx.source_release = option(ctx.model.settings, CONFIG_VERSION_OPTION, "");
     migrate_retired_byedpi(ctx);
     migrate_retired_zapret(ctx);
+    delete_option(ctx, ctx.model.settings, "enable_yacd_wan_access");
+    delete_option(ctx, ctx.model.settings, "yacd_secret_key");
 
     let applied = [];
     let seen = {};

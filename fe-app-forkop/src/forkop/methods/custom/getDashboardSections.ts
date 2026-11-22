@@ -150,23 +150,14 @@ function getDisplayName(section: Forkop.ConfigSection) {
   return section.label || section['.name'];
 }
 
-function getSettingsSection(configSections: Forkop.ConfigSection[]) {
-  return configSections.find((section) => section['.type'] === 'settings');
-}
-
-function getClashApiSecret(configSections: Forkop.ConfigSection[]) {
-  return getSettingsSection(configSections)?.yacd_secret_key || '';
-}
-
 function canFetchClashApiDirectly() {
   return canUseDirectClashApi() && typeof fetch === 'function';
 }
 
-async function getClashApiProxies(
-  configSections: Forkop.ConfigSection[],
-): Promise<Forkop.MethodResponse<ClashAPI.Proxies>> {
+async function getClashApiProxies(): Promise<
+  Forkop.MethodResponse<ClashAPI.Proxies>
+> {
   if (canFetchClashApiDirectly()) {
-    const secret = getClashApiSecret(configSections);
     const controller = new AbortController();
     const timeoutId = setTimeout(
       () => controller.abort(),
@@ -175,7 +166,6 @@ async function getClashApiProxies(
 
     try {
       const response = await fetch(`${getClashHttpUrl()}/proxies`, {
-        headers: secret ? { Authorization: `Bearer ${secret}` } : undefined,
         signal: controller.signal,
       });
 
@@ -1457,7 +1447,7 @@ function getOutboundMetadata(dashboardCache?: DashboardSectionCache) {
 export async function getDashboardSections(): Promise<IGetDashboardSectionsResponse> {
   const configSections = hydrateConfigSections(await getConfigSections());
   const [clashProxies, runtimeMetadata] = await Promise.all([
-    getClashApiProxies(configSections),
+    getClashApiProxies(),
     readRuntimeMetadata(),
   ]);
 

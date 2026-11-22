@@ -128,9 +128,6 @@ msgstr "Разрешить на 30 минут"
 msgid "Allowed domain prefixes are full:, keyword:, and regex:"
 msgstr "Разрешённые префиксы доменов: full:, keyword: и regex:"
 
-msgid "Allows access to YACD from the WAN. Make sure to open the appropriate port in your firewall."
-msgstr "Обеспечивает доступ к YACD из WAN. Убедитесь, что в брандмауэре открыт соответствующий порт."
-
 msgid "Allows limiting the list of servers for URLTest"
 msgstr "Позволяет ограничить список серверов для URLTest"
 
@@ -650,9 +647,6 @@ msgstr "Включить выходной сетевой интерфейс"
 msgid "Enable YACD"
 msgstr "Включить YACD"
 
-msgid "Enable YACD WAN Access"
-msgstr "Включить доступ YACD WAN"
-
 msgid "Enabled"
 msgstr "Включен"
 
@@ -667,6 +661,9 @@ msgstr "Введите название уровня"
 
 msgid "Enter a valid DNS server address"
 msgstr "Укажите корректный адрес DNS-сервера"
+
+msgid "Enter an interval of at least 1 minute, for example 45m, 12h or 1d"
+msgstr "Введите интервал от 1 минуты, например 45m, 12h или 1d"
 
 msgid "Enter the subscription URL"
 msgstr "Введите URL подписки"
@@ -1550,9 +1547,6 @@ msgstr "Сохранение настроек URLTest…"
 msgid "Search"
 msgstr "Поиск"
 
-msgid "Secret key for authenticating remote access to YACD when WAN access is enabled."
-msgstr "Секретный ключ для аутентификации удаленного доступа к YACD при включенном доступе через WAN."
-
 msgid "Section"
 msgstr "Секция"
 
@@ -1999,9 +1993,6 @@ msgstr "При переходе на другой уровень тестиро�
 
 msgid "Xrust version recognized"
 msgstr "Версия Xrust определена"
-
-msgid "YACD Secret Key"
-msgstr "Секретный ключ YACD"
 
 msgid "Yes"
 msgstr "Да"
