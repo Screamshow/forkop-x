@@ -23,6 +23,8 @@ function ucode_binary() {
 
 const SOURCE_DIR = getenv("FORKOP_SOURCE_LIB") || "/usr/lib/forkop";
 const CACHE_DIR = getenv("FORKOP_BYTECODE_CACHE_DIR") || "/var/run/forkop/bytecode";
+const UPGRADE_RECOVERY_HOOK = (getenv("FORKOP_PACKAGE_RECOVERY_ROOT") || "") +
+    "/etc/rc.d/S98forkop-upgrade-recovery";
 const UCODE_BIN = ucode_binary();
 const MANIFEST_VERSION = "4";
 // A leaf module, loaded through the fresh cache to prove the interpreter accepts it.
@@ -33,7 +35,10 @@ const BUILD_LOCK_MAX_AGE = 120;
 const VALIDATION_TTL_SECONDS = int(getenv("FORKOP_BYTECODE_VALIDATION_TTL") || "3");
 
 function enabled() {
-    return as_string(getenv("FORKOP_BYTECODE_CACHE") || "1") != "0";
+    // A released updater may still need its cached helpers. Leave its generation
+    // current until the package transaction commits or restores the old packages.
+    return as_string(getenv("FORKOP_BYTECODE_CACHE") || "1") != "0" &&
+        fs.lstat(UPGRADE_RECOVERY_HOOK) == null;
 }
 
 function manifest_path() {
@@ -452,7 +457,7 @@ function build() {
     let text = library == null ? null : manifest_text(library, files, runtime_dependencies(), directories);
     let replaced = parse_manifest(fs.readfile(manifest_path())).lib;
 
-    if (text == null || !publish_manifest(text)) {
+    if (text == null || !enabled() || !publish_manifest(text)) {
         remove_tree(library);
         release_build_lock();
         return SOURCE_DIR;

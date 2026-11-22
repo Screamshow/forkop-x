@@ -12,6 +12,7 @@ WORK_DIR="$(mktemp -d)"
 # FORKOP_LIB deliberately, so an inherited value must not reach them.
 unset FORKOP_LIB FORKOP_SOURCE_LIB FORKOP_BYTECODE_CACHE FORKOP_BYTECODE_CACHE_DIR
 unset FORKOP_UCODE_BIN FORKOP_BYTECODE_VALIDATION_TTL
+export FORKOP_PACKAGE_RECOVERY_ROOT="$WORK_DIR/recovery"
 
 cleanup() {
   rm -rf "$WORK_DIR"
@@ -112,6 +113,9 @@ cache_out="$(ucode -L "$built" "$built/service/entry.uc")"
 reused="$(resolve)"
 [ "$reused" = "$built" ] ||
   fail "an up-to-date cache must be reused, got '$reused' instead of '$built'"
+[ "$(bytecode "$SOURCE_DIR" "$CACHE_DIR" library_dir FORKOP_BYTECODE_VALIDATION_TTL=60)" = "$built" ] ||
+  fail "the original cache must be available with validation stamps enabled"
+[ -f "$CACHE_DIR/validated" ] || fail "the original cache must have a fresh validation stamp"
 
 # Editing an installed module is how a module gets copied onto a router during
 # development. The manifest records size, mtime and inode, so the stale cache
@@ -121,6 +125,23 @@ cat >"$SOURCE_DIR/config/domain.uc" <<'UCODE'
 #!/usr/bin/env ucode
 return { marker: "domain-v2" };
 UCODE
+
+# A legacy updater can still execute the old generation after the new package
+# was installed. Keep its manifest and modules available while recovery is armed.
+recovery_hook="$FORKOP_PACKAGE_RECOVERY_ROOT/etc/rc.d/S98forkop-upgrade-recovery"
+mkdir -p "$(dirname "$recovery_hook")"
+ln -s "$WORK_DIR/recovery-script" "$recovery_hook"
+cp "$CACHE_DIR/manifest" "$WORK_DIR/original-manifest"
+for operation in library_dir refresh build; do
+  held="$(bytecode "$SOURCE_DIR" "$CACHE_DIR" "$operation" FORKOP_BYTECODE_VALIDATION_TTL=60)"
+  [ "$held" = "$SOURCE_DIR" ] ||
+    fail "$operation must use installed sources while package recovery is armed"
+done
+cmp -s "$CACHE_DIR/manifest" "$WORK_DIR/original-manifest" ||
+  fail "an armed package transaction must preserve the original cache manifest"
+[ "$(ucode -L "$built" "$built/service/entry.uc")" = "$source_out" ] ||
+  fail "an armed package transaction must leave the old modules usable"
+rm "$recovery_hook"
 
 stale="$(resolve_only)"
 [ "$stale" = "$SOURCE_DIR" ] ||
@@ -299,6 +320,11 @@ mkdir -p "$WORK_DIR/entry/diagnostics" "$WORK_DIR/entry/config" "$WORK_DIR/entry
 cp "$LIB_SRC/core/bytecode.uc" "$WORK_DIR/entry/core/bytecode.uc"
 cp "$SOURCE_DIR/config/domain.uc" "$WORK_DIR/entry/config/domain.uc"
 cp "$WORK_DIR/fake/diagnostics/runtime.uc" "$WORK_DIR/entry/diagnostics/runtime.uc"
+for library in entry fake; do
+  mkdir -p "$WORK_DIR/$library/components"
+  cp "$WORK_DIR/fake/diagnostics/runtime.uc" "$WORK_DIR/$library/components/action.uc"
+  cp "$WORK_DIR/fake/diagnostics/runtime.uc" "$WORK_DIR/$library/components/updates.uc"
+done
 entry_resolved="$(
   env FORKOP_SOURCE_LIB="$WORK_DIR/entry" FORKOP_BYTECODE_CACHE_DIR="$WORK_DIR/entry-cache" \
     ucode "$FORKOP_ENTRY" show_version
@@ -307,6 +333,23 @@ case "$entry_resolved" in
   "$WORK_DIR/entry-cache"/lib.*) ;;
   *) fail "entrypoint must hand the resolved cache to its children, got '$entry_resolved'" ;;
 esac
+
+entry_component() {
+  env FORKOP_LIB="$1" FORKOP_SOURCE_LIB="$WORK_DIR/entry" \
+    FORKOP_BYTECODE_CACHE_DIR="$WORK_DIR/entry-cache" ucode "$FORKOP_ENTRY" "${@:2}"
+}
+
+for command in component_action component_action_async; do
+  [ "$(entry_component "$entry_resolved" "$command" forkop install)" = "$WORK_DIR/entry" ] ||
+    fail "$command must run Forkop self-updates from the stable installed path"
+  [ "$(entry_component "$entry_resolved" "$command" forkop install_pinned_xrust 3.0.1)" = "$WORK_DIR/entry" ] ||
+    fail "$command must run Forkop self-updates with pinned Xrust from the stable installed path"
+  [ "$(entry_component "$WORK_DIR/fake" "$command" forkop install)" = "$WORK_DIR/fake" ] ||
+    fail "$command must honour an explicit library override for Forkop self-updates"
+  [ "$(entry_component "" "$command" zapret_manager install)" = "$entry_resolved" ] ||
+    fail "$command must still use bytecode for other component installs"
+done
+
 cat >"$WORK_DIR/entry/diagnostics/runtime.uc" <<'UCODE'
 print("new-package\n");
 UCODE
