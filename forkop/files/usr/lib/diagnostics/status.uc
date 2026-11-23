@@ -447,13 +447,13 @@ function render_nft_chain_config_blocks() {
     }
 }
 
-function nft_chain_counter_status() {
+function nft_chain_counter_status(mark_only) {
     let rules_exist = 0;
     let counters = 0;
 
     for (let line in split(read_stdin(), "\n")) {
         line = as_string(line);
-        if (index(line, "counter") < 0)
+        if (index(line, "counter") < 0 || (mark_only && index(line, "meta mark set ") < 0))
             continue;
 
         rules_exist = 1;
@@ -1061,7 +1061,7 @@ else if (mode == "nft-set-element-count")
 else if (mode == "nft-chain-config-blocks")
     render_nft_chain_config_blocks();
 else if (mode == "nft-chain-counter-status")
-    nft_chain_counter_status();
+    nft_chain_counter_status(ARGV[1] == "mark-only");
 else if (mode == "forkop-logs")
     render_forkop_logs();
 else if (mode == "matching-log-tail")

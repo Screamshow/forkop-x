@@ -958,9 +958,10 @@ function check_dns_available() {
     return 0;
 }
 
-function nft_chain_counter_status(chain) {
+function nft_chain_counter_status(chain, mark_only) {
     let output = command_output_from_args([ "nft", "list", "chain", "inet", NFT_TABLE_NAME, chain ]);
-    let status = words(status_output([ "nft-chain-counter-status" ], output));
+    let args = mark_only ? [ "nft-chain-counter-status", "mark-only" ] : [ "nft-chain-counter-status" ];
+    let status = words(status_output(args, output));
     while (length(status) < 2)
         push(status, "0");
     return [ arg_number(status[0]), arg_number(status[1]) ];
@@ -1001,12 +1002,14 @@ function check_nft_rules() {
         if (command_success_from_args([ "nft", "list", "chain", "inet", NFT_TABLE_NAME, "mangle" ])) {
             let status = nft_chain_counter_status("mangle");
             rules_mangle_exist = status[0];
-            rules_mangle_counters = status[1];
+            // A marking rule in the jumped chain may accept the packet
+            // before it reaches any of the parent chain's counters.
+            rules_mangle_counters = status[1] || nft_chain_counter_status("priority_rules", true)[1];
         }
         if (command_success_from_args([ "nft", "list", "chain", "inet", NFT_TABLE_NAME, "mangle_output" ])) {
             let status = nft_chain_counter_status("mangle_output");
             rules_mangle_output_exist = status[0];
-            rules_mangle_output_counters = status[1];
+            rules_mangle_output_counters = status[1] || nft_chain_counter_status("priority_output_rules", true)[1];
         }
         if (command_success_from_args([ "nft", "list", "chain", "inet", NFT_TABLE_NAME, "proxy" ])) {
             let status = nft_chain_counter_status("proxy");

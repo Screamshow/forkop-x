@@ -169,3 +169,34 @@ grep -qx 1 "$WORK/v4"
 grep -qx 1 "$WORK/v6"
 test ! -f "$FORKOP_RUNTIME_STATE_DIR/bridge-netfilter.json"
 echo '#51 bridge sysctls are handled and restored separately'
+
+cat >"$WORK/bin/nft" <<'SH'
+#!/bin/sh
+case "$*" in
+    'list tables'|'list table inet ForkopTable') echo 'table inet ForkopTable' ;;
+    'list chain inet ForkopTable mangle'|'list chain inet ForkopTable mangle_output')
+        echo 'meta mark set 0x100 counter packets 0 bytes 0 return' ;;
+    'list chain inet ForkopTable priority_rules'|'list chain inet ForkopTable priority_output_rules')
+        echo 'counter packets 19 bytes 2100 accept'
+        if [ "$NFT_DIAG_MARKED" = 1 ]; then
+            echo 'meta mark set 0x100 counter packets 7 bytes 800 accept'
+        else
+            echo 'meta mark set 0x100 counter packets 0 bytes 0 accept'
+        fi ;;
+    'list chain inet ForkopTable proxy') echo 'tproxy ip to :1602 counter packets 7 bytes 800' ;;
+    *) exit 1 ;;
+esac
+SH
+printf '#!/bin/sh\nexit 0\n' >"$WORK/bin/curl"
+chmod +x "$WORK/bin/nft" "$WORK/bin/curl"
+for marked in 0 1; do
+    NFT_DIAG_MARKED="$marked" FORKOP_LIB="$LIB" ucode -L "$LIB" "$LIB/diagnostics/runtime.uc" check-nft-rules |
+        ucode -e '
+            let result = json(require("fs").readfile("/dev/stdin"));
+            let marked = int(ARGV[0]);
+            assert(result.table_exist && result.rules_mangle_exist && result.rules_mangle_output_exist);
+            assert(result.rules_mangle_counters == marked && result.rules_mangle_output_counters == marked);
+            assert(result.rules_proxy_exist && result.rules_proxy_counters);
+        ' "$marked"
+done
+echo 'nftables diagnostics count priority-chain marking without counting bypass'
