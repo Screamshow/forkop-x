@@ -448,8 +448,8 @@ class Release:
             self.archive_only |= manifest.get('minimum_forkop_major') == 3
         self.verify_signatures()
         args = ['gh', 'release', 'edit', self.tag, '-R', self.repo, '--draft=false']
-        if self.archive_only:
-            args.append('--latest=false')
+        if self.project == 'rust-x':
+            args.append('--latest=true')
         run(*args)
 
     def sync(self):

@@ -52,9 +52,10 @@ For a new Forkop 3.x release, pass `--xrust-version VERSION` if that exact
 Xrust version is already signed, published and mirrored. When publishing both
 projects, pass `--forkop FORKOP_VERSION --rust XRUST_VERSION`. The command
 publishes and verifies the versioned Xrust archive first and uses its version
-as the Forkop pin. The paired release leaves Xrust's standalone latest pointers
-on GitHub and the mirror where they are. Forkop 2.7.6 still uses the mirror's
-`rust-x/latest.json` for default installation and automatic core updates.
+as the Forkop pin. The newly published Xrust release becomes Latest on GitHub.
+For a core that requires Forkop 3.x, the paired release preserves the mirror's
+`rust-x/latest.json`, which Forkop 2.7.6 uses for default installation and
+automatic core updates.
 Each Forkop release keeps the pin in `forkop-manifest.json`. A resumed
 public release uses its existing pin. The release command verifies that the
 public GitHub release and exact Xrust mirror archive describe the same packages.

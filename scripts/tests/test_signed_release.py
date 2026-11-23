@@ -279,7 +279,7 @@ class SignatureGateTests(unittest.TestCase):
             uploaded[-1]['digest'] = 'sha256:' + 'c' * 64
             self.assertFalse(operation.draft_has_build_assets(draft))
 
-    def test_paired_xrust_release_preserves_legacy_latest(self):
+    def test_paired_xrust_release_updates_github_latest_and_preserves_mirror_latest(self):
         operation = release.Release(SimpleNamespace(
             forkop='3.0.0-canary.1', xrust_version='0.0.45', output=self.directory,
             ssh_key=Path('test-key'), timeout=1, resume=False), 'rust-x', '0.0.45')
@@ -295,7 +295,7 @@ class SignatureGateTests(unittest.TestCase):
                 patch.object(release, 'run') as commands, \
                 patch.object(release, 'public_json', side_effect=endpoints.__getitem__) as query:
             operation.finalize()
-            self.assertEqual(commands.call_args.args[-1], '--latest=false')
+            self.assertEqual(commands.call_args.args[-2:], ('--draft=false', '--latest=true'))
             operation.sync()
             self.assertNotIn('--latest', remote.call_args.args[0])
             self.assertEqual([call.args[0] for call in query.call_args_list], [archive_url, catalog_url])
