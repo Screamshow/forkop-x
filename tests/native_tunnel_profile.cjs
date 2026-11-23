@@ -51,6 +51,22 @@ assert.equal(writes.length, 1);
 const saved = JSON.parse(writes[0][3]);
 assert.equal(saved.type, 'wireguard');
 assert.equal(context.validate('test', JSON.stringify(saved)), true);
+const compact = {
+  ...saved,
+  address: '10.0.0.2/32',
+  peers: [{ ...saved.peers[0], allowed_ips: '0.0.0.0/0' }],
+};
+assert.equal(context.validate('test', JSON.stringify(compact)), true);
+context.write('test', JSON.stringify(compact));
+assert.deepEqual(JSON.parse(writes.at(-1)[3]).address, ['10.0.0.2/32']);
+for (const bad of [
+  { ...saved, address: 'not a CIDR' },
+  { ...saved, peers: 'a' },
+  { ...saved, peers: [{ ...saved.peers[0], port: '51820' }] },
+  { ...saved, peers: [{ ...saved.peers[0], allowed_ips: 'not a CIDR' }] },
+  { ...saved, peers: [{ ...saved.peers[0], public_key: undefined }] },
+  { ...saved, address: ['10.0.0.2/33'] },
+]) assert.equal(context.validate('test', JSON.stringify(bad)), 'Invalid tunnel profile');
 assert.equal(context.validate('test', 'invalid'), 'Invalid tunnel profile');
 assert.ok(source.includes('parseNativeTunnelProfile(textarea.value)'));
 assert.ok(!source.includes('parseNativeTunnelProfile(mode,'));

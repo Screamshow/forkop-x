@@ -1,6 +1,5 @@
 #!/usr/bin/env ucode
 
-let fs = require("fs");
 let common = require("core.common");
 
 // Compare the actual connection, not its presentation or position in a feed.
@@ -62,12 +61,4 @@ function inherit_names(previous, next) {
     return next;
 }
 
-function preserve_file(previous_path, next_path) {
-    let next = common.read_json_file(next_path);
-    if (type(next) != "object")
-        return false;
-    next = inherit_names(common.read_json_file(previous_path), next);
-    return fs.writefile(next_path, sprintf("%J", next) + "\n") != null;
-}
-
-return { connection_key, names, inherit_names, preserve_file };
+return { connection_key, names, inherit_names };

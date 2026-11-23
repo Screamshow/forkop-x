@@ -3,7 +3,7 @@ import type { Forkop } from '../../types';
 export type RuntimeRouteRule = Record<string, unknown>;
 
 export function createRuntimeRouteRulesLoader(
-  read: (path: string) => Promise<string>,
+  read: (path: string, revision: string) => Promise<string>,
   update: (rules: RuntimeRouteRule[]) => void,
 ) {
   let requested: Forkop.RuntimeConfigReference | undefined;
@@ -25,7 +25,7 @@ export function createRuntimeRouteRulesLoader(
       requested = request;
       update([]);
       try {
-        const config = JSON.parse(await read(request.path));
+        const config = JSON.parse(await read(request.path, request.revision));
         if (requested === request) {
           update(Array.isArray(config?.route?.rules) ? config.route.rules : []);
         }

@@ -3,7 +3,8 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 source_dir=${1:-$root/artifacts/tailscale-lite-source}
 output=${2:-$root/artifacts/tailscale-lite/1.98.3}
-mkdir -p "$output"
+mkdir -p -- "$output"
+output=$(CDPATH= cd -- "$output" && pwd -P)
 cd "$source_dir"
 test "$(git rev-parse HEAD)" = 8f2c8d6a14419e95fb9d02d6bf6113893daef5c3
 tags=$(./tool/go run ./cmd/featuretags --min --add=cli,netstack,unixsocketidentity,ipnbus,health,osrouter,portlist,portmapper,tailnetlock)

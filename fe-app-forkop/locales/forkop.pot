@@ -2848,8 +2848,12 @@ msgstr ""
 msgid "Visible name of this section"
 msgstr ""
 
-#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:4888
-msgid "vless://, vmess://, ss://, trojan://, socks4/5://, hy2/hysteria2:// links"
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:5413
+msgid "vless://, vmess://, ss://, trojan://, hy2/hysteria2:// links"
+msgstr ""
+
+#: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:5426
+msgid "SOCKS proxy links are unavailable with the Forkop Xrust client"
 msgstr ""
 
 #: src/forkop/tabs/updates/initController.ts:904
@@ -2885,7 +2889,20 @@ msgstr ""
 msgid "You can select Output Network Interface, by default autodetect"
 msgstr ""
 
-msgid "Closed Connections"
+#: src/forkop/tabs/dashboard/initController.ts:1806
+msgid "Closed in history"
+msgstr ""
+
+#: src/forkop/tabs/dashboard/initController.ts:715
+msgid "Failed to select server"
+msgstr ""
+
+#: src/forkop/tabs/monitoring/initController.ts:894
+msgid "Previous page"
+msgstr ""
+
+#: src/forkop/tabs/monitoring/initController.ts:899
+msgid "Next page"
 msgstr ""
 
 msgid "Recognized torrent connections bypass proxy and VPN."

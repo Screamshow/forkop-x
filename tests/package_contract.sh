@@ -136,13 +136,16 @@ grep -Fq '/usr/lib/forkop/config/migration.uc migrate' "$FORKOP_MAKEFILE" ||
   work=$(mktemp -d)
   trap 'rm -rf "$work"' EXIT
   source <(sed -n '/^write_backend_preinst() {/,/^}/p' "$BUILD_SCRIPT")
-  write_backend_preinst | sed "s@/usr/bin/xrust@$work/xrust@g; s@/etc/rc.d/S98forkop-upgrade-recovery@$work/recover@g; s@/usr/bin/forkop@$work/forkop@g" > "$work/preinst"
-  cat > "$work/forkop" <<'SH'
+  write_backend_preinst 3.0.3 > "$work/preinst"
+  read -r pin revision < "$ROOT_DIR/forkop/xrust-pin"
+  export FORKOP_PREINST_ROOT="$work"
+  mkdir -p "$work/usr/bin" "$work/usr/lib/opkg" "$work/etc/rc.d"
+  cat > "$work/usr/bin/forkop" <<'SH'
 #!/bin/sh
-[ "$1" = package_postinst ] && [ "$FORKOP_LIB" = /usr/lib/forkop ] || exit 1
+[ "$1" = package_postinst ] && [ "$FORKOP_LIB" = "$FORKOP_PREINST_ROOT/usr/lib/forkop" ] || exit 1
 printf '%s\n' "$1" > "$FORKOP_TEST_RESTORE_LOG"
 SH
-  chmod 700 "$work/forkop"
+  chmod 700 "$work/usr/bin/forkop"
   export FORKOP_TEST_RESTORE_LOG="$work/restore.log"
   if sh "$work/preinst" > "$work/log" 2>&1; then
     fail "native Forkop package must refuse uncoordinated installation on a legacy core"
@@ -150,19 +153,70 @@ SH
   grep -Fq 'Run the official Forkop installer' "$work/log" || fail "missing installer guidance"
   [ ! -e "$work/restore.log" ] || fail "clean refusal must not invoke an installed callback"
   IPKG_INSTROOT="$work/offline" PKG_UPGRADE=1 sh "$work/preinst" upgrade 2.7.6
-  ln -s "$work/journal" "$work/recover"
-  PKG_UPGRADE=1 sh "$work/preinst" upgrade 2.7.6
-  rm "$work/recover"
-  [ ! -e "$work/restore.log" ] || fail "offline or managed upgrade must not invoke recovery"
+  cat > "$work/etc/rc.d/S98forkop-upgrade-recovery" <<'SH'
+#!/bin/sh
+[ "$1" = verify-preinst ] && [ "$2" = 3.0.3 ] && [ "$3" = "$FORKOP_TEST_PIN_PACKAGE" ]
+SH
+  export FORKOP_TEST_PIN_PACKAGE="$pin-$revision"
+  chmod 700 "$work/etc/rc.d/S98forkop-upgrade-recovery"
+  if sh "$work/preinst" > "$work/log" 2>&1; then
+    fail "the mere presence of a journal must not bypass the exact version check"
+  fi
+  FORKOP_PACKAGE_RECOVERY=1 sh "$work/preinst"
+  [ ! -e "$work/restore.log" ] || fail "offline or verified rollback must not invoke recovery"
   if PKG_UPGRADE=1 sh "$work/preinst" upgrade 2.7.6 > "$work/log" 2>&1; then
     fail "restoring the previous service must not allow the unsupported IPK upgrade"
   fi
   grep -Fxq package_postinst "$work/restore.log" || fail "IPK preinst must restore after the old prerm"
   rm "$work/restore.log"
-  printf '#!/bin/sh\nprintf "xrust version 0.0.45\\nFeatures: fixture\\n"\n' > "$work/xrust"
-  chmod 700 "$work/xrust"
+  printf '#!/bin/sh\nprintf "xrust version %s\\nFeatures: fixture\\n"\n' "$pin" > "$work/usr/bin/xrust"
+  chmod 700 "$work/usr/bin/xrust"
+  printf 'Package: rust-x\nVersion: %s-999\nStatus: install ok installed\n\n' "$pin" > "$work/usr/lib/opkg/status"
+  if sh "$work/preinst" 2> "$work/log"; then fail "mismatched IPK revision accepted"; fi
+  printf 'Package: other\nVersion: 1.1.1-1\n\nPackage: rust-x\nVersion: %s-%s\nStatus: install ok installed\n\n' "$pin" "$revision" > "$work/usr/lib/opkg/status"
   PKG_UPGRADE=1 sh "$work/preinst" upgrade 3.0.2
   [ ! -e "$work/restore.log" ] || fail "native upgrade must not invoke recovery"
+  mkdir -p "$work/lib/apk/db"
+  printf 'P:rust-x\nV:%s-r%s\n\n' "$pin" "$revision" > "$work/lib/apk/db/installed"
+  sh "$work/preinst"
+  printf 'P:rust-x\nV:%s-r999\n\n' "$pin" > "$work/lib/apk/db/installed"
+  if sh "$work/preinst" 2> "$work/log"; then fail "mismatched APK revision accepted"; fi
+
+  if command -v ucode >/dev/null 2>&1; then
+    updater="$FORKOP_LIB/components/updater.uc"
+    [ "$(ucode "$updater" forkop-release-version-compare 3.0.3-canary.10 3.0.3)" = -1 ]
+    [ "$(ucode "$updater" forkop-release-version-compare 3.0.3 3.0.3-canary.10)" = 1 ]
+    [ "$(ucode "$updater" forkop-release-version-compare 3.0.3-canary.2 3.0.3-canary.10)" = -1 ]
+    [ "$(ucode "$updater" forkop-release-version-compare 3.0.3 3.0.3)" = 0 ]
+
+    source <(sed -n '/^write_backend_apk_scripts() {/,/^write_app_apk_scripts() {/ { /^write_app_apk_scripts() {/d; p; }; /^make_dir() {/,/^}/p' "$BUILD_SCRIPT")
+    APK_INTERNAL_VERSION=3.0.3 write_backend_apk_scripts "$work/hooks"
+    printf '#!/bin/sh\nexit 7\n' > "$work/usr/bin/forkop"
+    sed "s@/usr/bin/forkop@$work/usr/bin/forkop@g" "$work/hooks/backend-pre-deinstall.sh" > "$work/remove.uc"
+    removal=0
+    ucode "$work/remove.uc" || removal=$?
+    [ "$removal" = 7 ] || fail "APK pre-deinstall hid backend cleanup failure"
+  fi
+)
+
+(
+  work=$(mktemp -d)
+  trap 'rm -rf "$work"' EXIT
+  mkdir "$work/output"
+  printf 'old release\n' > "$work/output/forkop_3.0.2.ipk"
+  printf 'complete earlier build\n' > "$work/output/forkop_3.0.3.apk"
+  sed '/^main "\$@"$/d' "$BUILD_SCRIPT" > "$work/build-fixture.sh"
+  cat >> "$work/build-fixture.sh" <<'SH'
+ensure_host_deps() { :; }
+download_sdk_archive() { return 7; }
+main "$@"
+SH
+  if BUILD_DIR="$work/build" SDK_CACHE_DIR="$work/sdk" bash "$work/build-fixture.sh" 3.0.3 "$work/output"; then
+    fail 'failed SDK download returned success'
+  fi
+  grep -qx 'old release' "$work/output/forkop_3.0.2.ipk"
+  grep -qx 'complete earlier build' "$work/output/forkop_3.0.3.apk"
+  [ "$(find "$work/output" -mindepth 1 -maxdepth 1 | wc -l)" = 2 ]
 )
 
 if grep -Rqs 'require("uci")' "$FORKOP_LIB"; then

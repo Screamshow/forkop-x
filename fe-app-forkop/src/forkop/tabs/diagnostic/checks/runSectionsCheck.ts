@@ -4,6 +4,7 @@ import { updateCheckStore } from './updateCheckStore';
 import { getMeta } from '../helpers/getMeta';
 import { getDashboardSections } from '../../../methods/custom/getDashboardSections';
 import { IDiagnosticsChecksItem } from '../../../services';
+import { isReadOnlyForkopView } from '../../../methods/shell/readForkopStatus';
 
 type SectionCheckState = IDiagnosticsChecksItem['state'];
 
@@ -26,6 +27,18 @@ function getSubscriptionLatencyState(
 
 export async function runSectionsCheck() {
   const { order, title, code } = DIAGNOSTICS_CHECKS_MAP.OUTBOUNDS;
+
+  if (isReadOnlyForkopView()) {
+    updateCheckStore({
+      order,
+      code,
+      title,
+      description: _('Write permission is required'),
+      state: 'warning',
+      items: [],
+    });
+    return;
+  }
 
   updateCheckStore({
     order,

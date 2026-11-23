@@ -1,6 +1,7 @@
 let fs = require("fs");
 let uci = require("core.uci");
 let common = require("core.common");
+let process_identity = require("core.process_identity");
 let as_string = common.as_string;
 
 function quote(v) { return "'" + replace(as_string(v), /'/g, "'\\''") + "'"; }
@@ -62,11 +63,10 @@ function process_map() {
         let path = "";
         for (let i = 0; i + 1 < length(args); i++)
             if (args[i] == "-C") path = args[i + 1];
-        let stat = as_string(fs.readfile("/proc/" + entry + "/stat"));
-        let fields = split(trim(substr(stat, rindex(stat, ")") + 1)), /[ \t]+/);
-        if (path == "" || length(fields) < 20 || fields[0] == "Z") continue;
+        let stat = process_identity.parse_stat(fs.readfile("/proc/" + entry + "/stat"));
+        if (path == "" || stat == null || stat.state == "Z") continue;
         if (candidates[path] == null) candidates[path] = {};
-        candidates[path][entry] = { pid: entry, parent: fields[1], identity: entry + ":" + fields[19] };
+        candidates[path][entry] = { pid: entry, parent: stat.parent, identity: entry + ":" + stat.ticks };
     }
     return select_processes(candidates);
 }
@@ -101,20 +101,35 @@ function plan() {
     }
     return length(result) > 0 ? result : null;
 }
-function owned_loopback_socket(pid, port, table, listening) {
+function socket_inodes(pid) {
     let inodes = {};
-    for (let fd in fs.lsdir("/proc/" + pid + "/fd") || []) {
-        let m = match(as_string(fs.readlink("/proc/" + pid + "/fd/" + fd)), /^socket:\[([0-9]+)\]$/);
+    let fd_dir = "/proc/" + pid + "/fd";
+    for (let fd in fs.lsdir(fd_dir) || []) {
+        let m = match(as_string(fs.readlink(fd_dir + "/" + fd)), /^socket:\[([0-9]+)\]$/);
         if (m) inodes[m[1]] = true;
     }
-    for (let line in split(as_string(fs.readfile("/proc/net/" + table)), "\n")) {
+    return inodes;
+}
+function loopback_sockets(text, listening, wanted_ports) {
+    let sockets = {};
+    for (let line in split(as_string(text), "\n")) {
         let cols = split(trim(line), /[ \t]+/);
-        if (length(cols) < 10 || !inodes[cols[9]]) continue;
+        if (length(cols) < 10 || (listening && cols[3] != "0A")) continue;
         let address = split(cols[1], ":");
-        if (length(address) == 2 && (address[0] == "0100007F" || address[0] == "00000000") &&
-            address[1] == sprintf("%04X", port) && (!listening || cols[3] == "0A")) return true;
+        if (length(address) != 2 || (address[0] != "0100007F" && address[0] != "00000000")) continue;
+        if (wanted_ports != null && !wanted_ports[address[1]]) continue;
+        if (sockets[address[1]] == null) sockets[address[1]] = {};
+        sockets[address[1]][cols[9]] = true;
     }
+    return sockets;
+}
+function owns_port(inodes, sockets, port) {
+    for (let inode, _ in sockets[sprintf("%04X", port)] || {})
+        if (inodes[inode]) return true;
     return false;
+}
+function owned_loopback_socket(pid, port, table, listening) {
+    return owns_port(socket_inodes(pid), loopback_sockets(fs.readfile("/proc/net/" + table), listening), port);
 }
 function monotonic() { let t = clock(true); return t[0] + t[1] / 1000000000.0; }
 function ready(entries, before, old_processes, old_instances, deadline) {
@@ -122,6 +137,8 @@ function ready(entries, before, old_processes, old_instances, deadline) {
     let processes = process_map();
     if (instances == null || processes == null) return false;
     let enabled = {};
+    let confirmed = [];
+    let udp = null, tcp = null;
     for (let entry in entries) {
         if (monotonic() >= deadline) return false;
         let instance = instances[entry.name];
@@ -139,8 +156,16 @@ function ready(entries, before, old_processes, old_instances, deadline) {
         let old = old_processes == null ? null : old_processes[entry.path];
         if (before[entry.path] != text && old != null && old.identity == proc.identity) return false;
         if (entry.port != 0) {
-            if (!owned_loopback_socket(proc.pid, entry.port, "udp", false) ||
-                !owned_loopback_socket(proc.pid, entry.port, "tcp", true)) return false;
+            if (udp == null) {
+                let wanted_ports = {};
+                for (let candidate in entries)
+                    if (!candidate.disabled && candidate.port != 0)
+                        wanted_ports[sprintf("%04X", candidate.port)] = true;
+                udp = loopback_sockets(fs.readfile("/proc/net/udp"), false, wanted_ports);
+                tcp = loopback_sockets(fs.readfile("/proc/net/tcp"), true, wanted_ports);
+            }
+            let inodes = socket_inodes(proc.pid);
+            if (!owns_port(inodes, udp, entry.port) || !owns_port(inodes, tcp, entry.port)) return false;
             // CHAOS is answered locally, without depending on WAN or sing-box.
             // REFUSED is also a valid reply when version disclosure is disabled.
             let timeout = int((deadline - monotonic()) * 1000);
@@ -148,11 +173,16 @@ function ready(entries, before, old_processes, old_instances, deadline) {
             let reply = output("dig @127.0.0.1 -p " + entry.port + " version.bind TXT CH +norecurse +time=1 +tries=1 +noall +comments 2>/dev/null", timeout < 1100 ? timeout : 1100);
             if (match(reply, /status: (NOERROR|REFUSED|NXDOMAIN|NOTIMP),/) == null) return false;
         }
-        if (fs.readfile(entry.path) != text || process_map()?.[entry.path]?.identity != proc.identity) return false;
+        push(confirmed, { path: entry.path, text, identity: proc.identity });
     }
     for (let name, instance in old_instances || {})
         if (!enabled[name] && (instances[name]?.running || processes["/var/etc/dnsmasq.conf." + name] != null)) return false;
-    return true;
+    if (length(confirmed) == 0) return true;
+    let after = process_map();
+    if (after == null) return false;
+    for (let item in confirmed)
+        if (fs.readfile(item.path) != item.text || after[item.path]?.identity != item.identity) return false;
+    return monotonic() < deadline;
 }
 function wait_ready(entries, before, processes, instances, timeout) {
     let deadline = monotonic() + timeout;
@@ -192,4 +222,4 @@ function apply(init) {
     system("logger -t forkop 'dnsmasq reload not ready; falling back to restart'");
     return system("exec " + quote(init) + " restart", 15000) == 0 && wait_ready(entries, before, processes, instances, 8);
 }
-return { apply, expected_config, options, plan, process_map, select_processes, service_instances, owned_loopback_socket };
+return { apply, expected_config, options, plan, process_map, select_processes, service_instances, owned_loopback_socket, loopback_sockets, owns_port };

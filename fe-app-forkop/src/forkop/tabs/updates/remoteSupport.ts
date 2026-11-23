@@ -1,5 +1,7 @@
 import { renderButton } from '../../../partials';
 import { copyToClipboard } from '../../../helpers/copyToClipboard';
+import { isReadOnlyForkopView } from '../../methods/shell/readForkopStatus';
+import { pollLuciTab } from '../../helpers/pollLuciTab';
 
 interface SupportStatus {
   installed: boolean;
@@ -29,7 +31,6 @@ export function renderRemoteSupport() {
   let requestEpoch = 0;
   let announcedSession = '';
   let announcementPending = false;
-  let timer: ReturnType<typeof setTimeout>;
   let connectionDialog: HTMLElement | null = null;
   const key = E('input', {
     type: 'text',
@@ -176,7 +177,7 @@ export function renderRemoteSupport() {
         }),
         renderButton({
           text: _('Disconnect now'),
-          disabled: busy || !status?.active,
+          disabled: isReadOnlyForkopView() || busy || !status?.active,
           onClick: () => {
             void act('stop');
           },
@@ -226,6 +227,7 @@ export function renderRemoteSupport() {
   function update() {
     updateConnectionDialog();
     if (
+      !isReadOnlyForkopView() &&
       card.isConnected &&
       status?.active &&
       status.phase === 'connected' &&
@@ -298,7 +300,8 @@ export function renderRemoteSupport() {
       );
     }
     information.replaceChildren(...details);
-    form.hidden = !status?.installed || !!status.active;
+    form.hidden =
+      isReadOnlyForkopView() || !status?.installed || !!status.active;
     key.disabled = busy;
     consent.disabled = busy;
     const buttons: Node[] = [];
@@ -317,7 +320,10 @@ export function renderRemoteSupport() {
       buttons.push(
         renderButton({
           text: _('Disconnect now'),
-          disabled: busy || ['installing', 'removing'].includes(status.phase),
+          disabled:
+            isReadOnlyForkopView() ||
+            busy ||
+            ['installing', 'removing'].includes(status.phase),
           onClick: () => {
             void act('stop');
           },
@@ -327,7 +333,11 @@ export function renderRemoteSupport() {
       buttons.push(
         renderButton({
           text: _('Allow for 30 minutes'),
-          disabled: busy || !consent.checked || !key.value.trim(),
+          disabled:
+            isReadOnlyForkopView() ||
+            busy ||
+            !consent.checked ||
+            !key.value.trim(),
           onClick: () => {
             void act('start');
           },
@@ -337,7 +347,7 @@ export function renderRemoteSupport() {
       buttons.push(
         renderButton({
           text: _('Install Tailscale Lite'),
-          disabled: busy || !status,
+          disabled: isReadOnlyForkopView() || busy || !status,
           onClick: () => {
             void act('install');
           },
@@ -353,7 +363,7 @@ export function renderRemoteSupport() {
           text: status.lite_installed
             ? _('Remove Tailscale Lite')
             : _('Remove Tailscale'),
-          disabled: busy || !status.removable,
+          disabled: isReadOnlyForkopView() || busy || !status.removable,
           onClick: () => {
             ui.showModal(
               _('Remove Tailscale'),
@@ -402,7 +412,7 @@ export function renderRemoteSupport() {
   }
 
   async function act(operation: string) {
-    if (busy) return;
+    if (busy || isReadOnlyForkopView()) return;
     busy = true;
     requestEpoch += 1;
     const authKey = operation === 'start' ? key.value.trim() : '';
@@ -420,41 +430,35 @@ export function renderRemoteSupport() {
     }
   }
 
-  async function refresh() {
+  async function refresh(isVisible: () => boolean) {
     if (!card.isConnected) return;
     if (!busy) {
       const epoch = requestEpoch;
       try {
         const result = await request('status');
-        if (epoch === requestEpoch && card.isConnected) {
+        if (epoch === requestEpoch && isVisible()) {
           status = result;
           update();
         }
       } catch {
-        if (epoch === requestEpoch && card.isConnected) {
+        if (epoch === requestEpoch && isVisible()) {
           status = null;
           updateConnectionDialog();
           message.textContent = _('Unable to read remote support status');
         }
       }
     }
-    timer = setTimeout(() => {
-      void refresh();
-    }, 3000);
   }
   key.addEventListener('input', update);
   consent.addEventListener('change', update);
   window.addEventListener(
     'pagehide',
     () => {
-      clearTimeout(timer);
       key.value = '';
     },
     { once: true },
   );
   update();
-  timer = setTimeout(() => {
-    void refresh();
-  }, 1000);
+  pollLuciTab(card, refresh, 3000, 1000);
   return card;
 }

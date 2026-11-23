@@ -1,7 +1,7 @@
-#!/usr/bin/env bash
-set -eo pipefail
+#!/bin/sh
+set -eu
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APPLY="$ROOT_DIR/forkop/files/usr/lib/dns/apply.uc"
 FORKOP_LIB="$ROOT_DIR/forkop/files/usr/lib"
 WORK_DIR="$(mktemp -d)"
@@ -16,9 +16,9 @@ value() { awk -v key="$1" 'index($0, key "=") == 1 { print substr($0, length(key
 absent() { ! grep -Fq "$1=" "$STATE" || fail "$1 must be absent"; }
 
 cat >"$WORK_DIR/dnsmasq-init" <<'SH'
-#!/usr/bin/env bash
+#!/bin/sh
 printf '%s\n' "$*" >>"${DNSMASQ_LOG:?}"
-fault=$(printenv DNSMASQ_FAULT_ONCE || true)
+fault=${DNSMASQ_FAULT_ONCE:-}
 if [ -n "$fault" ] && [ -f "$fault" ]; then
     rm -f "$fault"
     exit 7
@@ -27,12 +27,13 @@ SH
 chmod 0755 "$WORK_DIR/dnsmasq-init"
 mkdir -p "$WORK_DIR/bin"
 cat >"$WORK_DIR/bin/logger" <<'SH'
-#!/usr/bin/env bash
+#!/bin/sh
 printf '%s\n' "$*" >>"${LOGGER_LOG:?}"
 SH
 chmod 0755 "$WORK_DIR/bin/logger"
 
 export FORKOP_UCI_STATE_FILE="$STATE"
+export FORKOP_RUNTIME_STATE_DIR="$WORK_DIR/runtime"
 export DNSMASQ_INIT="$WORK_DIR/dnsmasq-init"
 export DNSMASQ_LOG
 export LOGGER_LOG
@@ -122,7 +123,9 @@ dhcp.@dnsmasq[0].forkop_dns_cachesize_present=0' ;;
   printf 'dhcp.@dnsmasq[0].server=127.0.0.42\ndhcp.@dnsmasq[0].noresolv=1\ndhcp.@dnsmasq[0].cachesize=0\n%s\n' "$snapshot" >"$STATE"
   cp "$STATE" "$WORK_DIR/invalid.before"
   : >"$DNSMASQ_LOG"
-  ucode -L "$FORKOP_LIB" "$APPLY" failsafe-restore
+  if ucode -L "$FORKOP_LIB" "$APPLY" failsafe-restore; then
+      fail "invalid snapshot $invalid reported DNS restored"
+  fi
   cmp -s "$WORK_DIR/invalid.before" "$STATE" || fail "invalid snapshot $invalid was changed"
   [ ! -s "$DNSMASQ_LOG" ] || fail "invalid snapshot $invalid restarted dnsmasq"
   : >"$DNSMASQ_LOG"
@@ -150,6 +153,23 @@ ucode -L "$FORKOP_LIB" "$APPLY" failsafe-restore
 # A failed reload restores the immediate pre-apply DNS state and restarts
 # dnsmasq again. Keep the long-lived Forkop ownership snapshot on failed restore.
 export DNSMASQ_FAULT_ONCE="$WORK_DIR/restart-fault"
+cat >"$STATE" <<'EOF_STATE'
+dhcp.@dnsmasq[0].server=1.1.1.1
+dhcp.@dnsmasq[0].noresolv=0
+EOF_STATE
+ucode -L "$FORKOP_LIB" "$APPLY" configure force
+: >"$DNSMASQ_LOG"
+: >"$DNSMASQ_FAULT_ONCE"
+if ucode -L "$FORKOP_LIB" "$APPLY" failsafe-restore; then
+    fail 'failsafe ignored the dnsmasq restart failure'
+fi
+[ "$(value 'dhcp.@dnsmasq[0].server')" = 1.1.1.1 ] || fail 'restored DNS configuration is missing'
+absent 'dhcp.@dnsmasq[0].forkop_dns_version'
+[ -f "$FORKOP_RUNTIME_STATE_DIR/dnsmasq-restore.pending" ] || fail 'restart failure lost its retry marker'
+ucode -L "$FORKOP_LIB" "$APPLY" failsafe-restore
+[ "$(grep -c '^restart$' "$DNSMASQ_LOG")" = 2 ] || fail 'failsafe never retried the dnsmasq restart'
+[ ! -e "$FORKOP_RUNTIME_STATE_DIR/dnsmasq-restore.pending" ] || fail 'successful restart retained the retry marker'
+
 cat >"$STATE" <<'EOF_STATE'
 dhcp.@dnsmasq[0].server=1.1.1.1
 dhcp.@dnsmasq[0].noresolv=0

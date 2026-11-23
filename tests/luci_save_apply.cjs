@@ -92,6 +92,40 @@ if (nativeSource) assert.ok(nativeHandler, 'find the VM native LuCI handler');
     assert.equal(changes.displayStatus, displayStatus);
     assert.equal(context.L.env.apply_holdoff, 4);
   }
+  const committed = [];
+  let permitRegex = false;
+  const regexContext = {
+    view: { extend: value => value },
+    URLSearchParams,
+    uci: { sections: () => [{
+      '.type': 'section',
+      '.name': 'Rule fixture',
+      domain: ['regex:^(?=example)example$'],
+    }] },
+    main: {
+      FORKOP_UCI_PACKAGE: 'forkop',
+      translateForkop: value => value,
+      async writeForkopUi(operation, value) {
+        assert.equal(operation, 'validate_regex');
+        assert.deepEqual(JSON.parse(value), ['^(?=example)example$']);
+        return { code: 0, stdout: permitRegex ? '{}' : '{"invalid":0}' };
+      },
+    },
+  };
+  const regexGuard = vm.runInNewContext(
+    `(function () { ${source.replace('return view.extend(EntryPoint);', 'return configureRegexValidation;')} })()`,
+    regexContext,
+  );
+  const candidate = { async save(parseCallback) {
+    await parseCallback();
+    committed.push(true);
+  } };
+  regexGuard(candidate);
+  await assert.rejects(candidate.save(), /Invalid regular expression: Rule fixture/);
+  assert.equal(committed.length, 0);
+  permitRegex = true;
+  await candidate.save();
+  assert.equal(committed.length, 1);
   console.log('PASS: native prototype dispatch, save before apply, checked/unchecked modes and validation failure');
   console.log('PASS: Forkop confirmation stays visible; mixed changes, progress and rollback preserved');
 })().catch(error => { console.error(error); process.exitCode = 1; });

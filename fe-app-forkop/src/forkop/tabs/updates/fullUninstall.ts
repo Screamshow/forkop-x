@@ -3,6 +3,52 @@ import { renderXIcon24 } from '../../../icons';
 import { renderButton } from '../../../partials';
 
 let removing = false;
+const REMOVAL_STATUS_TIMEOUT_MS = 180000;
+const REMOVAL_STATUS_POLL_MS = 1500;
+
+interface RemovalStatus {
+  state?: string;
+  phase?: string;
+}
+
+export async function waitForRemovalStatus(
+  statusUrl: string,
+): Promise<RemovalStatus | null> {
+  const controller = new AbortController();
+  const deadline = Date.now() + REMOVAL_STATUS_TIMEOUT_MS;
+  const timeout = setTimeout(
+    () => controller.abort(),
+    REMOVAL_STATUS_TIMEOUT_MS,
+  );
+
+  try {
+    while (!controller.signal.aborted) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return null;
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(REMOVAL_STATUS_POLL_MS, remaining)),
+      );
+      if (controller.signal.aborted || Date.now() >= deadline) return null;
+
+      try {
+        const reply = await fetch(statusUrl, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (!reply.ok) continue;
+        const status: RemovalStatus | null = await reply.json();
+        if (controller.signal.aborted || Date.now() >= deadline) return null;
+        if (status?.state === 'complete' || status?.state === 'failed')
+          return status;
+      } catch {
+        // A transient HTTP or JSON error is retried within the same deadline.
+      }
+    }
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 function confirmRemoval() {
   if (removing) return;
@@ -40,39 +86,26 @@ function confirmRemoval() {
               ),
             );
           }
-          const deadline = Date.now() + 180000;
-          while (Date.now() < deadline) {
-            await new Promise((resolve) => setTimeout(resolve, 1500));
-            let status: { state?: string; phase?: string };
-            try {
-              const reply = await fetch(result.status_url, {
-                cache: 'no-store',
-              });
-              if (!reply.ok) continue;
-              status = await reply.json();
-            } catch {
-              continue;
-            }
-            if (status.state === 'complete') {
-              progress.textContent = _(
-                'Forkop X has been removed. Original repositories have been restored.',
-              );
-              cancel.textContent = _('Open LuCI');
-              cancel.disabled = false;
-              cancel.onclick = () => window.location.assign('/cgi-bin/luci/');
-              return;
-            }
-            if (status.state === 'failed') {
-              throw new Error(
-                status.phase === 'preflight'
-                  ? _(
-                      'Original repositories could not be restored. Removal was cancelled before deleting packages.',
-                    )
-                  : _(
-                      'Removal did not finish. See the removal log in /tmp/forkop-uninstall.*/output.log.',
-                    ),
-              );
-            }
+          const status = await waitForRemovalStatus(result.status_url);
+          if (status?.state === 'complete') {
+            progress.textContent = _(
+              'Forkop X has been removed. Original repositories have been restored.',
+            );
+            cancel.textContent = _('Open LuCI');
+            cancel.disabled = false;
+            cancel.onclick = () => window.location.assign('/cgi-bin/luci/');
+            return;
+          }
+          if (status?.state === 'failed') {
+            throw new Error(
+              status.phase === 'preflight'
+                ? _(
+                    'Original repositories could not be restored. Removal was cancelled before deleting packages.',
+                  )
+                : _(
+                    'Removal did not finish. See the removal log in /tmp/forkop-uninstall.*/output.log.',
+                  ),
+            );
           }
           throw new Error(
             _(

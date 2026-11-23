@@ -18,9 +18,9 @@ function is_proxy_transport_mark(family, table_name, line) {
 function is_torrserver_direct_mark(family, table_name, chain_name, line) {
     if (family != "inet" || table_name != "ForkopTorrServerDirect" || chain_name != "output")
         return false;
-    // The worker selects a dedicated cgroup and uses its first two components.
     line = replace(trim(line), /\s+/g, " ");
-    return match(line, /^socket cgroupv2 level 2 "[A-Za-z0-9_.@:-]+\/[A-Za-z0-9_.@:-]+" meta mark set 0x0?8000000 counter packets [0-9]+ bytes [0-9]+ comment "Forkop TorrServer Direct"$/) != null;
+    let rule = match(line, /^socket cgroupv2 level ([0-9]+) "([A-Za-z0-9_.@:-]+(\/[A-Za-z0-9_.@:-]+)+)" meta mark set 0x0?8000000 counter packets [0-9]+ bytes [0-9]+ comment "Forkop TorrServer Direct"$/);
+    return rule != null && int(rule[1]) == length(split(rule[2], "/"));
 }
 
 function is_forkop_mark(family, table_name, chain_name, line) {

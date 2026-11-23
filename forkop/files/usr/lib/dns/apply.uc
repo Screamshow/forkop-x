@@ -1,11 +1,14 @@
 #!/usr/bin/env ucode
 
+let fs = require("fs");
 let uci = require("core.uci");
 let dns_reload = require("dns.reload");
 
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
 const SB_DNS_INBOUND_ADDRESS = getenv("SB_DNS_INBOUND_ADDRESS") || "127.0.0.42";
 const DNSMASQ_INIT = getenv("DNSMASQ_INIT") || "/etc/init.d/dnsmasq";
+const RUNTIME_STATE_DIR = getenv("FORKOP_RUNTIME_STATE_DIR") || "/var/run/forkop";
+const RESTORE_PENDING = RUNTIME_STATE_DIR + "/dnsmasq-restore.pending";
 const SNAPSHOT_VERSION = "1";
 const DNSMASQ_DEFAULT = "dhcp.@dnsmasq[0].";
 const LEGACY_BACKUP_KEYS = [ "forkop_server", "forkop_noresolv", "forkop_cachesize" ];
@@ -165,7 +168,8 @@ function dnsmasq_has_legacy_instance_state() {
 }
 
 function dnsmasq_has_forkop_managed_state() {
-    return dnsmasq_snapshot_is_valid() || dnsmasq_has_legacy_instance_state() || dnsmasq_has_legacy_defaults();
+    return fs.stat(RESTORE_PENDING) != null || dnsmasq_snapshot_is_valid() ||
+        dnsmasq_has_legacy_instance_state() || dnsmasq_has_legacy_defaults();
 }
 
 function dnsmasq_default_values_are_managed() {
@@ -416,14 +420,19 @@ function recover_dnsmasq_reload(before, attempted) {
     return restored && saved && ready;
 }
 
-function finish_dnsmasq_change(restart, before) {
+function finish_dnsmasq_change(restart, before, restore_pending) {
     let attempted = before ? dnsmasq_reload_state() : null;
     let saved = uci.commit("dhcp");
-    if (saved && (!restart || restart_dnsmasq()))
+    if (saved && (!restart || restart_dnsmasq())) {
+        fs.unlink(RESTORE_PENDING);
         return true;
+    }
     if (before) {
-        if (recover_dnsmasq_reload(before, attempted))
+        if (recover_dnsmasq_reload(before, attempted)) {
+            if (restore_pending)
+                fs.unlink(RESTORE_PENDING);
             log("Restored previous dnsmasq settings after failed reload", "warn");
+        }
         else
             log("Could not fully restore dnsmasq after failed reload", "error");
     }
@@ -440,7 +449,7 @@ function dnsmasq_configure(force, preserve_on_failure) {
     }
 
     if (as_string(force) != "force" && uci_get(CONFIG_NAME + ".settings.shutdown_correctly") == "0") {
-        if (dnsmasq_default_config_is_complete()) {
+        if (dnsmasq_default_config_is_complete() && fs.stat(RESTORE_PENDING) == null) {
             log("Previous Forkop shutdown was unclean; dnsmasq already points to sing-box", "info");
             return true;
         }
@@ -470,11 +479,17 @@ function dnsmasq_restore(force, quiet, preserve_on_failure) {
     let has_snapshot = dnsmasq_snapshot_is_valid();
     let has_legacy_instance = dnsmasq_has_legacy_instance_state();
     let has_legacy_defaults = dnsmasq_has_legacy_defaults();
+    let pending = fs.stat(RESTORE_PENDING) != null;
     if (has_marker && !has_snapshot) {
         log("DNS rollback skipped: invalid Forkop dnsmasq transaction snapshot", "warn");
-        return true;
+        return !dnsmasq_default_has_forkop_dns() && !pending;
     }
     if (!has_snapshot && !has_legacy_instance && !has_legacy_defaults) {
+        if (pending) {
+            if (!restart_dnsmasq())
+                return false;
+            return fs.unlink(RESTORE_PENDING) || fs.stat(RESTORE_PENDING) == null;
+        }
         if (!quiet)
             log("dnsmasq already uses non-Forkop DNS settings; restore is not required", "info");
         return true;
@@ -482,8 +497,15 @@ function dnsmasq_restore(force, quiet, preserve_on_failure) {
     if (as_string(force) != "force" && uci_get(CONFIG_NAME + ".settings.shutdown_correctly") == "1")
         log("Forkop DNS settings are still present after a clean shutdown; restoring DNS settings in dnsmasq", "info");
 
+    // UCI can commit successfully while the dnsmasq reload fails. Retain a
+    // retry obligation after the saved Forkop settings have been consumed.
+    if (!pending && (system([ "mkdir", "-p", RUNTIME_STATE_DIR ]) != 0 ||
+        fs.writefile(RESTORE_PENDING, "1\n") == null)) {
+        log("Could not record the pending dnsmasq recovery", "error");
+        return false;
+    }
     let before = preserve_on_failure ? dnsmasq_reload_state() : null;
-    let changed = has_legacy_instance;
+    let changed = has_legacy_instance || pending;
     if (has_legacy_instance)
         dnsmasq_cleanup_legacy_instance();
     if (has_snapshot)
@@ -498,19 +520,14 @@ function dnsmasq_restore(force, quiet, preserve_on_failure) {
     }
     // Snapshot consumption itself must be durable, even if every field had an
     // external conflict and therefore no dnsmasq restart is necessary.
-    return finish_dnsmasq_change(changed, before);
+    return finish_dnsmasq_change(changed, before, !pending);
 }
 
 function failsafe_restore() {
     if (!uci_available())
         return true;
 
-    if (dnsmasq_snapshot_marker_present() && !dnsmasq_snapshot_is_valid()) {
-        log("DNS rollback skipped: invalid Forkop dnsmasq transaction snapshot", "warn");
-        return true;
-    }
-
-    if (!dnsmasq_has_forkop_managed_state()) {
+    if (!dnsmasq_has_forkop_managed_state() && !dnsmasq_snapshot_marker_present()) {
         log("DNS rollback skipped: no valid Forkop dnsmasq transaction was found", "info");
         return true;
     }
@@ -519,8 +536,7 @@ function failsafe_restore() {
         "Rolling back previous Forkop dnsmasq changes because dont_touch_dhcp is enabled" :
         "Rolling back Forkop DNS changes in dnsmasq", "warn");
 
-    dnsmasq_restore("force", true);
-    return true;
+    return dnsmasq_restore("force", true);
 }
 
 let mode = ARGV[0] || "";

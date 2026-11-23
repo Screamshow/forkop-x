@@ -1,10 +1,5 @@
 let fs = require("fs");
-
-function start_ticks(stat) {
-    let marker = rindex(stat || "", ") ");
-    let fields = marker >= 0 ? split(trim(substr(stat, marker + 2)), /\s+/) : [];
-    return length(fields) >= 20 ? fields[19] : null;
-}
+let process_identity = require("core.process_identity");
 
 // Sum the verified instances of one procd service. The caller owns `seen`, so a
 // pid reached through two service names is counted once across a whole group.
@@ -15,7 +10,7 @@ function instances_rss_bytes(instances, proc_root, seen) {
         if (instance.running !== true || pid <= 0 || seen[pid])
             continue;
         let path = proc_root + "/" + pid;
-        let before = start_ticks(fs.readfile(path + "/stat"));
+        let before = process_identity.start_ticks(pid, proc_root);
         let cmdline = fs.readfile(path + "/cmdline");
         let command = instance.command;
         if (before == null || cmdline == null || type(command) != "array" || !length(command))
@@ -33,7 +28,7 @@ function instances_rss_bytes(instances, proc_root, seen) {
                 return null;
         }
         let rss = match(fs.readfile(path + "/status") || "", /VmRSS:[ \t]+([0-9]+)[ \t]+kB/);
-        if (rss == null || before != start_ticks(fs.readfile(path + "/stat")))
+        if (rss == null || before != process_identity.start_ticks(pid, proc_root))
             return null;
         seen[pid] = true;
         total += int(rss[1]) * 1024;

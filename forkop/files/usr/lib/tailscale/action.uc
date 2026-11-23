@@ -1,9 +1,13 @@
 // Experimental native LuCI access. No system Tailscale packages or support state.
 let fs = require('fs');
+let locks = require('core.locks');
+let core_ip = require('core.ip');
 let xrust = require('xrust.binary');
 const DIR = '/var/run/forkop/ui-state';
 const AUTH = DIR + '/tailscale-auth';
 const STATUS = DIR + '/tailscale-status.json';
+const START_DEADLINE = DIR + '/tailscale-start-deadline';
+const CONTROL_LOCK = '/tmp/forkop-tailscale-native-action.lock';
 const INIT = '/etc/init.d/forkop-tailscale';
 const STATE = '/etc/forkop-tailscale';
 // LuCI polls this every few seconds. The answers depend only on these files,
@@ -79,87 +83,177 @@ function result(data) {
     data.events = connection_events(data);
     print(sprintf('%J\n', data));
 }
-if (action == 'connect') {
-    if (!available) { fs.unlink(AUTH); fs.unlink(DIR + '/tailscale-auth-input'); result({state:'unavailable'}); exit(0); }
+
+function mark_connecting() {
+    return fs.writefile(START_DEADLINE, '' + (int(clock(true)[0]) + 20)) != null &&
+        fs.writefile(STATUS, '{"state":"connecting"}') != null;
+}
+
+function start_pending() {
+    try {
+        return json(fs.readfile(STATUS) || '{}').state == 'connecting' &&
+            int(fs.readfile(START_DEADLINE) || 0) > int(clock(true)[0]);
+    } catch (e) { return false; }
+}
+
+function native_flag_write(path, contents) {
+    if (contents == null) return fs.unlink(path) || fs.stat(path) == null;
+    let temporary = path + '.new';
+    let saved = fs.writefile(temporary, contents) != null && fs.chmod(temporary, 0600) && fs.rename(temporary, path);
+    if (!saved) fs.unlink(temporary);
+    return saved;
+}
+
+function change_native_setting(path, contents) {
+    if (start_pending()) return 'Tailscale connection is already starting';
     fs.mkdir(STATE, 0700);
-    fs.chmod(STATE, 0700);
-    // stop deletes stale auth: UI staging file is separate from worker input.
-    let staged = DIR + '/tailscale-auth-input';
-    let key = trim(fs.readfile(staged) || '');
-    fs.unlink(staged);
-    if (length(key) && (length(key) > 256 || !match(key, /^tskey-auth-[A-Za-z0-9-]+$/))) {
-        result({state:'error', message:'Некорректный ключ Tailscale'}); exit(0);
+    let previous = fs.readfile(path);
+    if (!fs.chmod(STATE, 0700) || (previous == null && fs.stat(path) != null))
+        return 'Could not read the previous Tailscale settings';
+    if (previous == contents) return '';
+    if (!native_flag_write(path, contents)) return 'Could not save the Tailscale settings';
+    if (fs.stat(STATE + '/enabled') == null) return '';
+
+    if (system(INIT + ' stop >/dev/null 2>&1') != 0) {
+        return native_flag_write(path, previous)
+            ? 'Could not stop Tailscale. The previous setting was restored.'
+            : 'Could not stop Tailscale or restore the previous setting.';
     }
-    if (!length(key) && !fs.stat(STATE + '/tailscale.state')) {
-        result({state:'error', message:'Введите ключ Tailscale'}); exit(0);
+    if (mark_connecting() && system(INIT + ' start >/dev/null 2>&1') == 0) return '';
+    if (native_flag_write(path, previous) && mark_connecting() && system(INIT + ' start >/dev/null 2>&1') == 0)
+        return 'Tailscale did not start with the new setting. The previous setting was restored.';
+    fs.writefile(STATUS, '{"state":"error"}');
+    return 'Tailscale did not start and could not recover the previous connection.';
+}
+
+function apply_native_setting(path, contents) {
+    let pid = match(fs.readfile('/proc/self/stat') || '', /^[1-9][0-9]*/)?.[0];
+    if (!locks.acquire(CONTROL_LOCK, pid)) {
+        result({state:'error', message:'Another Tailscale operation is running'});
+        exit(0);
     }
-    system(INIT + ' stop >/dev/null 2>&1');
+    let message;
+    try { message = change_native_setting(path, contents); }
+    catch (e) { message = 'Could not change the Tailscale settings'; }
+    locks.release(CONTROL_LOCK);
+    if (message) { result({state:'error', message}); exit(0); }
+}
+
+function private_lan_routes(lan) {
+    if (lan?.up !== true || !match(lan.l3_device || '', /^[A-Za-z0-9_.-]+$/))
+        return null;
+    let routes = [];
+    for (let entry in (lan['ipv4-address'] || [])) {
+        if (!core_ip.valid_ipv4(entry.address, false, true)) continue;
+        let parts = map(split(entry.address, '.'), part => int(part, 10));
+        let prefix = int(entry.mask);
+        let minimum = parts[0] == 10 ? 8 : (parts[0] == 172 && parts[1] >= 16 && parts[1] <= 31 ? 12 :
+            (parts[0] == 192 && parts[1] == 168 ? 16 : 33));
+        if (prefix < minimum || prefix > 30) continue;
+        let network = [];
+        for (let i = 0; i < 4; i++) {
+            let bits = prefix - i * 8;
+            push(network, bits >= 8 ? parts[i] : (bits <= 0 ? 0 : parts[i] & (256 - (1 << (8 - bits)))));
+        }
+        let route = join('.', network) + '/' + prefix;
+        if (index(routes, route) < 0) push(routes, route);
+    }
+    return length(routes) ? {device:lan.l3_device, routes:sort(routes)} : null;
+}
+
+function configured_lan_routes() {
+    let pipe = fs.popen('ubus -t 2 call network.interface.lan status 2>/dev/null', 'r');
+    if (!pipe) return null;
+    let output = pipe.read('all');
+    if (pipe.close() != 0) return null;
+    try { return private_lan_routes(json(output)); }
+    catch (e) { return null; }
+}
+function connect_native(staged) {
+    if (!available) return { state:'unavailable' };
+    if (start_pending())
+        return { state:'error', message:'Tailscale connection is already starting' };
+
+    let key = '';
+    if (staged) {
+        let info = match(staged, /^\/tmp\/forkop-tailscale-connect\.[A-Za-z0-9]{6}\/input$/)
+            ? fs.lstat(staged) : null;
+        if (info?.type != 'file' || info.uid != 0 || (info.mode & 0777) != 0600 || info.size > 256)
+            return { state:'error', message:'Invalid Tailscale auth input' };
+        key = trim(fs.readfile(staged) || '');
+        fs.unlink(staged);
+    }
+    if (length(key) && !match(key, /^tskey-auth-[A-Za-z0-9-]+$/))
+        return { state:'error', message:'Некорректный ключ Tailscale' };
+    if (!length(key) && !fs.stat(STATE + '/tailscale.state'))
+        return { state:'error', message:'Введите ключ Tailscale' };
+
+    fs.mkdir(STATE, 0700);
+    if (!fs.chmod(STATE, 0700) || system(INIT + ' stop >/dev/null 2>&1') != 0)
+        return { state:'error', message:'Could not prepare Tailscale connection' };
     if (length(key)) {
-        let f = fs.open(AUTH, 'w', 0600);
-        if (!f) { result({state:'error', message:'Не удалось передать ключ'}); exit(0); }
-        f.write(key); f.close(); fs.chmod(AUTH, 0600);
+        let file = fs.open(AUTH, 'w', 0600);
+        if (!file)
+            return { state:'error', message:'Не удалось передать ключ' };
+        let written = file.write(key);
+        file.close();
+        if (written != length(key) || !fs.chmod(AUTH, 0600)) {
+            fs.unlink(AUTH);
+            return { state:'error', message:'Не удалось передать ключ' };
+        }
     }
     fs.writefile(STATE + '/enabled', '1');
-    fs.writefile(STATUS, '{"state":"connecting"}');
+    let marked = mark_connecting();
     system(INIT + ' enable >/dev/null 2>&1');
-    let code = system(INIT + ' start >/dev/null 2>&1');
-    if (code) { fs.unlink(AUTH); fs.unlink(STATE + '/enabled'); fs.writefile(STATUS, '{"state":"error"}'); }
+    if (!marked || system(INIT + ' start >/dev/null 2>&1')) {
+        fs.unlink(AUTH);
+        fs.unlink(STATE + '/enabled');
+        fs.writefile(STATUS, '{"state":"error"}');
+    }
+    return null;
+}
+
+if (action == 'connect') {
+    let pid = match(fs.readfile('/proc/self/stat') || '', /^[1-9][0-9]*/)?.[0];
+    if (!locks.acquire(CONTROL_LOCK, pid)) {
+        result({ state:'error', message:'Another Tailscale operation is running' });
+        exit(0);
+    }
+    let outcome;
+    try { outcome = connect_native(ARGV[1]); }
+    catch (e) { outcome = { state:'error', message:'Tailscale connection failed' }; }
+    locks.release(CONTROL_LOCK);
+    if (outcome) { result(outcome); exit(0); }
 } else if (action == 'disconnect') {
     fs.unlink(STATE + '/enabled');
-    fs.unlink(DIR + '/tailscale-auth-input');
     system(INIT + ' stop >/dev/null 2>&1');
     system(INIT + ' disable >/dev/null 2>&1');
 } else if (action == 'ssh' || action == 'exit') {
     if (!(action == 'ssh' ? ssh_available : exit_available) || (ARGV[1] != '0' && ARGV[1] != '1')) exit(1);
     let flag = action == 'ssh' ? '/ssh-enabled' : '/exit-enabled';
-    fs.mkdir(STATE, 0700); fs.chmod(STATE, 0700);
-    if (ARGV[1] == '1') {
-        fs.writefile(STATE + flag, '1'); fs.chmod(STATE + flag, 0600);
-    } else { fs.unlink(STATE + flag); }
-    if (fs.stat(STATE + '/enabled')) {
-        system(INIT + ' stop >/dev/null 2>&1');
-        fs.writefile(STATUS, '{"state":"connecting"}');
-        system(INIT + ' start >/dev/null 2>&1');
-    }
+    apply_native_setting(STATE + flag, ARGV[1] == '1' ? '1' : null);
 } else if (action == 'lan') {
-    if (ARGV[1] != '0' && ARGV[1] != '1') { exit(1); }
-    fs.mkdir(STATE, 0700); fs.chmod(STATE, 0700);
-    if (ARGV[1] == '1') {
-        let p = fs.popen('ubus call network.interface.lan status', 'r');
-        let lan;
-        try { lan = json(p.read('all')); } catch (e) { lan = {}; }
-        if (p) p.close();
-        let routes = [];
-        for (let entry in lan['ipv4-address']) {
-            let parts = split(entry.address, '.');
-            let prefix = int(entry.mask);
-            if (length(parts) != 4 || prefix < 8 || prefix > 30) continue;
-            let a = int(parts[0]), b = int(parts[1]);
-            if (!(a == 10 || a == 192 && b == 168 || a == 172 && b >= 16 && b <= 31)) continue;
-            let network = [];
-            for (let i = 0; i < 4; i++) {
-                let bits = prefix - i * 8;
-                push(network, bits >= 8 ? int(parts[i]) : bits <= 0 ? 0 : int(parts[i]) & (256 - (1 << (8 - bits))));
-            }
-            push(routes, join('.', network) + '/' + prefix);
-        }
-        if (!lan.up || !length(routes) || !match(lan.l3_device || '', /^[A-Za-z0-9_.-]+$/)) {
+    if (ARGV[1] == '0') apply_native_setting(STATE + '/lan.json', null);
+    else if (ARGV[1] == '1' || ARGV[1] == 'preview') {
+        let lan = configured_lan_routes();
+        if (lan == null) {
             result({state:'error', message:'Не удалось определить локальную IPv4-сеть'}); exit(0);
         }
-        fs.writefile(STATE + '/lan.json.new', sprintf('%J', {device:lan.l3_device, routes}));
-        fs.chmod(STATE + '/lan.json.new', 0600); fs.rename(STATE + '/lan.json.new', STATE + '/lan.json');
-    } else { fs.unlink(STATE + '/lan.json'); }
-    if (fs.stat(STATE + '/enabled')) {
-        system(INIT + ' stop >/dev/null 2>&1');
-        fs.writefile(STATUS, '{"state":"connecting"}');
-        system(INIT + ' start >/dev/null 2>&1');
-    }
+        let preview_id = lan.device + ':' + join(',', lan.routes);
+        if (ARGV[1] == 'preview') {
+            print(sprintf('%J\n', {lan_preview_routes:lan.routes, lan_preview_id:preview_id})); exit(0);
+        }
+        if (ARGV[2] && ARGV[2] != preview_id) {
+            result({state:'error', message:'The LAN routes changed. Review them again before enabling access.'}); exit(0);
+        }
+        apply_native_setting(STATE + '/lan.json', sprintf('%J', lan));
+    } else exit(1);
 } else if (action != 'status') { exit(1); }
 let data = {state:'disconnected'};
 try { data = json(fs.readfile(STATUS) || '{}'); } catch (e) {}
 if (!data.state) data.state = 'disconnected';
 if (data.state == 'connected' || data.state == 'reconnecting' || data.state == 'connecting') {
-    let pipe = fs.popen("ubus call service list '{\"name\":\"forkop-tailscale\"}'", 'r');
+    let pipe = fs.popen("ubus -t 2 call service list '{\"name\":\"forkop-tailscale\"}'", 'r');
     let running = false;
     if (pipe) {
         try {
@@ -169,8 +263,10 @@ if (data.state == 'connected' || data.state == 'reconnecting' || data.state == '
         } catch (e) {}
         pipe.close();
     }
-    // Starting procd is asynchronous; leave the initial status to the worker.
-    if (!running && data.state != 'connecting') data.state = 'error';
+    if (!running && !start_pending()) {
+        data.state = 'error';
+        data.message ||= 'Tailscale service is not running';
+    }
 }
 data.available = available;
 data.saved_identity = fs.stat(STATE + '/tailscale.state') != null;

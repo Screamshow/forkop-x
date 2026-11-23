@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ForkopLogWatcher } from '../forkopLogWatcher.service';
 
@@ -62,5 +62,26 @@ describe('ForkopLogWatcher', () => {
       'line 4',
       'line 5',
     ]);
+  });
+
+  it('shares one bounded recent snapshot between background and viewer', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetch = vi.fn(() => 'old\nfirst\nnewest');
+      watcher.init(fetch, { maxTrackedLines: 2 });
+      await expect(
+        Promise.all([watcher.readRecentLogs(), watcher.readRecentLogs()]),
+      ).resolves.toEqual(['first\nnewest', 'first\nnewest']);
+      for (const _ of Array(4)) {
+        await vi.advanceTimersByTimeAsync(200);
+        await watcher.readRecentLogs();
+      }
+      expect(fetch).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(200);
+      await watcher.readRecentLogs();
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

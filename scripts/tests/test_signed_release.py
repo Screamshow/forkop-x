@@ -1,4 +1,5 @@
 import copy
+import base64
 import hashlib
 import importlib.util
 import io
@@ -137,6 +138,147 @@ class SignatureGateTests(unittest.TestCase):
     def operation(self):
         return release.Release(SimpleNamespace(output=self.directory, ssh_key=Path('test-key'), timeout=1, resume=True, xrust_version=None), 'forkop', '2.2.3-canary.1')
 
+    def forkop_draft(self, operation):
+        return dict(isDraft=True, assets=[
+            dict(name=f'{package}_{operation.version}.{extension}', size=100, state='uploaded')
+            for package in signer.PACKAGES for extension in ('apk', 'ipk')])
+
+    def test_incomplete_draft_watches_only_the_dispatch_response_run(self):
+        operation = self.operation()
+        operation.source = 'a' * 40
+        operation.existing = {'draft': True}
+        complete = self.forkop_draft(operation)
+        partial = dict(isDraft=True, assets=complete['assets'][:-1])
+        base = f'repos/{operation.repo}'
+        responses = {
+            f'{base}/git/matching-refs/tags/{operation.tag}': [],
+            f'{base}/commits/main': {'sha': operation.source},
+            f'{base}/actions/workflows/build.yml/dispatches': {'workflow_run_id': 318}
+        }
+        with patch.object(operation, 'current', side_effect=[partial, complete]), \
+                patch.object(release, 'gh', side_effect=lambda action, path, *_: responses[path]) as api, \
+                patch.object(release, 'wait_run') as wait:
+            operation.build()
+        wait.assert_called_once_with(operation.repo, 318, operation.source, 1)
+        self.assertEqual(operation.saved_build()['run_id'], 318)
+        self.assertIn('-F', api.call_args.args)
+        self.assertIn(f'inputs[release_tag]={operation.tag}', api.call_args.args)
+        self.assertIn('inputs[publish_release]=true', api.call_args.args)
+
+    def test_resume_before_draft_exists_keeps_the_saved_source_and_run(self):
+        operation = self.operation()
+        operation.source = 'a' * 40
+        operation.save_build(319)
+        resumed = self.operation()
+        base = f'repos/{operation.repo}'
+        responses = {
+            '--paginate': [[]],
+            f'{base}/git/matching-refs/tags/{operation.tag}': [],
+            'view': {'headSha': operation.source, 'status': 'in_progress'}
+        }
+        with patch.object(resumed, 'remote'), \
+                patch.object(resumed, 'current', return_value=self.forkop_draft(resumed)), \
+                patch.object(release, 'public_json', return_value={'version': '2.2.2'}), \
+                patch.object(release, 'gh', side_effect=lambda action, path, *_: responses[path]), \
+                patch.object(release, 'wait_run') as wait:
+            resumed.preflight()
+            resumed.build()
+        self.assertEqual(resumed.source, operation.source)
+        wait.assert_called_once_with(operation.repo, 319, operation.source, 1)
+
+    def test_completed_draft_and_public_release_skip_build(self):
+        operation = self.operation()
+        operation.existing = {'draft': True}
+        with patch.object(operation, 'current', return_value=self.forkop_draft(operation)) as present, \
+                patch.object(release, 'gh') as api:
+            operation.build()
+            operation.existing = {'draft': False}
+            operation.build()
+        present.assert_called_once_with()
+        api.assert_not_called()
+
+    def test_old_incomplete_draft_builds_the_exact_draft_commit(self):
+        operation = self.operation()
+        operation.source = 'a' * 40
+        operation.existing = {'draft': True}
+        complete = self.forkop_draft(operation)
+        partial = dict(isDraft=True, assets=[])
+        base = f'repos/{operation.repo}'
+        responses = {
+            f'{base}/git/matching-refs/tags/{operation.tag}': [],
+            f'{base}/commits/main': {'sha': 'b' * 40},
+            'list': [
+                {'databaseId': 320, 'headSha': operation.source, 'headBranch': 'another-release'},
+                {'databaseId': 321, 'headSha': 'b' * 40, 'headBranch': operation.tag},
+                {'databaseId': 322, 'headSha': operation.source, 'headBranch': operation.tag}
+            ]
+        }
+        with patch.object(operation, 'current', side_effect=[partial, complete]), \
+                patch.object(release, 'gh', side_effect=lambda action, path, *_: responses[path]), \
+                patch.object(release, 'run') as command, patch.object(release, 'wait_run') as wait:
+            operation.build()
+        command.assert_called_once_with('gh', 'api', f'{base}/git/refs', '-f',
+                                        'ref=refs/tags/' + operation.tag, '-f', 'sha=' + operation.source)
+        wait.assert_called_once_with(operation.repo, 322, operation.source, 1)
+        self.assertEqual(operation.saved_build()['run_id'], 322)
+
+    def test_interruption_between_creating_a_tag_and_recording_its_run(self):
+        operation = self.operation()
+        operation.source = 'a' * 40
+        operation.existing = None
+        operation.save_build(None, pending_tag_push=True)
+        base = f'repos/{operation.repo}'
+        responses = {
+            f'{base}/git/matching-refs/tags/{operation.tag}': [{'ref': 'refs/tags/' + operation.tag}],
+            f'{base}/commits/{operation.tag}': {'sha': operation.source},
+            'list': [{'databaseId': 323, 'headSha': operation.source, 'headBranch': operation.tag}]
+        }
+        with patch.object(operation, 'current', return_value=self.forkop_draft(operation)), \
+                patch.object(release, 'gh', side_effect=lambda action, path, *_: responses[path]), \
+                patch.object(release, 'run') as command, patch.object(release, 'wait_run') as wait:
+            operation.build()
+        command.assert_not_called()
+        wait.assert_called_once_with(operation.repo, 323, operation.source, 1)
+        self.assertEqual(operation.saved_build()['run_id'], 323)
+
+    def test_native_draft_recovers_the_pin_from_its_original_source(self):
+        operation = release.Release(self.operation().args, 'forkop', '3.0.4')
+        operation.source = 'a' * 40
+        base = f'repos/{operation.repo}'
+        responses = {
+            '--paginate': [[{'draft': True, 'tag_name': operation.tag, 'target_commitish': operation.source}]],
+            f'{base}/commits/{operation.source}': {'sha': operation.source},
+            f'{base}/git/matching-refs/tags/{operation.tag}': [],
+            f'{base}/contents/forkop?ref={operation.source}': [{'name': 'xrust-pin'}],
+            f'{base}/contents/forkop/xrust-pin?ref={operation.source}': {
+                'content': base64.b64encode(b'0.0.46 2\n').decode()
+            }
+        }
+        with patch.object(operation, 'remote'), \
+                patch.object(release, 'public_json', return_value={'version': '3.0.3'}), \
+                patch.object(release, 'gh', side_effect=lambda action, path, *_: responses[path]):
+            operation.preflight()
+        self.assertEqual((operation.xrust_version, operation.xrust_revision), ('0.0.46', 2))
+
+    def test_xrust_draft_needs_all_packages_declared_by_its_manifest(self):
+        operation = release.Release(self.operation().args, 'rust-x', '0.0.46')
+        operation.source = 'a' * 40
+        checksum = 'b' * 64
+        assets = [dict(file=f'rust-x_0.0.46-{revision}_{arch}.{fmt}', size=123,
+                       sha256=checksum, architecture=arch, format=fmt)
+                  for arch in ('x86_64', 'aarch64_cortex-a53')
+                  for fmt, revision in (('apk', 'r1'), ('ipk', '1'))]
+        manifest = dict(version=operation.version, binary_source_commit=operation.source,
+                        assets=assets)
+        uploaded = [dict(name=asset['file'], size=123, digest='sha256:' + checksum) for asset in assets]
+        draft = dict(isDraft=True, assets=[dict(name='openwrt-manifest.json', size=100), *uploaded[:-1]])
+        with patch.object(release, 'run', return_value=json.dumps(manifest)):
+            self.assertFalse(operation.draft_has_build_assets(draft))
+            draft['assets'].append(uploaded[-1])
+            self.assertTrue(operation.draft_has_build_assets(draft))
+            uploaded[-1]['digest'] = 'sha256:' + 'c' * 64
+            self.assertFalse(operation.draft_has_build_assets(draft))
+
     def test_paired_xrust_release_preserves_legacy_latest(self):
         operation = release.Release(SimpleNamespace(
             forkop='3.0.0-canary.1', xrust_version='0.0.45', output=self.directory,
@@ -174,8 +316,10 @@ class SignatureGateTests(unittest.TestCase):
         with patch.object(release, 'gh', return_value=uploaded), \
                 patch.object(release, 'public_json', return_value=manifest), \
                 patch.object(release.urllib.request, 'urlopen', side_effect=lambda *_a, **_kw: io.BytesIO(data)) as fetch_file:
-            release.verify_xrust_pin(version)
+            release.verify_xrust_pin(version, expected_revision=1)
             self.assertEqual([call.args[0] for call in fetch_file.call_args_list], [a['url'] for a in manifest['assets']])
+            with self.assertRaisesRegex(ValueError, 'Invalid mirror manifest'):
+                release.verify_xrust_pin(version, expected_revision=2)
             fetch_file.side_effect = FileNotFoundError
             with self.assertRaises(FileNotFoundError):
                 release.verify_xrust_pin(version)

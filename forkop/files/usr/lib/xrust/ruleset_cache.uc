@@ -3,6 +3,7 @@
 let fs = require("fs");
 let xrust = require("xrust.binary");
 let common = require("core.common");
+let duration = require("core.duration");
 let constants = require("core.constants");
 let rulesets = require("xrust.rulesets");
 let uci_core = require("core.uci");
@@ -52,13 +53,6 @@ function command_output(args) {
     return status == 0 && data != null ? as_string(data) : "";
 }
 
-function file_md5(path) {
-    if (fs.stat(path) == null)
-        return "";
-    let fields = split(trim(command_output([ "md5sum", path ])), /[ \t\r\n]+/);
-    return length(fields) > 0 ? as_string(fields[0]) : "";
-}
-
 function parent_dir(path) {
     path = as_string(path);
     let slash = rindex(path, "/");
@@ -89,7 +83,7 @@ function persistent_cache_can_store(target, new_bytes) {
     let list_bytes = allocated_bytes(LIST_CACHE_DIR);
     let ruleset_bytes = allocated_bytes(CACHE_DIR);
     let old_bytes = allocated_bytes(target);
-    if (list_bytes < 0 || ruleset_bytes < 0 || old_bytes < 0)
+    if (list_bytes < 0 || ruleset_bytes < 0 || old_bytes < 0 || new_bytes < 0)
         return false;
     let final_bytes = list_bytes + ruleset_bytes - old_bytes + new_bytes;
     let free_bytes = available_bytes(CACHE_DIR, true);
@@ -104,9 +98,20 @@ function ensure_cache_dir() {
         command_success([ "chmod", "0700", RUNTIME_CACHE_DIR ]);
 }
 
+function with_cache_lock(operation, failure) {
+    if (!ensure_cache_dir())
+        return failure;
+    let lock = fs.open(RUNTIME_CACHE_DIR + "/.lock", "a");
+    if (!lock)
+        return failure;
+    let result = lock.lock("x") ? operation() : failure;
+    lock.close();
+    return result;
+}
+
 function cleanup_stale_temporary_file(path, base, now, max_age) {
     let name = substr(path, length(base) + 1);
-    let managed = match(name, /^[0-9a-f]{12}\.(srs|json)\.download\.[0-9]+\.[0-9]+(\.validated)?$/) != null ||
+    let managed = match(name, /^[0-9a-f]{12}(-[0-9a-f]{64})?\.(srs|json)\.download\.[0-9]+\.[0-9]+(\.validated)?$/) != null ||
         match(name, /^manifest\.json\.[0-9]+\.[0-9]+\.tmp$/) != null ||
         match(name, /^\.validate-[0-9a-f]{12}\.json$/) != null;
     if (!managed)
@@ -194,6 +199,21 @@ function runtime_cache_path(url, format) {
     return RUNTIME_CACHE_DIR + "/" + cache_key(url) + (format == "source" ? ".json" : ".srs");
 }
 
+function generation_path(base, digest) {
+    return replace(base, /\.(srs|json)$/, "-" + digest + ".$1");
+}
+
+function matches_generation(path, base) {
+    let digest = match(path, /-([0-9a-f]{64})\.(srs|json)$/);
+    return path == base || (digest != null && path == generation_path(base, digest[1]));
+}
+
+function persistent_entry_path(entry, format) {
+    let base = cache_path(entry.url, format);
+    let path = as_string(entry.path);
+    return matches_generation(path, base) ? path : base;
+}
+
 function read_runtime_manifest() {
     return common.object_or_empty(common.read_json_file(RUNTIME_MANIFEST_PATH));
 }
@@ -216,11 +236,6 @@ function write_runtime_manifest(manifest) {
     return true;
 }
 
-function valid_source(path) {
-    let value = common.read_json_file(path);
-    return type(value) == "object" && type(value.rules) == "array";
-}
-
 function binary_validation_path(path) {
     return as_string(path) + ".validated";
 }
@@ -237,97 +252,106 @@ function binary_digest(path) {
     return match(as_string(digest), /^[0-9a-f]{64}$/) != null ? digest : "";
 }
 
-function mark_binary_valid(path) {
+function cache_file_digest(path) {
     let signature = binary_stat_signature(path);
     let digest = signature != "" ? binary_digest(path) : "";
-    return digest != "" && binary_stat_signature(path) == signature &&
-        fs.writefile(binary_validation_path(path), signature + "\n" + digest + "\n") != null;
+    return digest != "" && binary_stat_signature(path) == signature ? { path, signature, digest } : null;
 }
 
-function trusted_binary_digest(path) {
-    let signature = binary_stat_signature(path);
-    let marker = split(trim(as_string(fs.readfile(binary_validation_path(path)))), "\n");
-    if (signature == "" || length(marker) != 2 || marker[0] != signature)
-        return "";
-    let digest = binary_digest(path);
-    return digest != "" && digest == marker[1] && binary_stat_signature(path) == signature ? digest : "";
+function write_validation(file) {
+    if (file != null && binary_stat_signature(file.path) == file.signature)
+        fs.writefile(binary_validation_path(file.path), file.signature + "\n" + file.digest + "\n");
 }
 
-function reuse_binary_validation(source, target) {
-    let digest = trusted_binary_digest(source);
-    let signature = binary_stat_signature(target);
-    if (digest == "" || signature == "" || binary_digest(target) != digest ||
-        trusted_binary_digest(source) != digest || binary_stat_signature(target) != signature)
+function publish_cache_file(file, path) {
+    if (binary_stat_signature(file.path) != file.signature || !fs.rename(file.path, path))
         return false;
-    // Transfer proof of identical validated bytes, never just file metadata.
-    return fs.writefile(binary_validation_path(target), signature + "\n" + digest + "\n") != null;
+    command_success([ "chmod", "0600", path ]);
+    write_validation({ ...file, path, signature: binary_stat_signature(path) });
+    return true;
 }
 
-function valid_binary(path) {
-    let signature = binary_stat_signature(path);
-    let validation_path = binary_validation_path(path);
-    if (signature == "") {
-        fs.unlink(validation_path);
-        return false;
-    }
-    if (trusted_binary_digest(path) != "")
-        return true;
-
-    // Parse once for new bytes or legacy/stale markers. Keep the digest from
-    // before parsing, so a changed file cannot inherit the parser's success.
-    let digest = binary_digest(path);
-    let ok = digest != "" && command_success([
+function parse_binary(path) {
+    return command_success([
         xrust.PATH, "rule-set", "match", "--format", "binary", path,
         "forkop-validation.invalid"
-    ]) && binary_stat_signature(path) == signature && binary_digest(path) == digest;
-    if (ok)
-        fs.writefile(validation_path, signature + "\n" + digest + "\n");
-    else
-        fs.unlink(validation_path);
-    return ok;
+    ]);
 }
-function valid_cache(path, format) {
-    return format == "source" ? valid_source(path) : valid_binary(path);
+
+function parse_source(path) {
+    let value = common.read_json_file(path);
+    if (type(value) != "object" || type(value.rules) != "array")
+        return false;
+
+    let config = trim(command_output([ "mktemp" ]));
+    if (config == "")
+        return false;
+    // The core's match-source command accepts invalid rule values. Check the
+    // same local rule-set loader the final configuration uses instead.
+    let ok = common.write_private_json_file(config, {
+        outbounds: [ { type: "direct", tag: "direct" } ],
+        route: {
+            rule_set: [ { type: "local", tag: "validation", format: "source", path } ],
+            rules: [ { rule_set: [ "validation" ], outbound: "direct" } ],
+            final: "direct"
+        }
+    }) && command_success([ xrust.PATH, "check", "-c", config ]);
+    fs.unlink(config);
+    return !!ok;
+}
+
+function validate_cache(path, format, previous) {
+    let file = cache_file_digest(path);
+    let marker_path = binary_validation_path(path);
+    if (file == null) {
+        fs.unlink(marker_path);
+        return null;
+    }
+    let marker = split(trim(as_string(fs.readfile(marker_path))), "\n");
+    if (length(marker) == 2 && marker[0] == file.signature && marker[1] == file.digest)
+        return file;
+    // A validated digest identifies the exact bytes even when copied to a
+    // different inode. New bytes still go through the core's parser and a
+    // second digest check to detect replacement during validation.
+    if (file.digest == previous?.digest ||
+        ((format == "source" ? parse_source(path) : parse_binary(path)) &&
+         binary_stat_signature(path) == file.signature && binary_digest(path) == file.digest)) {
+        write_validation(file);
+        return file;
+    }
+    fs.unlink(marker_path);
+    return null;
 }
 
 function valid_runtime_entry(runtime_manifest, url, format) {
     let entry = common.object_or_empty(common.object_or_empty(runtime_manifest)[cache_key(url)]);
     let path = as_string(entry.path);
-    return as_string(entry.url) == as_string(url) && as_string(entry.format) == format &&
-        path == runtime_cache_path(url, format) && valid_cache(path, format) ? entry : null;
+    if (as_string(entry.url) != as_string(url) || as_string(entry.format) != format ||
+        !(matches_generation(path, runtime_cache_path(url, format)) ||
+          matches_generation(path, cache_path(url, format))))
+        return null;
+    let file = validate_cache(path, format);
+    return file != null ? { ...file, last_success: entry.last_success } : null;
 }
 
-function active_cache_path(runtime_manifest, url, format) {
-    let runtime = valid_runtime_entry(runtime_manifest, url, format);
+function active_cache_file(runtime_manifest, entry, format) {
+    let runtime = valid_runtime_entry(runtime_manifest, entry.url, format);
     if (runtime != null)
-        return as_string(runtime.path);
-    return cache_path(url, format);
+        return runtime;
+    let path = persistent_entry_path(entry, format);
+    let legacy = cache_path(entry.url, format);
+    let file = validate_cache(path, format) ?? (path != legacy ? validate_cache(legacy, format) : null);
+    return file != null ? { ...file, last_success: entry.last_success } : null;
 }
 
 function duration_seconds(value) {
-    let rest = as_string(value);
-    if (rest == "")
-        return 86400;
-    let total = 0;
-    let multipliers = { s: 1, m: 60, h: 3600, d: 86400 };
-    while (rest != "") {
-        let matched = match(rest, /^([0-9]+)([smhd])(.*)$/);
-        if (matched == null)
-            return 86400;
-        total += int(matched[1]) * multipliers[matched[2]];
-        rest = matched[3];
-    }
-    return total > 0 ? total : 86400;
+    return duration.ceil_seconds(value, 86400);
 }
 
-function entry_is_due(entry, runtime_manifest) {
-    entry = common.object_or_empty(entry);
-    let format = as_string(entry.format) == "source" ? "source" : "binary";
-    let runtime = valid_runtime_entry(runtime_manifest, entry.url, format);
-    let path = runtime != null ? as_string(runtime.path) : cache_path(entry.url, format);
-    if (!valid_cache(path, format))
+function entry_is_due(entry, current) {
+    if (current == null)
         return true;
-    let last = runtime != null ? int(runtime.last_success || "0") : int(entry.last_success || "0");
+    let last = int(current.last_success || "0");
     let now = int(clock()[0]);
     let interval = duration_seconds(entry.update_interval);
     if (last <= 0)
@@ -392,27 +416,34 @@ function commit_persistent_candidate(source, target, format) {
     let staged = target + ".download." + as_string(stamp[0]) + "." + as_string(stamp[1]);
     fs.unlink(staged);
     fs.unlink(binary_validation_path(staged));
-    if (!command_success([ "cp", source, staged ]) ||
-        !(format == "binary" && reuse_binary_validation(source, staged) || valid_cache(staged, format)) || !fs.rename(staged, target)) {
+    let copied = command_success([ "cp", source.path, staged ]) ? validate_cache(staged, format, source) : null;
+    if (copied == null || copied.digest != source.digest || !publish_cache_file(copied, target)) {
         fs.unlink(staged);
         fs.unlink(binary_validation_path(staged));
         return false;
     }
     fs.unlink(binary_validation_path(staged));
-    if (format == "binary")
-        mark_binary_valid(target);
-    command_success([ "chmod", "0600", target ]);
     return true;
 }
 
-function refresh_entry(entry, proxy_address, runtime_manifest) {
+function remember_candidate(entry, runtime_manifest, path, persisted, changed) {
+    let last_success = int(clock()[0]);
+    runtime_manifest[cache_key(entry.url)] = { ...entry, path, last_success };
+    if (persisted) {
+        entry.path = path;
+        entry.last_success = last_success;
+    }
+    return { ok: true, changed, persisted, path };
+}
+
+function refresh_entry(entry, proxy_address, runtime_manifest, current) {
     entry = common.object_or_empty(entry);
     let url = as_string(entry.url);
     let format = as_string(entry.format) == "source" ? "source" : "binary";
-    let persistent_target = cache_path(url, format);
-    let runtime_target = runtime_cache_path(url, format);
+    let persistent_base = cache_path(url, format);
+    let runtime_base = runtime_cache_path(url, format);
     let stamp = clock();
-    let temporary = runtime_target + ".download." + as_string(stamp[0]) + "." + as_string(stamp[1]);
+    let temporary = runtime_base + ".download." + as_string(stamp[0]) + "." + as_string(stamp[1]);
     fs.unlink(temporary);
     fs.unlink(binary_validation_path(temporary));
 
@@ -422,115 +453,55 @@ function refresh_entry(entry, proxy_address, runtime_manifest) {
             fs.unlink(binary_validation_path(temporary));
             continue;
         }
-        let current = active_cache_path(runtime_manifest, url, format);
-        if (!(format == "binary" && reuse_binary_validation(current, temporary) || valid_cache(temporary, format))) {
+        if (current != null && binary_stat_signature(current.path) != current.signature)
+            current = active_cache_file(runtime_manifest, entry, format);
+        let downloaded = validate_cache(temporary, format, current);
+        if (downloaded == null) {
             warn("rule-set download returned an invalid ", format, " payload for ", candidate, "\n");
             fs.unlink(temporary);
             fs.unlink(binary_validation_path(temporary));
             continue;
         }
-        let old_digest = format == "binary" ? binary_digest(current) : file_md5(current);
-        let new_digest = format == "binary" ? binary_digest(temporary) : file_md5(temporary);
-        if (old_digest != "" && old_digest == new_digest) {
-            let new_bytes = allocated_bytes(temporary);
-            if (current == runtime_target && new_bytes >= 0 && persistent_cache_can_store(persistent_target, new_bytes) &&
-                commit_persistent_candidate(temporary, persistent_target, format)) {
-                fs.unlink(temporary);
-                fs.unlink(binary_validation_path(temporary));
-                fs.unlink(runtime_target);
-                fs.unlink(binary_validation_path(runtime_target));
-                delete runtime_manifest[cache_key(url)];
-                return { ok: true, changed: false, persisted: true };
+        let new_digest = downloaded.digest;
+        let changed = new_digest != current?.digest;
+        let target = generation_path(persistent_base, new_digest);
+        let persisted = true;
+        if (!changed && matches_generation(current.path, persistent_base)) {
+            target = current.path;
+        }
+        else if (fs.stat(target) != null ? binary_digest(target) != new_digest :
+                !persistent_cache_can_store(target, allocated_bytes(temporary)) ||
+                !commit_persistent_candidate(downloaded, target, format)) {
+            persisted = false;
+            if (!changed)
+                target = current.path;
+            else {
+                target = generation_path(runtime_base, new_digest);
+                if (fs.stat(target) != null ? binary_digest(target) != new_digest :
+                        !publish_cache_file(downloaded, target)) {
+                    fs.unlink(temporary);
+                    fs.unlink(binary_validation_path(temporary));
+                    return { ok: false, changed: false };
+                }
             }
-            fs.unlink(temporary);
-            fs.unlink(binary_validation_path(temporary));
-            if (format == "binary")
-                mark_binary_valid(current);
-            return { ok: true, changed: false, persisted: current == persistent_target };
         }
 
-        let new_bytes = allocated_bytes(temporary);
-        let persisted = new_bytes >= 0 && persistent_cache_can_store(persistent_target, new_bytes);
-        let target = persisted ? persistent_target : runtime_target;
-        let committed = persisted ? commit_persistent_candidate(temporary, target, format) : fs.rename(temporary, target);
-        if (committed) {
-            if (persisted)
-                fs.unlink(temporary);
-            fs.unlink(binary_validation_path(temporary));
-            if (!persisted && format == "binary")
-                mark_binary_valid(target);
-            if (!persisted)
-                command_success([ "chmod", "0600", target ]);
-            let key = cache_key(url);
-            if (persisted) {
-                fs.unlink(runtime_target);
-                fs.unlink(binary_validation_path(runtime_target));
-                delete runtime_manifest[key];
-            }
-            else {
-                runtime_manifest[key] = {
-                    url,
-                    format,
-                    update_interval: as_string(entry.update_interval),
-                    last_success: int(clock()[0]),
-                    path: runtime_target
-                };
-            }
-            return { ok: true, changed: true, persisted };
-        }
+        // Both prior flash and RAM files may still be referenced by a live
+        // or rollback config. Only an acknowledged apply can collect them.
         fs.unlink(temporary);
         fs.unlink(binary_validation_path(temporary));
-        return { ok: false, changed: false };
+        return remember_candidate(entry, runtime_manifest, target, persisted, changed);
     }
     return { ok: false, changed: false, persisted: false };
 }
 
 function empty_ruleset_path(url) {
     let path = RUNTIME_CACHE_DIR + "/empty-" + cache_key(url) + ".json";
-    if (!valid_source(path))
+    let contents = common.read_json_file(path);
+    if (contents?.version != 1 || type(contents?.rules) != "array" || length(contents.rules) != 0)
         common.write_json_file(path, { version: 1, rules: [] });
     command_success([ "chmod", "0600", path ]);
     return path;
-}
-
-function prune_stale_cache(manifest) {
-    let keep = {};
-    for (let key, entry in common.object_or_empty(manifest)) {
-        let format = as_string(entry.format) == "source" ? "source" : "binary";
-        let path = cache_path(entry.url, format);
-        keep[path] = true;
-        keep[CACHE_DIR + "/empty-" + cache_key(entry.url) + ".json"] = true;
-        if (format == "binary")
-            keep[binary_validation_path(path)] = true;
-    }
-
-    for (let path in fs.glob(CACHE_DIR + "/*")) {
-        let name = substr(path, length(CACHE_DIR) + 1);
-        let managed = match(name, /^[0-9a-f]{12}\.(srs|json)(\.validated)?$/) ||
-            match(name, /^empty-[0-9a-f]{12}\.json$/);
-        if (managed && !keep[path])
-            fs.unlink(path);
-    }
-}
-
-function prune_runtime_cache(manifest, runtime_manifest) {
-    let keep = {};
-    for (let key, entry in common.object_or_empty(manifest))
-        keep[RUNTIME_CACHE_DIR + "/empty-" + key + ".json"] = true;
-    for (let key, entry in common.object_or_empty(runtime_manifest)) {
-        let path = as_string(common.object_or_empty(entry).path);
-        if (path != "") {
-            keep[path] = true;
-            keep[binary_validation_path(path)] = true;
-        }
-    }
-    for (let path in fs.glob(RUNTIME_CACHE_DIR + "/*")) {
-        let name = substr(path, length(RUNTIME_CACHE_DIR) + 1);
-        let managed = match(name, /^[0-9a-f]{12}\.(srs|json)(\.validated)?$/) != null ||
-            match(name, /^empty-[0-9a-f]{12}\.json$/) != null;
-        if (managed && !keep[path])
-            fs.unlink(path);
-    }
 }
 
 function local_rule_set(rule_set, manifest, previous_manifest, runtime_manifest, allow_download, required) {
@@ -544,22 +515,24 @@ function local_rule_set(rule_set, manifest, previous_manifest, runtime_manifest,
         last_success: 0
     };
     let previous = common.object_or_empty(common.object_or_empty(previous_manifest)[key]);
-    if (as_string(previous.url) == url && as_string(previous.format) == format)
+    if (as_string(previous.url) == url && as_string(previous.format) == format) {
         entry.last_success = int(previous.last_success || "0");
+        entry.path = persistent_entry_path(previous, format);
+    }
     manifest[key] = entry;
 
-    let path = active_cache_path(runtime_manifest, url, format);
-    if (allow_download && !valid_cache(path, format)) {
+    let cached = active_cache_file(runtime_manifest, entry, format);
+    if (allow_download && cached == null) {
         let proxy = required && uci_core.get(CONFIG_NAME + ".settings.download_lists_via_proxy") == "1"
             ? constants.SB_SERVICE_MIXED_INBOUND_ADDRESS + ":" + as_string(constants.SB_SERVICE_MIXED_INBOUND_PORT) : "";
-        let result = refresh_entry(entry, proxy, runtime_manifest);
-        if (result.ok && result.persisted)
-            entry.last_success = int(clock()[0]);
-        path = active_cache_path(runtime_manifest, url, format);
+        let refreshed = refresh_entry(entry, proxy, runtime_manifest, cached);
+        if (refreshed.ok)
+            cached = { path: refreshed.path };
     }
 
     let local_format = format;
-    if (!valid_cache(path, format)) {
+    let path = cached?.path;
+    if (cached == null) {
         if (required) {
             warn("Required rule-set unavailable for tag ", as_string(rule_set.tag), "; preserving the running configuration\n");
             return null;
@@ -577,9 +550,28 @@ function local_rule_set(rule_set, manifest, previous_manifest, runtime_manifest,
     };
 }
 
-function materialize_config(config_path, allow_download, required) {
-    if (!ensure_cache_dir())
+function publish_declarations(manifest, runtime_manifest) {
+    for (let key, entry in runtime_manifest)
+        if (manifest[key] == null)
+            delete runtime_manifest[key];
+    for (let key, entry in manifest) {
+        if (as_string(runtime_manifest[key]?.path) == "")
+            runtime_manifest[key] = entry;
+    }
+    // Establish a complete boot-local fallback before making the persistent
+    // schedule visible. A failing first write has changed neither schedule.
+    if (!write_runtime_manifest(runtime_manifest))
         return false;
+    if (write_manifest(manifest)) {
+        for (let key, entry in manifest)
+            if (as_string(runtime_manifest[key]?.path) == "" || runtime_manifest[key].path == entry.path)
+                delete runtime_manifest[key];
+        write_runtime_manifest(runtime_manifest);
+    }
+    return true;
+}
+
+function materialize_config(config_path, allow_download, required, stage_only) {
     cleanup_stale_temporary_files();
     let config = common.read_json_file(config_path);
     if (type(config) != "object")
@@ -601,77 +593,114 @@ function materialize_config(config_path, allow_download, required) {
     config.route = route;
     if (!common.write_private_json_file(config_path, config))
         return false;
-    let persistent_manifest_written = write_manifest(manifest);
-    for (let key, entry in runtime_manifest)
-        if (manifest[key] == null)
-            delete runtime_manifest[key];
-    for (let key, entry in manifest) {
-        let runtime = common.object_or_empty(runtime_manifest[key]);
-        if (!persistent_manifest_written) {
-            if (as_string(runtime.path) == "")
-                runtime_manifest[key] = entry;
-        }
-        else if (as_string(runtime.path) == "")
-            delete runtime_manifest[key];
-    }
-    if (!write_runtime_manifest(runtime_manifest))
+    if (stage_only)
+        return common.write_private_json_file(config_path + ".rulesets", { manifest, runtime_manifest }) != null;
+    return publish_declarations(manifest, runtime_manifest);
+}
+
+function commit_staged_config(config_path) {
+    let path = config_path + ".rulesets";
+    if (fs.stat(path) == null)
+        return true;
+    let staged = common.read_json_file(path);
+    if (type(staged?.manifest) != "object" || type(staged?.runtime_manifest) != "object")
         return false;
-    // Staging precedes validation/ACK. Keep files referenced by the old live
-    // config until a later background refresh can safely collect them.
-    if (!required)
-        prune_runtime_cache(manifest, runtime_manifest);
-    if (persistent_manifest_written && !required)
-        prune_stale_cache(manifest);
+    // A concurrent periodic refresh may have a newer validated copy for a
+    // retained declaration. Keep its freshness but apply this config's set
+    // of declarations and its update intervals.
+    let persistent = common.object_or_empty(common.read_json_file(MANIFEST_PATH));
+    let runtime = read_runtime_manifest();
+    for (let key, entry in staged.manifest) {
+        let current = persistent[key];
+        if (current?.url == entry.url && current?.format == entry.format &&
+            int(current.last_success) > int(entry.last_success)) {
+            entry.path = current.path;
+            entry.last_success = current.last_success;
+        }
+        current = runtime[key];
+        if (current?.url == entry.url && current?.format == entry.format &&
+            int(current.last_success) > int(staged.runtime_manifest[key]?.last_success))
+            staged.runtime_manifest[key] = { ...current, update_interval: entry.update_interval };
+    }
+    if (!publish_declarations(staged.manifest, staged.runtime_manifest))
+        return false;
+    fs.unlink(path);
     return true;
 }
 
-function refresh_manifest(proxy_address, due_only, for_restart) {
-    if (!ensure_cache_dir())
-        return for_restart ? 2 : false;
+function applied_config_needs_refresh(validated_paths) {
+    let config = common.read_json_file(SING_BOX_CONFIG_PATH);
+    for (let rule_set in common.array_or_empty(config?.route?.rule_set)) {
+        let path = as_string(rule_set?.path);
+        let dir = parent_dir(path);
+        if (dir != CACHE_DIR && dir != RUNTIME_CACHE_DIR)
+            continue;
+        let name = substr(path, length(dir) + 1);
+        let key = match(name, /^(empty-)?([0-9a-f]{12})(-[0-9a-f]{64})?\.(srs|json)$/)?.[2];
+        if (validated_paths[key] != null && validated_paths[key] != path)
+            return true;
+    }
+    return false;
+}
+
+function refresh_manifest_locked(proxy_address, due_only, for_restart) {
     cleanup_stale_temporary_files();
     let manifest = common.object_or_empty(common.read_json_file(MANIFEST_PATH));
     let runtime_manifest = read_runtime_manifest();
     // A manifest that could not safely be written to flash is retained in
     // /var/run. Merge its declarations for this boot.
     for (let key, entry in runtime_manifest)
-        if (as_string(common.object_or_empty(entry).url) != "")
-            manifest[key] = entry;
+        if (manifest[key] == null && as_string(common.object_or_empty(entry).url) != "")
+            manifest[key] = { ...entry, path: "", last_success: 0 };
     let changed = false;
     let failed = false;
     let attempted = false;
     let persistent_changed = false;
+    let validated_paths = {};
     for (let key, entry in manifest) {
-        if (due_only && !entry_is_due(entry, runtime_manifest))
+        let format = as_string(entry.format) == "source" ? "source" : "binary";
+        let current = active_cache_file(runtime_manifest, entry, format);
+        if (current != null)
+            validated_paths[key] = current.path;
+        if (due_only && !entry_is_due(entry, current))
             continue;
         attempted = true;
-        let result = refresh_entry(entry, proxy_address, runtime_manifest);
+        let result = refresh_entry(entry, proxy_address, runtime_manifest, current);
         if (!result.ok) {
-            let format = as_string(entry.format) == "source" ? "source" : "binary";
-            if (for_restart && valid_cache(active_cache_path(runtime_manifest, entry.url, format), format))
+            if (for_restart && current != null && binary_stat_signature(current.path) == current.signature)
                 command_success([ "logger", "-t", "forkop",
                     "[warn] Remote rule-set refresh failed; retaining validated cache " + key ]);
             else
                 failed = true;
             continue;
         }
-        if (result.persisted) {
-            delete entry.path;
-            entry.last_success = int(clock()[0]);
+        if (result.persisted)
             persistent_changed = true;
-        }
+        validated_paths[key] = result.path;
         if (result.changed)
             changed = true;
     }
+    if (attempted && persistent_changed) {
+        if (write_manifest(manifest)) {
+            for (let key, entry in manifest)
+                if (entry.path != "" && runtime_manifest[key]?.path == entry.path)
+                    delete runtime_manifest[key];
+        }
+        else
+            failed = true;
+    }
     if (!write_runtime_manifest(runtime_manifest))
-        failed = true;
-    if (attempted && persistent_changed && !write_manifest(manifest))
-        failed = true;
-    // Entries are independent and each refresh is atomically renamed over its
-    // own last-known-good file. Apply successful changes even if another entry
-    // failed; failed entries keep their old cache and remain due for retry.
+        return 2;
+    // Retry applying a validated generation after a rejected/pending reload
+    // even if no network request was due or its bytes didn't change again.
+    changed = changed || applied_config_needs_refresh(validated_paths);
     if (failed && (for_restart || !changed))
         return 2;
     return changed ? 0 : 1;
+}
+
+function refresh_manifest(proxy_address, due_only, for_restart) {
+    return with_cache_lock(() => refresh_manifest_locked(proxy_address, due_only, for_restart), 2);
 }
 
 function refresh_and_reload(proxy_address) {
@@ -712,12 +741,28 @@ function prune_applied_config() {
             keep[binary_validation_path(path)] = true;
         }
     }
+    // Keep a newer staged generation and the persistent fallback for RAM
+    // entries. The live config alone may still reference the older snapshot.
+    let manifest = common.object_or_empty(common.read_json_file(MANIFEST_PATH));
+    for (let key, entry in manifest) {
+        let format = as_string(entry.format) == "source" ? "source" : "binary";
+        let path = persistent_entry_path(entry, format);
+        keep[path] = true;
+        keep[binary_validation_path(path)] = true;
+    }
+    for (let key, entry in read_runtime_manifest()) {
+        let path = as_string(entry?.path);
+        if (path != "") {
+            keep[path] = true;
+            keep[binary_validation_path(path)] = true;
+        }
+    }
     // Called only after the live configuration and firewall have committed.
     // Derive retention from that config, never from a rejected stage's manifest.
     for (let dir in [ CACHE_DIR, RUNTIME_CACHE_DIR ]) {
         for (let path in fs.glob(dir + "/*")) {
             let name = substr(path, length(dir) + 1);
-            if ((match(name, /^[0-9a-f]{12}\.(srs|json)(\.validated)?$/) ||
+            if ((match(name, /^[0-9a-f]{12}(-[0-9a-f]{64})?\.(srs|json)(\.validated)?$/) ||
                 match(name, /^empty-[0-9a-f]{12}\.json$/)) && !keep[path])
                 fs.unlink(path);
         }
@@ -742,13 +787,16 @@ function refresh_if_due_and_reload(proxy_address) {
 
 let mode = ARGV[0] || "";
 if (mode == "materialize-config")
-    exit(materialize_config(ARGV[1], as_string(ARGV[2]) != "cache-only", as_string(ARGV[2]) == "required") ? 0 : 1);
+    exit(with_cache_lock(() => materialize_config(ARGV[1],
+        as_string(ARGV[2]) != "cache-only", as_string(ARGV[2]) == "required", ARGV[3] == "stage"), false) ? 0 : 1);
+else if (mode == "commit-staged")
+    exit(with_cache_lock(() => commit_staged_config(ARGV[1]), false) ? 0 : 1);
 else if (mode == "refresh")
     exit(refresh_manifest(ARGV[1], false));
 else if (mode == "refresh-for-restart")
     exit(refresh_manifest(ARGV[1], false, true));
 else if (mode == "prune-applied")
-    exit(prune_applied_config() ? 0 : 1);
+    exit(with_cache_lock(prune_applied_config, false) ? 0 : 1);
 else if (mode == "refresh-if-due")
     exit(refresh_manifest(ARGV[1], true));
 else if (mode == "refresh-and-reload")

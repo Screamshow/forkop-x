@@ -22,20 +22,29 @@ function semanticAst(code: string) {
 export function compactLuCIAssets() {
   const source = path.resolve('../luci-app-forkop/htdocs/luci-static/resources/view/forkop');
   const output = path.resolve('../luci-app-forkop/generated/luci-static/resources/view/forkop');
-  fs.mkdirSync(output, { recursive: true });
+  const manifest = path.resolve('../luci-app-forkop/generated/source.sha256');
+  fs.mkdirSync(path.dirname(output), { recursive: true });
+  const staging = fs.mkdtempSync(path.join(path.dirname(output), '.forkop-'));
   let originalBytes = 0, compactBytes = 0;
   const sourceHashes: string[] = [];
-  for (const name of fs.readdirSync(source).filter(name => name.endsWith('.js') && name !== 'main.js').sort()) {
-    const code = fs.readFileSync(path.join(source, name), 'utf8');
-    const compact = generate(parse(code, { allowReturnOutsideFunction: true }), {
-      compact: true, comments: false,
-    }).code + '\n';
-    assert.ok(semanticAst(compact) === semanticAst(code), `LuCI semantics changed: ${name}`);
-    fs.writeFileSync(path.join(output, name), compact);
-    originalBytes += Buffer.byteLength(code);
-    compactBytes += Buffer.byteLength(compact);
-    sourceHashes.push(`${createHash('sha256').update(code).digest('hex')}  htdocs/luci-static/resources/view/forkop/${name}`);
+  const names = fs.readdirSync(source).filter(name => name.endsWith('.js') && name !== 'main.js').sort();
+  try {
+    for (const name of names) {
+      const code = fs.readFileSync(path.join(source, name), 'utf8');
+      const compact = generate(parse(code, { allowReturnOutsideFunction: true }), {
+        compact: true, comments: false,
+      }).code + '\n';
+      assert.ok(semanticAst(compact) === semanticAst(code), `LuCI semantics changed: ${name}`);
+      fs.writeFileSync(path.join(staging, name), compact);
+      originalBytes += Buffer.byteLength(code);
+      compactBytes += Buffer.byteLength(compact);
+      sourceHashes.push(`${createHash('sha256').update(code).digest('hex')}  htdocs/luci-static/resources/view/forkop/${name}`);
+    }
+    fs.rmSync(output, { recursive: true, force: true });
+    fs.renameSync(staging, output);
+    fs.writeFileSync(manifest, sourceHashes.join('\n') + '\n');
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
   }
-  fs.writeFileSync(path.resolve('../luci-app-forkop/generated/source.sha256'), sourceHashes.join('\n') + '\n');
   console.log(`LuCI handwritten assets: ${originalBytes} -> ${compactBytes} bytes`);
 }

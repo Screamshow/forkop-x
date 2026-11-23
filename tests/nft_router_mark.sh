@@ -34,6 +34,7 @@ cat >"$WORK_DIR/bin/ip" <<'EOF_IP'
 printf '%s\n' "$*" >>"$IP_LOG"
 case "$*" in
   '-4 rule list priority '*) exit 0 ;; # OpenWrt variants silently hide matching rows.
+  '-N -4 route show table all') echo '203.0.113.0/24 dev eth1 table 10001'; exit 0 ;;
   *'route list'*) [ "${IP_PRESENT:-0}" = 1 ] && echo 'local default dev lo scope host'; exit 0 ;;
   *'rule list'*) [ "${IP_PRESENT:-0}" = 1 ] && cat "$IP_RULES"; exit 0 ;;
 esac
@@ -42,7 +43,10 @@ EOF_IP
 chmod +x "$WORK_DIR/bin/ip"
 
 : >"$IP_LOG"
+printf '105 vendor\n10000 third_party\n' >"$WORK_DIR/rt_tables"
 ucode -L "$FORKOP_LIB" "$NFT_UC" ensure-tproxy-route-rule forkop "$FAKEIP_MARK" "$WORK_DIR/rt_tables"
+grep -Fxq '105 vendor' "$WORK_DIR/rt_tables" || fail 'overwrote the existing table 105'
+grep -Fxq '10002 forkop # forkop-x-tproxy' "$WORK_DIR/rt_tables" || fail 'did not reserve an unused table ID'
 
 grep -Fxq -- "-4 rule add fwmark $FAKEIP_MARK/$FAKEIP_MARK table forkop priority 105" "$IP_LOG" ||
   fail 'the IPv4 TPROXY rule of LAN traffic was lost'
@@ -88,18 +92,29 @@ IP_PRESENT=1 IP_RULES="$WORK_DIR/rules" ucode -L "$FORKOP_LIB" "$NFT_UC" \
 grep -Fxq -- "-4 rule add fwmark $FAKEIP_MARK/$FAKEIP_MARK table forkop priority 105" "$IP_LOG" ||
   fail 'a missing IPv4 TPROXY rule was read off the source-check rule'
 
-# A stop removes every rule the start adds.
-adds="$(sed -n '/^function ensure_tproxy_route_rule(/,/^function ensure_bridge_netfilter_disabled(/p' "$NFT_UC" |
-  grep -c '"rule", "add"')"
-stop_body="$(sed -n '/^function stop_main(/,/^function cleanup_failed_runtime(/p' "$LIFECYCLE_UC")"
-dels="$(grep -c '"rule", "del"' <<<"$stop_body")"
-[ "$adds" = "$dels" ] || fail "the stop removes $dels of the $adds routing rules the start adds"
-grep -Fq '"ip", "-4", "rule", "del", "fwmark", NFT_ROUTER_MARK + "/" + NFT_ROUTER_MARK, "table", RT_TABLE_NAME, "priority", "105"' <<<"$stop_body" ||
-  fail "the stop keeps the router's IPv4 TPROXY rule"
-grep -Fq '"ip", "-6", "rule", "del", "fwmark", NFT_ROUTER_MARK + "/" + NFT_ROUTER_MARK, "table", RT_TABLE_NAME, "priority", "105"' <<<"$stop_body" ||
-  fail "the stop keeps the router's IPv6 TPROXY rule"
-grep -Fq '"ip", "-4", "rule", "del", "iif", "lo", "fwmark", NFT_FAKEIP_MARK + "/" + NFT_FAKEIP_MARK, "lookup", "main", "priority", NFT_SOURCE_CHECK_PRIORITY' <<<"$stop_body" ||
-  fail 'the stop keeps the source-check rule'
+# Stop deletes exact Forkop rules/routes and keeps any other table contents.
+grep -Fq '"remove-tproxy-routing", RT_TABLE_NAME, NFT_FAKEIP_MARK' "$LIFECYCLE_UC" || fail 'stop bypasses exact cleanup'
+cat >"$WORK_DIR/rules" <<EOF_RULES
+$priority: from all fwmark $FAKEIP_MARK/$FAKEIP_MARK iif lo lookup main
+105: from all fwmark $FAKEIP_MARK/$FAKEIP_MARK lookup forkop
+105: from all fwmark $ROUTER_MARK/$ROUTER_MARK lookup forkop
+200: from 203.0.113.0/24 lookup vendor
+EOF_RULES
+: >"$IP_LOG"
+IP_PRESENT=1 IP_RULES="$WORK_DIR/rules" ucode -L "$FORKOP_LIB" "$NFT_UC" \
+  remove-tproxy-routing forkop "$FAKEIP_MARK" "$WORK_DIR/rt_tables"
+[ "$(grep -c 'rule del' "$IP_LOG")" = 5 ] || fail 'stop missed a rule or touched a foreign rule'
+grep -Fxq -- '-4 route del local 0.0.0.0/0 dev lo table forkop' "$IP_LOG" || fail 'stop kept the owned IPv4 route'
+grep -Fxq -- '-6 route del local ::/0 dev lo table forkop' "$IP_LOG" || fail 'stop kept the owned IPv6 route'
+grep -Fq 'route flush' "$IP_LOG" && fail 'stop flushed all routes in the table'
+: >"$IP_LOG"
+printf '105 vendor\n105 forkop\n' >"$WORK_DIR/rt_tables"
+if ucode -L "$FORKOP_LIB" "$NFT_UC" ensure-tproxy-route-rule forkop "$FAKEIP_MARK" "$WORK_DIR/rt_tables"; then
+    fail 'ambiguous pre-existing alias was accepted'
+fi
+IP_PRESENT=1 IP_RULES="$WORK_DIR/rules" ucode -L "$FORKOP_LIB" "$NFT_UC" \
+  remove-tproxy-routing forkop "$FAKEIP_MARK" "$WORK_DIR/rt_tables"
+[ ! -s "$IP_LOG" ] || fail 'start or stop touched an ambiguously owned table'
 
 # The two marks reach the same inbound, and each path carries its own.
 BATCH="$WORK_DIR/candidate.nft"

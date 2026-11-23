@@ -57,16 +57,24 @@ let state = {
         descriptions: { "🇳🇱 Amsterdam": "Upstream Tube" }
     },
     urltestGroups: {
-        Automatic: { outbounds: [ "proxy", "🇳🇱 Amsterdam" ] }
+        Automatic: { outbounds: [ "proxy", "proxy-2", "proxy-3", "🇳🇱 Amsterdam" ] }
     }
 };
-subscription.resolve_urltest_profile_aliases(state);
+let node = {type:"vless", server:"edge-7.example", server_port:443, uuid:"profile-1"};
+subscription.resolve_urltest_profile_aliases(state, [
+    {...node, tag:"proxy"},
+    {...node, tag:"proxy-2", server_port:8443},
+    {...node, tag:"proxy-3", uuid:"profile-2"},
+    {...node, tag:"🇳🇱 Amsterdam"}
+]);
 if (state.outboundMetadata.names.proxy != "🇳🇱 Amsterdam")
     die("URLTest member did not inherit the matching profile name\n");
 if (state.outboundMetadata.countries.proxy != "NL")
     die("URLTest member did not inherit the matching profile country\n");
 if (state.outboundMetadata.descriptions.proxy != "Upstream Tube")
     die("URLTest member did not inherit the matching profile description\n");
+if (state.outboundMetadata.aliases["proxy-2"] || state.outboundMetadata.aliases["proxy-3"])
+    die("distinct port or credential caused a same-host alias\n");
 ' || fail "URLTest profile alias metadata"
 
 normalize_subscription() {
@@ -94,7 +102,7 @@ generate_config() {
   mkdir -p "${output}.section-cache"
   TMP_SUBSCRIPTION_FOLDER="$WORK_DIR/subscriptions" \
     FORKOP_SUBSCRIPTION_METADATA_DIR="$WORK_DIR/metadata" \
-    FORKOP_URLTEST_START_SEED="${FORKOP_URLTEST_START_SEED:-seed-0}" \
+    FORKOP_URLTEST_START_SEED="${FORKOP_URLTEST_START_SEED-seed-0}" \
     ucode -L "$FORKOP_LIB" "$GENERATOR_UC" generate-config-fixture \
       "$fixture" "$output" "127.0.0.1"
 }
@@ -327,6 +335,13 @@ if (a == null || b == null || sprintf("%J", a) != sprintf("%J", b))
 if (c == null || sprintf("%J", a) == sprintf("%J", c))
     die("provider URLTest startup order did not change with a new seed\n");
 ' "$xray_config" "$WORK_DIR/xray-config-again.json" "$WORK_DIR/xray-config-other-start.json" || fail "provider URLTest startup order"
+
+FORKOP_URLTEST_START_SEED= generate_config "$WORK_DIR/xray-fixture.json" "$WORK_DIR/xray-default-1.json"
+for i in 2 3 4; do
+    FORKOP_URLTEST_START_SEED= generate_config "$WORK_DIR/xray-fixture.json" "$WORK_DIR/xray-default-$i.json"
+    cmp -s "$WORK_DIR/xray-default-1.json" "$WORK_DIR/xray-default-$i.json" ||
+        fail "unchanged provider URLTest regenerated a different config within the same boot"
+done
 
 cat >"$WORK_DIR/xray-reveal-urltest-fixture.json" <<'JSON'
 {
@@ -971,5 +986,55 @@ if (scenario == "on") {
 }
 ' "$output" "$scenario" || fail "subscription URLTest duplicate handling ($scenario)"
 done
+
+ucode -e '
+let uuid = "00000000-0000-4000-8000-000000000001";
+let leaf = (tag, fields) => { return {
+  type: "vless", tag, server: lc(tag) + ".example", server_port: 443, uuid, ...fields
+}; };
+let group = (tag, outbounds) => { return {
+  type: "urltest", tag, outbounds, __forkop_allow_group: true
+}; };
+printf("%J\n", {outbounds: [
+  leaf("Chained", {detour: "Upstream"}), leaf("A", {}), leaf("B", {}),
+  leaf("Collision", {detour: "A"}), leaf("Misleading", {remark: "A"}),
+  group("Upstream", ["Nested"]), group("Nested", ["A", "B"]), group("Unused", ["B"])
+]});
+' > "$WORK_DIR/group-detour-feed.json"
+prepare_subscription_cache proxy 1 https://test.example/sub "$WORK_DIR/group-detour-feed.json"
+cat > "$WORK_DIR/group-detour-fixture.json" <<'JSON'
+{"settings":{"dns_server":"1.1.1.1"},"section":[{
+ ".name":"proxy","enabled":"1","action":"connection",
+ "subscription_urls":["https://test.example/sub"],
+ "subscription_url_settings":"{\"https://test.example/sub\":{\"include_urltest_groups\":\"0\"}}"
+}]}
+JSON
+generate_config "$WORK_DIR/group-detour-fixture.json" "$WORK_DIR/group-detour.json"
+ucode -e '
+let config = json(require("fs").readfile(ARGV[0]));
+let outbounds = {};
+for (let node in config.outbounds) outbounds[node.tag] = node;
+assert(outbounds.Chained.detour == "Upstream", "hiding groups must preserve detours");
+assert(outbounds.Collision.detour == "A", "a display name overrode a technical detour tag");
+assert("Nested" in outbounds.Upstream.outbounds, "nested dependency missing");
+assert("A" in outbounds.Nested.outbounds && "B" in outbounds.Nested.outbounds, "group leaves missing");
+assert(outbounds.Unused == null, "unrelated hidden group was imported");
+assert(!("Upstream" in outbounds["proxy-out"].outbounds) && !("Nested" in outbounds["proxy-out"].outbounds),
+    "internal groups must stay hidden from the selector");
+' "$WORK_DIR/group-detour.json"
+if [ -n "${FORKOP_XRUST_BIN:-}" ]; then
+  "$FORKOP_XRUST_BIN" check -c "$WORK_DIR/group-detour.json"
+fi
+
+ucode -e '
+let feed = json(require("fs").readfile(ARGV[0]));
+push(feed.outbounds, {...feed.outbounds[1], server:"duplicate.example"});
+printf("%J\n", feed);
+' "$WORK_DIR/group-detour-feed.json" > "$WORK_DIR/group-detour-duplicate.json"
+prepare_subscription_cache proxy 1 https://test.example/sub "$WORK_DIR/group-detour-duplicate.json"
+if generate_config "$WORK_DIR/group-detour-fixture.json" "$WORK_DIR/group-detour.json" 2>"$WORK_DIR/duplicate.log"; then
+  fail "ambiguous provider tag resolved to an arbitrary detour"
+fi
+grep -q 'matches duplicate provider tags' "$WORK_DIR/duplicate.log"
 
 printf 'URLTest group checks passed\n'

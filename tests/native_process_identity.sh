@@ -24,8 +24,8 @@ UCODE
 let cases = [
     { target: "/usr/bin/sing-box", present: false, current: false, deleted: false },
     { target: "/usr/lib/rust-x/sing-box", present: false, current: false, deleted: false },
-    { target: "/usr/bin/xrust", present: true, current: true, deleted: false },
-    { target: "/usr/bin/xrust (deleted)", present: true, current: false, deleted: true },
+    { target: xrust.PATH, present: true, current: true, deleted: false },
+    { target: xrust.PATH + " (deleted)", present: true, current: false, deleted: true },
     { target: "/usr/bin/sing-box (deleted)", present: false, current: false, deleted: false },
     { target: "/tmp/foreign/sing-box", present: false, current: false, deleted: false },
     { target: "/tmp/foreign/sing-box (deleted)", present: false, current: false, deleted: false },
@@ -45,7 +45,7 @@ for (let test in cases) {
 }
 if (pid_is_sing_box("../123") || pid_is_sing_box("123; echo injected") || pid_is_sing_box(""))
     die("Invalid PID accepted\n");
-links = { "/proc/123/exe": "/usr/bin/xrust" };
+links = { "/proc/123/exe": xrust.PATH };
 for (let mode in [
     "tailscale-luci", "tailscale-native-capability", "tailscale-ssh-capability", "tailscale-exit-capability",
     "check", "version", "-v", "--version", "help", "-h", "--help",
@@ -68,7 +68,7 @@ observed_runtime = { pid: 123, start_ticks: 9001 };
 observed_ticks = 9001;
 provenance_reads = 0;
 assert(sing_box_owned_service_kind() == "current" && provenance_reads == 1);
-links["/proc/123/exe"] = "/usr/bin/xrust (deleted)";
+links["/proc/123/exe"] = xrust.PATH + " (deleted)";
 assert(sing_box_owned_service_kind() == "deleted" && provenance_reads == 2);
 observed_ticks++;
 assert(sing_box_owned_service_kind() == "other" && provenance_reads == 3, "PID reuse was trusted");

@@ -1,21 +1,3 @@
-function sing_box_standard_ports_listening(netstat, dns_address, tproxy_port, tproxy6_address) {
-    netstat = netstat == null ? "" : "" + netstat;
-    dns_address = dns_address == null ? "127.0.0.42" : "" + dns_address;
-    tproxy_port = tproxy_port == null ? "1602" : "" + tproxy_port;
-    tproxy6_address = tproxy6_address == null ? "::1" : "" + tproxy6_address;
-
-    let dns_ok = index(netstat, dns_address + ":53") >= 0;
-    let tproxy_suffix = ":" + tproxy_port;
-    let tproxy4_ok = index(netstat, "0.0.0.0" + tproxy_suffix) >= 0 ||
-        index(netstat, "127.0.0.1" + tproxy_suffix) >= 0;
-    // Empty address explicitly disables the IPv6 listener requirement.
-    let tproxy6_ok = tproxy6_address == "" || index(netstat, tproxy6_address + tproxy_suffix) >= 0 ||
-        index(netstat, "[" + tproxy6_address + "]" + tproxy_suffix) >= 0 ||
-        index(netstat, "0:0:0:0:0:0:0:1" + tproxy_suffix) >= 0 ||
-        index(netstat, ":::" + tproxy_port) >= 0;
-    return dns_ok && tproxy4_ok && tproxy6_ok;
-}
-
 function netstat_fields(line) {
     line = line == null ? "" : "" + line;
     line = trim(line);
@@ -38,13 +20,17 @@ function netstat_addr_host(addr) {
     return colon >= 0 ? substr(addr, 0, colon) : addr;
 }
 
-function netstat_addr_matches(addr, listen, port) {
+function netstat_addr_matches(addr, listen, port, exact, protocol) {
     listen = listen == null ? "" : "" + listen;
     port = port == null ? "" : "" + port;
     if (netstat_addr_port(addr) != port)
         return false;
 
     let host = netstat_addr_host(addr);
+    if (host == "0:0:0:0:0:0:0:1")
+        host = "::1";
+    if (exact)
+        return host == listen || (host == "*" && listen == (substr(protocol, -1) == "6" ? "::" : "0.0.0.0"));
     return host == listen || host == "*" ||
         (host == "0.0.0.0" && index(listen, ":") < 0) ||
         (host == "::" && index(listen, ":") >= 0);
@@ -63,7 +49,7 @@ function listen_port_in_use(netstat, listen, port) {
     return false;
 }
 
-function socket_port_owned(netstat, protocol, listen, port, pid) {
+function socket_port_owned(netstat, protocol, listen, port, pid, exact) {
     netstat = netstat == null ? "" : "" + netstat;
     pid = int(pid || 0);
     if (pid <= 0)
@@ -80,7 +66,7 @@ function socket_port_owned(netstat, protocol, listen, port, pid) {
         // BusyBox omits the state column for unconnected UDP sockets.
         if (protocol == "udp" && index(fields[5], "/") < 0 && length(fields) > 6)
             owner_index = 6;
-        if (!netstat_addr_matches(fields[3], listen, port))
+        if (!netstat_addr_matches(fields[3], listen, port, exact, fields[0]))
             continue;
 
         let slash = index(fields[owner_index], "/");
@@ -94,4 +80,14 @@ function tcp_listen_port_owned(netstat, listen, port, pid) {
     return socket_port_owned(netstat, "tcp", listen, port, pid);
 }
 
-return { sing_box_standard_ports_listening, listen_port_in_use, tcp_listen_port_owned, socket_port_owned };
+function xrust_standard_ports_owned(netstat, pid, dns_address, tproxy_port, tproxy4_address, tproxy6_address) {
+    for (let protocol in [ "tcp", "udp" ]) {
+        if (!socket_port_owned(netstat, protocol, dns_address, 53, pid, true) ||
+            !socket_port_owned(netstat, protocol, tproxy4_address, tproxy_port, pid, true) ||
+            (tproxy6_address != "" && !socket_port_owned(netstat, protocol, tproxy6_address, tproxy_port, pid, true)))
+            return false;
+    }
+    return true;
+}
+
+return { xrust_standard_ports_owned, listen_port_in_use, tcp_listen_port_owned, socket_port_owned };

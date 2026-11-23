@@ -18,6 +18,12 @@ vi.mock('../../shell', () => ({
   },
 }));
 
+vi.mock('../../shell/readForkopStatus', () => ({
+  isReadOnlyForkopView: () => false,
+  readForkopRuntimeConfig: (path: string, revision: string) =>
+    mocks.fsRead(path, revision),
+}));
+
 vi.mock('../../../services/runtimeUiState.service', () => ({
   getCachedRuntimeUiState: mocks.getCachedRuntimeUiState,
 }));
@@ -30,7 +36,10 @@ vi.mock('../../../../helpers', () => ({
   isCopyableProxyLink: (link?: string) => Boolean(link),
 }));
 
-import { getDashboardSections } from '../getDashboardSections';
+import {
+  getDashboardSections,
+  hydrateConfigSections,
+} from '../getDashboardSections';
 import { ClashAPI, Forkop } from '../../../types';
 
 function proxy(
@@ -73,6 +82,42 @@ function urlTestSettings(
     [id]: settings,
   });
 }
+
+it('reads each child owner once on large UCI configurations and retains legacy settings', () => {
+  let ownerReads = 0;
+  const parents = Array.from({ length: 600 }, (_, index) =>
+    proxySection({ '.name': `p${index}` }),
+  );
+  const children: Forkop.ConfigSection[] = parents.flatMap((parent, index) =>
+    Array.from({ length: 3 }, (_, child) => ({
+      '.name': `urltest-${index}-${child}`,
+      '.type': 'urltest' as const,
+      name: `Test ${child}`,
+      get section() {
+        ownerReads++;
+        return parent['.name'];
+      },
+    })),
+  );
+  const legacy = proxySection({
+    '.name': 'legacy',
+    urltest_settings: urlTestSettings('urltest', { display_name: 'Legacy' }),
+  });
+  const hydrated = hydrateConfigSections([...parents, ...children, legacy]);
+  expect(ownerReads).toBe(1800);
+  expect(hydrated).toHaveLength(601);
+  expect(hydrated[500].urltests).toEqual([
+    'urltest-500-0',
+    'urltest-500-1',
+    'urltest-500-2',
+  ]);
+  expect(
+    hydrated[500].dashboardUrlTestSettings['urltest-500-2'].display_name,
+  ).toBe('Test 2');
+  expect(hydrated[600].dashboardUrlTestSettings.urltest.display_name).toBe(
+    'Legacy',
+  );
+});
 
 function priorityGroup(
   id: string,
@@ -318,7 +363,7 @@ describe('getDashboardSections', () => {
   });
 
   it('hydrates imported URLTest settings from the active Xrust config without guessing missing aliases', async () => {
-    const appliedPath = '/tmp/xrust/config.json';
+    const appliedPath = '/srv/custom/xrust.json';
     mocks.getCachedRuntimeUiState.mockReturnValue({
       runtime_config: { path: appliedPath, revision: 'a' },
     });

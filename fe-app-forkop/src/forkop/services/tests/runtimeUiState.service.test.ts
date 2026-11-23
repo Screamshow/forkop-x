@@ -13,6 +13,7 @@ import { store } from '../store.service';
 import {
   getCachedRuntimeUiState,
   refreshRuntimeUiState,
+  startRuntimeUiStatePolling,
   subscribeRuntimeUiState,
 } from '../runtimeUiState.service';
 
@@ -167,5 +168,37 @@ describe('refreshRuntimeUiState', () => {
 
     expect(getCachedRuntimeUiState()).toEqual(uiState);
     expect(mocks.executeShellCommand).not.toHaveBeenCalled();
+  });
+
+  it('polls health every five seconds and actions on the intervening ticks', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('window', { setTimeout });
+    const commands: string[] = [];
+    const state = createUiState();
+    try {
+      mocks.executeShellCommand.mockImplementation(async ({ args }) => {
+        const [command] = args;
+        commands.push(command);
+        return {
+          code: 0,
+          stderr: '',
+          stdout: JSON.stringify(
+            command === 'get_ui_action_state' ? state.actions : state,
+          ),
+        };
+      });
+      startRuntimeUiStatePolling();
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(commands.filter((name) => name === 'get_ui_state')).toHaveLength(
+        3,
+      );
+      expect(
+        commands.filter((name) => name === 'get_ui_action_state'),
+      ).toHaveLength(8);
+      expect(store.get().servicesInfoWidget.data.forkopRunning).toBe(1);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
   });
 });

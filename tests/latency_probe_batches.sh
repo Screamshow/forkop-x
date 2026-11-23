@@ -1,19 +1,18 @@
 #!/bin/sh
 set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-RUNTIME="$ROOT/forkop/files/usr/lib/diagnostics/runtime.uc"
+LIB="$ROOT/forkop/files/usr/lib"
+RUNTIME="$LIB/diagnostics/runtime.uc"
 
 extract() {
-  sed -n '/^function valid_latency_ms(/,/^}/p;
-          /^function parse_clash_latency(/,/^}/p;
-          /^function latency_probe_concurrency() {/,/^}/p;
-          /^function latency_curl_args(/,/^}/p;
+  sed -n '/^function latency_probe_concurrency() {/,/^}/p;
           /^function latency_probe_command(/,/^}/p;
           /^function probe_proxy_latencies(/,/^}/p' "$RUNTIME"
 }
 
 mocks() {
 cat <<'UCODE'
+let clash_api_network = require("xrust.clash_api");
 let probed = [];
 let scripts = [];
 let temps = {};
@@ -81,23 +80,24 @@ UCODE
 }
 
 # The configured batch size is bounded, and anything unusable means the default.
+case_file=$(mktemp)
+trap 'rm -f "$case_file"' EXIT
 { mocks; extract; cat <<'UCODE'
 assert(latency_probe_concurrency() == int(getenv("EXPECT_CONCURRENCY")), "unexpected batch size");
 print("concurrency ", latency_probe_concurrency(), " ok\n");
 UCODE
-} >"${TMPDIR:-/tmp}/latency_probe_case.uc"
+} >"$case_file"
 
 for pair in ":4" "2:2" "1:1" "0:1" "99:8" "abc:4"; do
   value="${pair%%:*}"
   expect="${pair##*:}"
   if [ -z "$value" ]; then
-    EXPECT_CONCURRENCY="$expect" ucode "${TMPDIR:-/tmp}/latency_probe_case.uc" >/dev/null
+    EXPECT_CONCURRENCY="$expect" ucode -L "$LIB" "$case_file" >/dev/null
   else
     FORKOP_LATENCY_PROBE_CONCURRENCY="$value" EXPECT_CONCURRENCY="$expect" \
-      ucode "${TMPDIR:-/tmp}/latency_probe_case.uc" >/dev/null
+      ucode -L "$LIB" "$case_file" >/dev/null
   fi
 done
-rm -f "${TMPDIR:-/tmp}/latency_probe_case.uc"
 
 # Every proxy is probed exactly once, in order, and progress counts each answer.
 { mocks; extract; cat <<'UCODE'
@@ -120,7 +120,7 @@ assert(length(scripts) == 1 && length(probed) == 3 && length(unlinked) == 2,
     "the trailing probe was not captured directly");
 print("batched probing ok\n");
 UCODE
-} | FORKOP_LATENCY_PROBE_CONCURRENCY=2 ucode -
+} | FORKOP_LATENCY_PROBE_CONCURRENCY=2 ucode -L "$LIB" -
 
 # Concurrency 1 keeps the sequential sweep, and so does a failing mktemp.
 { mocks; extract; cat <<'UCODE'
@@ -129,7 +129,7 @@ assert(length(scripts) == 0 && temp_serial == 0, "sequential sweep used the shel
 assert(length(probed) == 3 && progress.completed == 3 && progress.failed == 0, "sequential sweep lost probes");
 print("sequential sweep ok\n");
 UCODE
-} | FORKOP_LATENCY_PROBE_CONCURRENCY=1 ucode -
+} | FORKOP_LATENCY_PROBE_CONCURRENCY=1 ucode -L "$LIB" -
 
 { mocks; extract; cat <<'UCODE'
 temp_fail = true;
@@ -139,17 +139,17 @@ assert(length(probed) == 3 && progress.completed == 3 && progress.failed == 0,
     "probes were lost when mktemp failed");
 print("mktemp fallback ok\n");
 UCODE
-} | FORKOP_LATENCY_PROBE_CONCURRENCY=4 ucode -
+} | FORKOP_LATENCY_PROBE_CONCURRENCY=4 ucode -L "$LIB" -
 
 printf 'latency probe batch tests passed\n'
 
 # Xrust group replies are maps of responding member tags to positive delays.
 { mocks; extract; cat <<'UCODE'
 for (let invalid in [ "{}", "[]", '"ok"', '{"delay":0}', '{"message":"timeout"}' ])
-    assert(parse_clash_latency(invalid, false) == null, "accepted invalid proxy delay");
+    assert(clash_api_network.parse_latency(invalid, false) == null, "accepted invalid proxy delay");
 for (let invalid in [ "{}", "[]", '{"a":0}', '{"a":"42"}', '{"error":"failed"}' ])
-    assert(parse_clash_latency(invalid, true) == null, "accepted empty or invalid group delay");
-assert(parse_clash_latency('{"a":42}', true).a == 42, "lost valid member delay");
+    assert(clash_api_network.parse_latency(invalid, true) == null, "accepted empty or invalid group delay");
+assert(clash_api_network.parse_latency('{"a":42}', true).a == 42, "lost valid member delay");
 bodies = { group: "{}" };
 let progress = probe_proxy_latencies(PLAN, [ "a", "group" ], new_progress(2));
 assert(progress.completed == 2 && progress.failed == 1, "unexpected URLTest mixed-batch progress: " +
@@ -159,4 +159,4 @@ progress = probe_proxy_latencies(PLAN, [ "group" ], new_progress(1));
 assert(progress.completed == 1 && progress.failed == 0, "valid URLTest reply did not pass");
 print("latency API response validation passed\n");
 UCODE
-} | FORKOP_LATENCY_PROBE_CONCURRENCY=2 ucode -
+} | FORKOP_LATENCY_PROBE_CONCURRENCY=2 ucode -L "$LIB" -

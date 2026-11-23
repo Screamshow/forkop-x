@@ -5,6 +5,7 @@ let locks = require("core.locks");
 let bytecode = require("core.bytecode");
 let constants = require("core.constants");
 let uci_core = require("core.uci");
+let clash_api = require("xrust.clash_api");
 
 function as_string(value) {
     return value == null ? "" : "" + value;
@@ -780,6 +781,10 @@ function reload_finish_value(reason, job_id, status, retry_attempt) {
 }
 
 function reload_service(reason, owner_pid) {
+    if (reason == "lan-api-address" && (file_exists(RELOAD_STOPPED_FILE) ||
+        clash_api.local_request_address() == clash_api.listen_address() ||
+        module_status(LIB_DIR + "/service/state.uc", [ "sing-box-service-running" ]) != 0))
+        return 0;
     let retry = match(as_string(reason), /^pending-retry-([1-3])$/);
     if (retry != null)
         reason = "pending";
@@ -831,6 +836,8 @@ function trigger_plan(settings) {
     print("delay\t", delay, "\n");
     print("config\tconfig.change\t", CONFIG_NAME, "\t", SERVICE_INIT, "\treload\t", CONFIG_CHANGE_REASON, "\n");
     print("interface\tinterface.*.up\twan\t", SERVICE_INIT, "\thandle_wan_up\t\n");
+    if (!badwan_enabled || index(badwan_interfaces, "lan") < 0)
+        print("interface\tinterface.*\tlan\t", SERVICE_INIT, "\treload\tlan-api-address\n");
 
     if (badwan_enabled) {
         for (let iface in badwan_interfaces) {

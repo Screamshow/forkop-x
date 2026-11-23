@@ -9,7 +9,7 @@ function check(actual, expected, label) {
 
 fs.mkdir(root);
 fs.mkdir(root + "/42");
-let stat = "42 (core with spaces) S";
+let stat = "42 (core ) with spaces) S";
 for (let i = 0; i < 18; i++)
     stat += " 0";
 stat += " 123";

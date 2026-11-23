@@ -15,6 +15,13 @@ let FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR=getenv("FORKOP_CACHE_TEST_DIR")+"/p
 let auto_user_agents={}, default_ua="sing-box/1.14.2-x-1.0.4";
 let as_string=common.as_string;
 function trim(v){return replace(v,/^[ \t\r\n]+|[ \t\r\n]+$/g,"");}
+function command_output_from_args(args) {
+ let command = join(" ", map(args, arg => "'" + replace(arg, /'/g, "'\\''") + "'"));
+ let pipe = fs.popen(command, "r");
+ let data = pipe.read("all");
+ return pipe.close()==0 ? data : "";
+}
+function command_success_from_args(args) { return system(args)==0; }
 function subscription_parser(){return parser;}
 function generate_hwid(){return "auto-device";}
 function ensure_dir(p){if(!fs.stat(p))fs.mkdir(p,0700);}
@@ -28,7 +35,7 @@ function get_subscription_user_agent(v){return default_ua;}
 UC
 for fn in source_id source_json_path source_url_path source_user_agent_path source_hwid_path cache_section_is_safe \
     subscription_cache_is_usable user_agent_supported user_agent_matches_config hwid_matches_config \
-    source_cache_profile_matches source_cache_matches_profile restore_persistent_subscription_cache persist_subscription_cache \
+    source_cache_profile_matches source_cache_matches_profile find_matching_source_cache restore_persistent_subscription_cache persist_subscription_cache \
     recover_subscription_sources_for_sections persist_recovered_subscription_sources; do
     sed -n "/^function $fn(/,/^}/p" "$SOURCE"
 done
@@ -69,6 +76,19 @@ seed("manual-subscription-1","https://manual.invalid","custom/1","manual-device"
 if(!restore_persistent_subscription_cache("new-subscription-1",TMP_SUBSCRIPTION_FOLDER,FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR,"https://manual.invalid","custom/1","manual-device",default_ua))die("manual relocation failed\n");
 check("new-subscription-1","M");
 if(user_agent_supported("sing-box/not a version",default_ua)||user_agent_supported("arbitrary/1",default_ua))die("foreign profile accepted\n");
+// The latest RAM feed can survive low flash and a simultaneous offline swap.
+clear_runtime();
+for(let i=1;i<=2;i++) {
+ let source="main-subscription-"+i;
+ let record=source_cache.read(FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR, source);
+ record.payload.outbounds[0].tag+=" RAM";
+ record.profile.metadata.label+=" RAM";
+ assert(source_cache.publish(source_json_path(TMP_SUBSCRIPTION_FOLDER, source), record.payload, record.profile));
+ fs.unlink(source_json_path(FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR, source));
+}
+assert(recover_subscription_sources_for_sections([{name:"main", urls:[entry("https://c.invalid"),entry("https://b.invalid")]}]));
+check("main-subscription-1","C RAM");
+check("main-subscription-2","B RAM");
 print("Subscription relocation: swaps, section move, reboot, metadata, both X core profiles and URL/UA/HWID guards passed\n");
 UC
 } > "$WORK/check.uc"

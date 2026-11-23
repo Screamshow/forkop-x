@@ -8,6 +8,11 @@ import {
 import { getOutboundTagBySection } from '../../runtimeTags';
 import { ForkopShellMethods } from '../shell';
 import { getCachedRuntimeUiState } from '../../services/runtimeUiState.service';
+import {
+  isReadOnlyForkopView,
+  readForkopRuntimeConfig,
+  readForkopStatus,
+} from '../shell/readForkopStatus';
 
 interface IGetDashboardSectionsResponse {
   success: boolean;
@@ -200,121 +205,128 @@ function getListValues(value?: string[] | string) {
     .filter(Boolean);
 }
 
-function childSections(
+type SettingsMap = Record<string, ItemSettings>;
+type DashboardSection = Forkop.ConfigSection & {
+  dashboardSubscriptionSettings: SettingsMap;
+  dashboardUrlTestSettings: SettingsMap;
+  dashboardPrioritySettings: SettingsMap;
+};
+
+function indexChildSections(configSections: Forkop.ConfigSection[]) {
+  const children = new Map<ChildType, Map<string, Forkop.ConfigSection[]>>([
+    ['subscription_url', new Map()],
+    ['section_interface', new Map()],
+    ['urltest', new Map()],
+    ['priority_group', new Map()],
+    ['priority_level', new Map()],
+  ]);
+  for (const section of configSections) {
+    const type = section['.type'] as ChildType;
+    const byOwner = children.get(type);
+    if (!byOwner) continue;
+    const owner = type === 'priority_level' ? section.group : section.section;
+    if (!owner) continue;
+    const items = byOwner.get(owner);
+    if (items) items.push(section);
+    else byOwner.set(owner, [section]);
+  }
+  return (type: ChildType, owner: string) =>
+    children.get(type)?.get(owner) || [];
+}
+
+export function hydrateConfigSections(
   configSections: Forkop.ConfigSection[],
-  type: ChildType,
-) {
-  return configSections.filter((section) => section['.type'] === type);
-}
+): DashboardSection[] {
+  const children = indexChildSections(configSections);
+  return configSections
+    .filter(
+      (section) =>
+        section.enabled !== '0' && isConnectionAction(section.action),
+    )
+    .map((section) => {
+      const name = section['.name'];
+      const subscriptionUrlItems = children('subscription_url', name);
+      const interfaceItems = children('section_interface', name);
+      const urltestItems = children('urltest', name);
+      const priorityGroupItems = children('priority_group', name);
+      const next: DashboardSection = {
+        ...section,
+        dashboardSubscriptionSettings: subscriptionUrlItems.length
+          ? Object.create(null)
+          : itemSettingsMap(section.subscription_url_settings),
+        dashboardUrlTestSettings: urltestItems.length
+          ? Object.create(null)
+          : itemSettingsMap(section.urltest_settings),
+        dashboardPrioritySettings: priorityGroupItems.length
+          ? Object.create(null)
+          : itemSettingsMap(section.priority_group_settings),
+      };
 
-function ownedChildSections(
-  parent: Forkop.ConfigSection,
-  children: Forkop.ConfigSection[],
-) {
-  return children.filter(
-    (section): section is Forkop.ConfigSection =>
-      section.section === parent['.name'],
-  );
-}
+      if (subscriptionUrlItems.length) {
+        const settings = next.dashboardSubscriptionSettings;
+        next.subscription_urls = subscriptionUrlItems
+          .map((item) => item.url || '')
+          .filter(Boolean);
+        subscriptionUrlItems.forEach((item) => {
+          if (!item.url) {
+            return;
+          }
+          settings[item.url] = {
+            subscription_update_enabled: item.subscription_update_enabled,
+            subscription_update_interval: item.subscription_update_interval,
+            download_via_proxy_enabled: item.download_via_proxy_enabled,
+            download_via_proxy_section: item.download_via_proxy_section,
+            auto_user_agent: item.auto_user_agent,
+            user_agent: item.user_agent,
+            auto_hwid: item.auto_hwid,
+            hwid: item.hwid,
+            show_dashboard_metadata: item.show_dashboard_metadata,
+            prefix_nodes: item.prefix_nodes,
+            node_prefix: item.node_prefix,
+            include_urltest_groups: item.include_urltest_groups,
+            hide_urltest_group_outbounds: item.hide_urltest_group_outbounds,
+            hide_detour_outbounds: item.hide_detour_outbounds,
+            exclude_regex: item.exclude_regex,
+          };
+        });
+      }
 
-function childSectionsByOwner(
-  children: Forkop.ConfigSection[],
-  ownerKey: keyof Forkop.ConfigSection,
-  ownerValue: string,
-) {
-  return children.filter((section) => section[ownerKey] === ownerValue);
-}
+      if (interfaceItems.length) {
+        next.interfaces = interfaceItems
+          .map((item) => item.name || '')
+          .filter(Boolean);
+      }
 
-function compactSettingsMap(settings: Record<string, ItemSettings>) {
-  return Object.keys(settings).length ? JSON.stringify(settings) : undefined;
-}
+      if (urltestItems.length) {
+        const settings = next.dashboardUrlTestSettings;
+        next.urltests = urltestItems.map((item) => item['.name']);
+        urltestItems.forEach((item) => {
+          settings[item['.name']] = {
+            display_name: item.name || item.display_name,
+            urltest_check_interval: item.check_interval,
+            urltest_tolerance: item.tolerance,
+            urltest_testing_url: item.testing_url,
+            idle_timeout: item.idle_timeout,
+            interrupt_exist_connections: item.interrupt_exist_connections,
+            pin_dashboard: item.pin_dashboard,
+            urltest_filter_mode: item.filter_mode,
+            detect_server_country: item.detect_server_country,
+            urltest_include_countries: item.include_countries,
+            urltest_include_outbounds: item.include_outbounds,
+            urltest_include_regex: item.include_regex,
+            urltest_exclude_countries: item.exclude_countries,
+            urltest_exclude_outbounds: item.exclude_outbounds,
+            urltest_exclude_regex: item.exclude_regex,
+          };
+        });
+      }
 
-function hydrateConfigSections(configSections: Forkop.ConfigSection[]) {
-  const subscriptionUrls = childSections(configSections, 'subscription_url');
-  const interfaces = childSections(configSections, 'section_interface');
-  const urltests = childSections(configSections, 'urltest');
-  const priorityGroups = childSections(configSections, 'priority_group');
-  const priorityLevels = childSections(configSections, 'priority_level');
-
-  return configSections.map((section) => {
-    if (section['.type'] !== 'section') {
-      return section;
-    }
-
-    const next: Forkop.ConfigSection = { ...section };
-    const subscriptionUrlItems = ownedChildSections(next, subscriptionUrls);
-    const interfaceItems = ownedChildSections(next, interfaces);
-    const urltestItems = ownedChildSections(next, urltests);
-    const priorityGroupItems = ownedChildSections(next, priorityGroups);
-
-    if (subscriptionUrlItems.length) {
-      const settings: Record<string, ItemSettings> = {};
-      next.subscription_urls = subscriptionUrlItems
-        .map((item) => item.url || '')
-        .filter(Boolean);
-      subscriptionUrlItems.forEach((item) => {
-        if (!item.url) {
-          return;
-        }
-        settings[item.url] = {
-          subscription_update_enabled: item.subscription_update_enabled,
-          subscription_update_interval: item.subscription_update_interval,
-          download_via_proxy_enabled: item.download_via_proxy_enabled,
-          download_via_proxy_section: item.download_via_proxy_section,
-          auto_user_agent: item.auto_user_agent,
-          user_agent: item.user_agent,
-          auto_hwid: item.auto_hwid,
-          hwid: item.hwid,
-          show_dashboard_metadata: item.show_dashboard_metadata,
-          prefix_nodes: item.prefix_nodes,
-          node_prefix: item.node_prefix,
-          include_urltest_groups: item.include_urltest_groups,
-          hide_urltest_group_outbounds: item.hide_urltest_group_outbounds,
-          hide_detour_outbounds: item.hide_detour_outbounds,
-          exclude_regex: item.exclude_regex,
-        };
-      });
-      next.subscription_url_settings = compactSettingsMap(settings);
-    }
-
-    if (interfaceItems.length) {
-      next.interfaces = interfaceItems
-        .map((item) => item.name || '')
-        .filter(Boolean);
-    }
-
-    if (urltestItems.length) {
-      const settings: Record<string, ItemSettings> = {};
-      next.urltests = urltestItems.map((item) => item['.name']);
-      urltestItems.forEach((item) => {
-        settings[item['.name']] = {
-          display_name: item.name || item.display_name,
-          urltest_check_interval: item.check_interval,
-          urltest_tolerance: item.tolerance,
-          urltest_testing_url: item.testing_url,
-          idle_timeout: item.idle_timeout,
-          interrupt_exist_connections: item.interrupt_exist_connections,
-          pin_dashboard: item.pin_dashboard,
-          urltest_filter_mode: item.filter_mode,
-          detect_server_country: item.detect_server_country,
-          urltest_include_countries: item.include_countries,
-          urltest_include_outbounds: item.include_outbounds,
-          urltest_include_regex: item.include_regex,
-          urltest_exclude_countries: item.exclude_countries,
-          urltest_exclude_outbounds: item.exclude_outbounds,
-          urltest_exclude_regex: item.exclude_regex,
-        };
-      });
-      next.urltest_settings = compactSettingsMap(settings);
-    }
-
-    if (priorityGroupItems.length) {
-      const settings: Record<string, ItemSettings> = {};
-      next.priority_groups = priorityGroupItems.map((item) => item['.name']);
-      priorityGroupItems.forEach((item) => {
-        const groupId = item['.name'];
-        const levels = childSectionsByOwner(priorityLevels, 'group', groupId)
-          .map(
+      if (priorityGroupItems.length) {
+        const settings = next.dashboardPrioritySettings;
+        next.priority_groups = priorityGroupItems.map((item) => item['.name']);
+        priorityGroupItems.forEach((item) => {
+          const groupId = item['.name'];
+          const levels = children('priority_level', groupId).map(
             (level, index): PriorityLevelConfig => ({
               id: level['.name'],
               displayName: level.name || level['.name'],
@@ -329,32 +341,26 @@ function hydrateConfigSections(configSections: Forkop.ConfigSection[]) {
               excludeOutbounds: getListValues(level.exclude_outbounds),
               excludeRegex: getListValues(level.exclude_regex),
             }),
-          )
-          .sort((left, right) =>
-            left.order === right.order
-              ? left.id.localeCompare(right.id)
-              : left.order - right.order,
           );
 
-        settings[groupId] = {
-          name: item.name,
-          health_url: item.health_url,
-          active_check_interval: item.active_check_interval,
-          check_timeout: item.check_timeout,
-          recovery_check_interval: item.recovery_check_interval,
-          pick_fastest: item.pick_fastest,
-          switch_to_faster_same_priority: item.switch_to_faster_same_priority,
-          fastest_check_interval: item.fastest_check_interval,
-          interrupt_exist_connections: item.interrupt_exist_connections,
-          pin_dashboard: item.pin_dashboard,
-          levels,
-        };
-      });
-      next.priority_group_settings = compactSettingsMap(settings);
-    }
+          settings[groupId] = {
+            name: item.name,
+            health_url: item.health_url,
+            active_check_interval: item.active_check_interval,
+            check_timeout: item.check_timeout,
+            recovery_check_interval: item.recovery_check_interval,
+            pick_fastest: item.pick_fastest,
+            switch_to_faster_same_priority: item.switch_to_faster_same_priority,
+            fastest_check_interval: item.fastest_check_interval,
+            interrupt_exist_connections: item.interrupt_exist_connections,
+            pin_dashboard: item.pin_dashboard,
+            levels,
+          };
+        });
+      }
 
-    return next;
-  });
+      return next;
+    });
 }
 
 function getManualProxyLinks(section: Forkop.ConfigSection) {
@@ -662,8 +668,8 @@ function getUrlTestDisplayName(
   );
 }
 
-function getUrlTestConfigs(section: Forkop.ConfigSection): UrlTestConfig[] {
-  const settingsMap = itemSettingsMap(section.urltest_settings);
+function getUrlTestConfigs(section: DashboardSection): UrlTestConfig[] {
+  const settingsMap = section.dashboardUrlTestSettings;
   const sectionName = section['.name'];
 
   return getUrlTestIds(section).map((id) => {
@@ -744,8 +750,8 @@ function getPriorityGroupIds(section: Forkop.ConfigSection) {
   return getListValues(section.priority_groups);
 }
 
-function getPriorityConfigs(section: Forkop.ConfigSection): PriorityConfig[] {
-  const settingsMap = itemSettingsMap(section.priority_group_settings);
+function getPriorityConfigs(section: DashboardSection): PriorityConfig[] {
+  const settingsMap = section.dashboardPrioritySettings;
   const sectionName = section['.name'];
 
   return getPriorityGroupIds(section).map((id) => {
@@ -806,9 +812,14 @@ async function readDashboardSectionCache(
   }
 
   try {
-    const raw = await fs.read(
-      `${DASHBOARD_SECTION_CACHE_DIR}/${sectionName}.json`,
-    );
+    let raw: string;
+    if (isReadOnlyForkopView()) {
+      const response = await readForkopStatus('section_cache', sectionName);
+      if (response.code !== 0) return undefined;
+      raw = response.stdout;
+    } else {
+      raw = await fs.read(`${DASHBOARD_SECTION_CACHE_DIR}/${sectionName}.json`);
+    }
     const parsed = JSON.parse(raw) as DashboardSectionCache;
 
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -832,9 +843,11 @@ function getUrlTestGroups(dashboardCache?: DashboardSectionCache) {
 }
 
 async function loadRuntimeMetadata(
-  path: string,
+  reference: Forkop.RuntimeConfigReference,
 ): Promise<XrustRuntimeMetadata> {
-  const parsed = JSON.parse(await fs.read(path)) as XrustRuntimeConfig;
+  const parsed = JSON.parse(
+    await readForkopRuntimeConfig(reference.path, reference.revision),
+  ) as XrustRuntimeConfig;
   const groups: Record<string, UrlTestCacheGroup> = {};
   for (const outbound of Array.isArray(parsed?.outbounds)
     ? parsed.outbounds
@@ -874,7 +887,7 @@ async function readRuntimeMetadata(): Promise<XrustRuntimeMetadata> {
     !cachedRuntimeMetadata ||
     !sameRuntimeConfig(cachedRuntimeMetadata.reference, reference)
   ) {
-    const result = loadRuntimeMetadata(reference.path).catch(() => {
+    const result = loadRuntimeMetadata(reference).catch(() => {
       if (cachedRuntimeMetadata?.result === result)
         cachedRuntimeMetadata = undefined;
       return EMPTY_RUNTIME_METADATA;
@@ -1150,7 +1163,7 @@ function buildPriorityInfo({
 }
 
 function buildProxyGroupOutbounds(
-  section: Forkop.ConfigSection,
+  section: DashboardSection,
   proxyByCode: Map<string, ClashProxyEntry>,
   outboundMetadata?: Forkop.GetOutboundMetadata,
   urltestGroups: Record<string, UrlTestCacheGroup> = {},
@@ -1378,7 +1391,7 @@ function getSubscriptionMetadataSourceIndex(
 }
 
 function isSubscriptionMetadataVisible(
-  section: Forkop.ConfigSection,
+  section: DashboardSection,
   sourceCount: number,
   metadata: Forkop.SubscriptionMetadata,
 ) {
@@ -1393,15 +1406,13 @@ function isSubscriptionMetadataVisible(
   }
 
   const sourceEntry = getListValues(section.subscription_urls)[sourceIndex - 1];
-  const settings = itemSettingsMap(section.subscription_url_settings)[
-    sourceEntry
-  ];
+  const settings = section.dashboardSubscriptionSettings[sourceEntry];
 
   return settings?.show_dashboard_metadata !== '0';
 }
 
 function getSubscriptionMetadata(
-  section: Forkop.ConfigSection,
+  section: DashboardSection,
   sourceCount: number,
   dashboardCache?: DashboardSectionCache,
 ) {
@@ -1465,128 +1476,123 @@ export async function getDashboardSections(): Promise<IGetDashboardSectionsRespo
     ]),
   );
   const data = await Promise.all(
-    configSections
-      .filter(
-        (section) =>
-          section.enabled !== '0' && isConnectionAction(section.action),
-      )
-      .map(async (section) => {
-        const displayName = getDisplayName(section);
-        const sectionName = section['.name'];
-        const sectionAction = section.action;
-        const proxyConfigType = getSectionProxyConfigType(section);
+    configSections.map(async (section) => {
+      const displayName = getDisplayName(section);
+      const sectionName = section['.name'];
+      const sectionAction = section.action;
+      const proxyConfigType = getSectionProxyConfigType(section);
 
-        if (isConnectionAction(sectionAction) && shouldUseProxyGroup(section)) {
-          const subscriptionSourceCount = hasNativeTunnel(section)
-            ? 0
-            : getSubscriptionSourceCount(section);
-          const subscriptionEnabled = subscriptionSourceCount > 0;
-          const dashboardCache = await readDashboardSectionCache(sectionName);
-          const outboundMetadata = getOutboundMetadata(dashboardCache);
-          const subscriptionMetadata = subscriptionEnabled
-            ? getSubscriptionMetadata(
-                section,
-                subscriptionSourceCount,
-                dashboardCache,
-              )
-            : undefined;
-          const urltestGroups = mergeUrlTestGroups(
-            getUrlTestGroups(dashboardCache),
-            runtimeMetadata.urltestGroups,
-          );
-          const priorityGroups = getPriorityGroups(dashboardCache);
-          const { selector, latencyTestCode, latencyTestCodes, outbounds } =
-            buildProxyGroupOutbounds(
+      if (isConnectionAction(sectionAction) && shouldUseProxyGroup(section)) {
+        const subscriptionSourceCount = hasNativeTunnel(section)
+          ? 0
+          : getSubscriptionSourceCount(section);
+        const subscriptionEnabled = subscriptionSourceCount > 0;
+        const dashboardCache = await readDashboardSectionCache(sectionName);
+        const outboundMetadata = getOutboundMetadata(dashboardCache);
+        const subscriptionMetadata = subscriptionEnabled
+          ? getSubscriptionMetadata(
               section,
-              proxyByCode,
-              outboundMetadata,
-              urltestGroups,
-              priorityGroups,
-            );
-
-          return {
-            withTagSelect: true,
-            code: selector?.code || sectionName,
-            sectionName,
-            displayName,
-            action: sectionAction,
-            latencyTestCode,
-            latencyTestCodes,
-            proxyConfigType,
-            subscriptionSourceCount,
-            subscriptionMetadata,
-            skippedSubscriptionOutbounds: Array.isArray(
-              dashboardCache?.skippedSubscriptionOutbounds,
+              subscriptionSourceCount,
+              dashboardCache,
             )
-              ? dashboardCache.skippedSubscriptionOutbounds.filter(
-                  (item) =>
-                    item &&
-                    typeof item.tag === 'string' &&
-                    typeof item.reason === 'string',
-                )
-              : [],
-            outbounds,
-          };
-        }
-
-        if (sectionAction === 'vpn') {
-          const outboundTag = getOutboundTagBySection(sectionName);
-          const outbound = proxyByCode.get(outboundTag);
-
-          return {
-            withTagSelect: false,
-            code: outbound?.code || sectionName,
-            sectionName,
-            displayName,
-            action: sectionAction,
-            latencyTestTimeout: '10000',
-            outbounds: [
-              {
-                code: outbound?.code || sectionName,
-                displayName: section.interface || outbound?.value?.name || '',
-                latency: outbound?.value?.history?.[0]?.delay || 0,
-                type: outbound?.value?.type || '',
-                selected: true,
-                runtimeAvailable: Boolean(outbound),
-              },
-            ],
-          };
-        }
-
-        if (sectionAction === 'outbound') {
-          const outboundTag = getOutboundTagBySection(sectionName);
-          const outbound = proxyByCode.get(outboundTag);
-
-          return {
-            withTagSelect: false,
-            code: outbound?.code || sectionName,
-            sectionName,
-            displayName,
-            action: sectionAction,
-            outbounds: [
-              {
-                code: outbound?.code || sectionName,
-                displayName:
-                  getJsonOutboundDisplayName(section) ||
-                  outbound?.value?.name ||
-                  '',
-                latency: outbound?.value?.history?.[0]?.delay || 0,
-                type: outbound?.value?.type || '',
-                selected: true,
-              },
-            ],
-          };
-        }
+          : undefined;
+        const urltestGroups = mergeUrlTestGroups(
+          getUrlTestGroups(dashboardCache),
+          runtimeMetadata.urltestGroups,
+        );
+        const priorityGroups = getPriorityGroups(dashboardCache);
+        const { selector, latencyTestCode, latencyTestCodes, outbounds } =
+          buildProxyGroupOutbounds(
+            section,
+            proxyByCode,
+            outboundMetadata,
+            urltestGroups,
+            priorityGroups,
+          );
 
         return {
-          withTagSelect: false,
-          code: sectionName,
+          withTagSelect: true,
+          code: selector?.code || sectionName,
           sectionName,
           displayName,
           action: sectionAction,
-          outbounds: [],
+          latencyTestCode,
+          latencyTestCodes,
+          proxyConfigType,
+          subscriptionSourceCount,
+          subscriptionMetadata,
+          skippedSubscriptionOutbounds: Array.isArray(
+            dashboardCache?.skippedSubscriptionOutbounds,
+          )
+            ? dashboardCache.skippedSubscriptionOutbounds.filter(
+                (item) =>
+                  item &&
+                  typeof item.tag === 'string' &&
+                  typeof item.reason === 'string',
+              )
+            : [],
+          outbounds,
         };
-      }),
+      }
+
+      if (sectionAction === 'vpn') {
+        const outboundTag = getOutboundTagBySection(sectionName);
+        const outbound = proxyByCode.get(outboundTag);
+
+        return {
+          withTagSelect: false,
+          code: outbound?.code || sectionName,
+          sectionName,
+          displayName,
+          action: sectionAction,
+          latencyTestTimeout: '10000',
+          outbounds: [
+            {
+              code: outbound?.code || sectionName,
+              displayName: section.interface || outbound?.value?.name || '',
+              latency: outbound?.value?.history?.[0]?.delay || 0,
+              type: outbound?.value?.type || '',
+              selected: true,
+              runtimeAvailable: Boolean(outbound),
+            },
+          ],
+        };
+      }
+
+      if (sectionAction === 'outbound') {
+        const outboundTag = getOutboundTagBySection(sectionName);
+        const outbound = proxyByCode.get(outboundTag);
+
+        return {
+          withTagSelect: false,
+          code: outbound?.code || sectionName,
+          sectionName,
+          displayName,
+          action: sectionAction,
+          outbounds: [
+            {
+              code: outbound?.code || sectionName,
+              displayName:
+                getJsonOutboundDisplayName(section) ||
+                outbound?.value?.name ||
+                '',
+              latency: outbound?.value?.history?.[0]?.delay || 0,
+              type: outbound?.value?.type || '',
+              selected: true,
+            },
+          ],
+        };
+      }
+
+      return {
+        withTagSelect: false,
+        code: sectionName,
+        sectionName,
+        displayName,
+        action: sectionAction,
+        outbounds: [],
+      };
+    }),
   );
 
   return {

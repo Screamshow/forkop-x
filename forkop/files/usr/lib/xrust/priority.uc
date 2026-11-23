@@ -2,7 +2,11 @@
 
 let fs = require("fs");
 let common = require("core.common");
+let duration = require("core.duration");
 let worker_identity = require("core.worker_identity");
+let core_url = require("core.url");
+let clash_api = require("xrust.clash_api");
+let constants = require("core.constants");
 
 let as_string = common.as_string;
 let read_json_file = common.read_json_file;
@@ -16,6 +20,7 @@ const SECTION_CACHE_DIR = getenv("FORKOP_SECTION_CACHE_DIR") || RUNTIME_STATE_DI
 const PRIORITY_PID_FILE = getenv("FORKOP_PRIORITY_PID_FILE") || RUNTIME_STATE_DIR + "/priority.pid";
 const PRIORITY_UC = getenv("FORKOP_PRIORITY_UC") || LIB_DIR + "/xrust/priority.uc";
 const DIAGNOSTICS_UC = getenv("FORKOP_DIAGNOSTICS_UC") || LIB_DIR + "/diagnostics/runtime.uc";
+const CLASH_PORT = getenv("SB_CLASH_API_CONTROLLER_PORT") || constants.SB_CLASH_API_CONTROLLER_PORT || "9090";
 
 function shell_quote(value) {
     return "'" + replace(as_string(value), /'/g, "'\\''") + "'";
@@ -71,42 +76,15 @@ function log_message(message, level) {
 }
 
 function now_seconds() {
-    return int(clock()[0]);
+    return int(clock(true)[0]);
 }
 
 function duration_to_milliseconds(value, fallback_ms) {
-    let rest = as_string(value);
-    if (rest == "")
-        return fallback_ms;
-
-    let total = 0.0;
-    let multipliers = {
-        ns: 0.000001,
-        us: 0.001,
-        ms: 1,
-        s: 1000,
-        m: 60000,
-        h: 3600000,
-        d: 86400000
-    };
-
-    while (rest != "") {
-        let matched = match(rest, /^([0-9]+(\.[0-9]+)?)(ns|us|ms|s|m|h|d)/);
-        if (!matched)
-            return fallback_ms;
-
-        let token = as_string(matched[0]);
-        total += (matched[1] * 1) * multipliers[matched[3]];
-        rest = substr(rest, length(token));
-    }
-
-    return total <= 0 ? fallback_ms : int(total + 0.5);
+    return duration.round_milliseconds(value, fallback_ms);
 }
 
 function duration_to_seconds(value, fallback_seconds) {
-    let ms = duration_to_milliseconds(value, fallback_seconds * 1000);
-    let seconds = int((ms + 999) / 1000);
-    return seconds > 0 ? seconds : fallback_seconds;
+    return duration.ceil_seconds(value, fallback_seconds);
 }
 
 function bool_value(value, fallback) {
@@ -223,15 +201,17 @@ function parse_delay_output(output) {
 
 function clash_probe(tag_name, group) {
     let timeout = as_string(duration_to_milliseconds(group.check_timeout, 2000));
-    let result = module_capture([ "get_proxy_latency", tag_name, timeout, group.health_url ]);
-    if (result.status != 0)
-        return { alive: false, delay: 0 };
-
-    let delay = parse_delay_output(result.output);
-    if (delay == null)
-        return { alive: false, delay: 0 };
-
-    return { alive: true, delay };
+    if (getenv("FORKOP_DIAGNOSTICS_UC")) {
+        let result = module_capture([ "get_proxy_latency", tag_name, timeout, group.health_url ]);
+        let delay = result.status == 0 ? parse_delay_output(result.output) : null;
+        return delay == null ? { alive: false, delay: 0 } : { alive: true, delay };
+    }
+    let endpoint = clash_api.local_request_address() + ":" + CLASH_PORT + "/proxies/" +
+        core_url.encode(tag_name) + "/delay";
+    let args = clash_api.latency_args(endpoint, timeout);
+    push(args, "--data-urlencode", "url=" + group.health_url, "--data-urlencode", "timeout=" + timeout);
+    let result = clash_api.parse_latency(command_output_from_args(args), false);
+    return result == null ? { alive: false, delay: 0 } : { alive: true, delay: result.delay };
 }
 
 function fixture_probe(latencies, tag_name) {

@@ -10,48 +10,57 @@ flock -n 9 || { echo "sing-box-extended mirror sync is already running" >&2; exi
 
 release_json="$(curl -fsSL --retry 3 "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest")"
 tag="$(jq -r '.tag_name // empty' <<< "$release_json")"
-[[ -n "$tag" && "$tag" != *alpha* && "$tag" != *beta* && "$tag" != *-rc* ]] || exit 1
+[[ "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ && "$tag" != *alpha* && "$tag" != *beta* && "$tag" != *-rc* ]] || exit 1
 
-staging="$MIRROR_ROOT/.${tag}.staging"
+asset_pattern='\A(sing-box-extended_[A-Za-z0-9._+-]+_openwrt_[A-Za-z0-9._+-]+\.(apk|ipk)|sing-box-[A-Za-z0-9._+-]+-linux-[A-Za-z0-9-]+-compressed\.tar\.gz)\z'
+release_json="$(jq -ce --arg pattern "$asset_pattern" '
+    .assets |= map(select(.name | test($pattern)))
+    | select(.assets | length == (unique_by(.name) | length))
+    | select(.assets | any(.[]; .name | endswith(".apk"))
+        and any(.[]; .name | endswith(".ipk"))
+        and any(.[]; .name | endswith("-linux-arm64-compressed.tar.gz")))
+    | select(.assets | all(.[]; ((.browser_download_url // "") | startswith("https://"))
+        and ((.digest // "") | test("\\Asha256:[a-f0-9]{64}\\z"))))
+' <<< "$release_json")" || {
+    echo "Incomplete sing-box-extended release assets for $tag" >&2
+    exit 1
+}
+checksums="$(jq -r '.assets[] | "\(.digest | sub("^sha256:"; ""))  ./\(.name)"' <<< "$release_json")"
+manifest="$(jq --arg public_url "/forkop/sing-box-extended/releases/$tag/" '
+    .html_url = $public_url
+    | .assets |= map(.browser_download_url = ($public_url + .name))
+' <<< "$release_json")"
 destination="$MIRROR_ROOT/releases/$tag"
-mkdir -p "$staging" "$MIRROR_ROOT/releases"
-if [[ -d "$destination" ]]; then
-    cp -al "$destination"/. "$staging"/
+mkdir -p "$MIRROR_ROOT/releases"
+if [[ -e "$destination" || -L "$destination" ]]; then
+    # Upstream release notes and download counts can change after publication.
+    asset_identity='{tag_name, assets: [.assets[] | {name, digest, browser_download_url}] | sort_by(.name)}'
+    if [[ ! -d "$destination" || -L "$destination" ]] ||
+       [[ "$(jq -cS "$asset_identity" "$destination/release.json")" != "$(jq -cS "$asset_identity" <<< "$manifest")" ]] ||
+       ! (cd "$destination" && sha256sum --check --status <<< "$checksums"); then
+        echo "Refusing to replace immutable sing-box-extended release $tag" >&2
+        exit 1
+    fi
+else
+    staging="$(mktemp -d "$MIRROR_ROOT/.${tag}.staging.XXXXXX")"
+    trap 'rm -rf -- "$staging"' EXIT
+    downloads="$(jq -r '.assets[] | [.name, .browser_download_url] | @tsv' <<< "$release_json")"
+    while IFS=$'\t' read -r name url; do
+        curl -fsSL --retry 3 "$url" -o "$staging/$name"
+    done <<< "$downloads"
+    printf '%s\n' "$checksums" > "$staging/SHA256SUMS"
+    (cd "$staging" && sha256sum --check SHA256SUMS)
+    printf '%s\n' "$manifest" > "$staging/release.json"
+    chmod 0755 "$staging"
+    mv -nT "$staging" "$destination"
+    if [[ -d "$staging" ]]; then
+        echo "sing-box-extended release $tag already exists" >&2
+        exit 1
+    fi
 fi
 
-jq -r '.assets[] | select(.name | test("^sing-box-extended_.*_openwrt_.*\\.(apk|ipk)$|^sing-box-.*-linux-[a-zA-Z0-9-]+-compressed\\.tar\\.gz$")) | [.name, .browser_download_url, (.digest // "")] | @tsv' \
-    <<< "$release_json" |
-    while IFS=$'\t' read -r name url digest; do
-        [[ -n "$name" && -n "$url" && "$digest" == sha256:* ]] || exit 1
-        if [[ ! -f "$staging/$name" ]] ||
-            [[ "$(sha256sum "$staging/$name" | cut -d' ' -f1)" != "${digest#sha256:}" ]]; then
-            curl -fsSL --retry 3 "$url" -o "$staging/$name.new"
-            mv "$staging/$name.new" "$staging/$name"
-        fi
-        [[ "$(sha256sum "$staging/$name" | cut -d' ' -f1)" == "${digest#sha256:}" ]] || exit 1
-    done
-
-compgen -G "$staging/*.apk" >/dev/null
-compgen -G "$staging/*.ipk" >/dev/null
-compgen -G "$staging/*-linux-arm64-compressed.tar.gz" >/dev/null
-
-jq --arg tag "$tag" '
-    .html_url = ("/forkop/sing-box-extended/releases/" + $tag + "/")
-    | .assets = [.assets[]
-        | select(.name | test("^sing-box-extended_.*_openwrt_.*\\.(apk|ipk)$|^sing-box-.*-linux-[a-zA-Z0-9-]+-compressed\\.tar\\.gz$"))
-        | .browser_download_url = ("/forkop/sing-box-extended/releases/" + $tag + "/" + .name)]
-' <<< "$release_json" > "$staging/release.json.new"
-mv "$staging/release.json.new" "$staging/release.json"
-
-(cd "$staging" && sha256sum ./*.apk ./*.ipk ./*-linux-*-compressed.tar.gz > SHA256SUMS.new)
-mv "$staging/SHA256SUMS.new" "$staging/SHA256SUMS"
-
-# Keep the previous release directory until the new one is complete.
-if [[ -d "$destination" ]]; then
-    rm -rf "$destination"
-fi
-mv "$staging" "$destination"
 cp "$destination/release.json" "$MIRROR_ROOT/latest.json.new"
-mv "$MIRROR_ROOT/latest.json.new" "$MIRROR_ROOT/latest.json"
-printf '%s\n' "$tag" > "$MIRROR_ROOT/LATEST"
+mv -T "$MIRROR_ROOT/latest.json.new" "$MIRROR_ROOT/latest.json"
+printf '%s\n' "$tag" > "$MIRROR_ROOT/LATEST.new"
+mv -T "$MIRROR_ROOT/LATEST.new" "$MIRROR_ROOT/LATEST"
 echo "sing-box-extended $tag mirror sync completed"

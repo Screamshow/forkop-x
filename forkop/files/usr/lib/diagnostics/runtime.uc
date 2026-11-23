@@ -3,6 +3,7 @@
 let fs = require("fs");
 let xrust = require("xrust.binary");
 let clash_api_network = require("xrust.clash_api");
+let core_url = require("core.url");
 let mark_rules = require("diagnostics.mark_rules");
 let common = require("core.common");
 let process_memory = require("core.process_memory");
@@ -13,7 +14,6 @@ let runtime_constants = require("xrust.constants");
 let runtime_dns = require("xrust.dns");
 let bootstrap_dns = require("dns.bootstrap");
 let bootstrap_endpoint = require("dns.bootstrap_endpoint");
-let netstat = require("core.netstat");
 
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || constants.FORKOP_CONFIG_NAME || "forkop";
 const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
@@ -43,8 +43,6 @@ const NFT_INTERFACE_SET_NAME = getenv("NFT_INTERFACE_SET_NAME") || constants.NFT
 const NFT_DISCORD_SET_NAME = getenv("NFT_DISCORD_SET_NAME") || constants.NFT_DISCORD_SET_NAME || "forkop_discord_subnets";
 const NFT_LOCALV4_SET_NAME = getenv("NFT_LOCALV4_SET_NAME") || constants.NFT_LOCALV4_SET_NAME || "localv4";
 const SB_DNS_INBOUND_ADDRESS = getenv("SB_DNS_INBOUND_ADDRESS") || constants.SB_DNS_INBOUND_ADDRESS || "127.0.0.42";
-const SB_TPROXY_INBOUND6_ADDRESS = getenv("SB_TPROXY_INBOUND6_ADDRESS") || constants.SB_TPROXY_INBOUND6_ADDRESS || "::1";
-const SB_TPROXY_INBOUND_PORT = getenv("SB_TPROXY_INBOUND_PORT") || constants.SB_TPROXY_INBOUND_PORT || "1602";
 const SB_CLASH_API_CONTROLLER_PORT = getenv("SB_CLASH_API_CONTROLLER_PORT") || constants.SB_CLASH_API_CONTROLLER_PORT || "9090";
 const CLOUDFLARE_OCTETS = getenv("CLOUDFLARE_OCTETS") || constants.CLOUDFLARE_OCTETS || "8.47 162.159 188.114";
 const DEFAULT_LATENCY_TEST_URL = getenv("DEFAULT_LATENCY_TEST_URL") || "https://www.gstatic.com/generate_204";
@@ -857,39 +855,25 @@ function dns_check_bootstrap(active, domain, timeout_seconds) {
     return bootstrap_dns.lookup(domain, active.bootstrap, active.state.bootstrap_dns_type, timeout_seconds, "A") != "";
 }
 
-function device_ipv4_address(interface) {
-    let value = replace(module_output(XRUST_RUNTIME_UC, [ "device-ipv4-address", interface ]), /[\r\n]+$/g, "");
-    if (value != "")
-        return value;
-
-    let output = command_output_from_args([ "ip", "-4", "addr", "show", "dev", interface ]);
+function dns_check_has_ipv4_answer(output) {
+    let successful = false;
     for (let line in split(output, "\n")) {
-        line = trim(as_string(line));
-        let matched = match(line, /^inet[ \t]+([0-9.]+)\//);
-        if (matched != null)
-            return as_string(matched[1]);
+        if (match(line, /^;; ->>HEADER<<- .*status: NOERROR,/))
+            successful = true;
+        let fields = words(line);
+        if (successful && length(fields) == 5 && fields[2] == "IN" && fields[3] == "A" && valid_ipv4(fields[4]))
+            return true;
     }
-    return "";
+    return false;
 }
 
-function dns_check_router_resolver_available(domain) {
-    for (let address in [ "127.0.0.1", SB_DNS_INBOUND_ADDRESS ]) {
-        if (address != "" && command_success_from_args([ "dig", "@" + address, domain, "+timeout=2", "+tries=1" ]))
-            return true;
-    }
-
-    let listen_address = replace(module_output(XRUST_RUNTIME_UC, [ "service-listen-address" ]), /[\r\n]+$/g, "");
-    if (listen_address != "" && command_success_from_args([ "dig", "@" + listen_address, domain, "+timeout=2", "+tries=1" ]))
-        return true;
-
-    let source_interfaces = option(settings(), "source_network_interfaces", "br-lan");
-    for (let interface in words(source_interfaces)) {
-        let address = device_ipv4_address(interface);
-        if (address != "" && command_success_from_args([ "dig", "@" + address, domain, "+timeout=2", "+tries=1" ]))
-            return true;
-    }
-
-    return false;
+function dns_check_router_resolver_available(domain, timeout_seconds) {
+    // Without @server, dig uses the nameservers configured for the router.
+    // The separate main-DNS probe already checks Xrust's explicit socket.
+    return dns_check_has_ipv4_answer(command_output_from_args([
+        "dig", "-r", domain, "A", "+noall", "+comments", "+answer",
+        "+timeout=" + as_string(timeout_seconds), "+tries=1"
+    ]));
 }
 
 function dns_check_timeout_seconds(value) {
@@ -920,12 +904,13 @@ function check_dns_available() {
     let dns_on_router = 0;
     let dhcp_config_status = 1;
 
-    let active_dns_args = [ "dig" ];
-    if (runtime_dns.failover_enabled(cfg)) {
+    let active_dns_args = [ "dig", "-r" ];
+    let failover_enabled = active.state.provider || active.state.main_servers[1] != null || active.state.bootstrap_servers[1] != null;
+    if (failover_enabled) {
         push(active_dns_args, "-p");
         push(active_dns_args, as_string(runtime_dns.health_port("active", 0)));
     }
-    push(active_dns_args, "@" + SB_DNS_INBOUND_ADDRESS);
+    push(active_dns_args, "@" + (failover_enabled ? runtime_dns.DNS_HEALTH_ADDRESS : SB_DNS_INBOUND_ADDRESS));
     push(active_dns_args, domain);
     push(active_dns_args, "A");
     push(active_dns_args, "+short");
@@ -937,7 +922,7 @@ function check_dns_available() {
             break;
         }
 
-    if (dns_check_router_resolver_available(domain))
+    if (dns_check_router_resolver_available(domain, timeout_seconds))
         dns_on_router = 1;
 
     let dns_server_host = url_host(dns_server);
@@ -1054,15 +1039,6 @@ function check_nft_rules() {
     return 0;
 }
 
-function sing_box_standard_ports_listening(netstat_data) {
-    return netstat.sing_box_standard_ports_listening(
-        netstat_data,
-        SB_DNS_INBOUND_ADDRESS,
-        SB_TPROXY_INBOUND_PORT,
-        core_ip.ipv6_tproxy_enabled() ? SB_TPROXY_INBOUND6_ADDRESS : ""
-    );
-}
-
 function check_xrust() {
     let installed = file_executable(xrust.PATH);
     let version = installed ? trim(module_output(XRUST_RUNTIME_UC, [ "build-version" ])) : "";
@@ -1074,7 +1050,7 @@ function check_xrust() {
         xrust_service_exist: service_exists ? 1 : 0,
         xrust_autostart_disabled: autostart_disabled ? 1 : 0,
         xrust_process_running: sing_box_process_is_running() ? 1 : 0,
-        xrust_ports_listening: sing_box_standard_ports_listening(command_output_from_args([ "netstat", "-ln" ])) ? 1 : 0
+        xrust_ports_listening: module_success(SERVICE_STATE_UC, [ "xrust-runtime-ports-ready" ]) ? 1 : 0
     });
     return 0;
 }
@@ -1170,10 +1146,6 @@ function clash_api_url() {
     return clash_api_network.local_request_address() + ":" + SB_CLASH_API_CONTROLLER_PORT;
 }
 
-function clash_urlencode(value) {
-    return replace(status_output([ "url-encode", value ], null), /[\r\n]+$/g, "");
-}
-
 function clash_json_error(message) {
     let result = status_capture([ "json-error", message ], null);
     if (result.output != "")
@@ -1181,31 +1153,9 @@ function clash_json_error(message) {
     return 1;
 }
 
-function valid_latency_ms(value) {
-    return type(value) == "int" && value > 0;
-}
-
-function parse_clash_latency(output, group) {
-    let value;
-    try {
-        value = json(output);
-    }
-    catch (e) {
-        return null;
-    }
-    if (type(value) != "object")
-        return null;
-    if (!group)
-        return valid_latency_ms(value.delay) ? value : null;
-    for (let _, delay in value)
-        if (valid_latency_ms(delay))
-            return value;
-    return null;
-}
-
 function clash_latency_output(args, group) {
     let output = command_output(command_from_args(args));
-    let result = parse_clash_latency(output, group);
+    let result = clash_api_network.parse_latency(output, group);
     if (result == null)
         return clash_json_error(group && output != "" ? "No group nodes returned latency" : "Clash API latency probe failed");
     write_json(result);
@@ -1465,8 +1415,8 @@ function automatic_latency_record_failure(signature, generation) {
 function clash_latency_endpoint(base_url, proxy_tag, proxy_type) {
     proxy_type = as_string(proxy_type);
     if (lc(proxy_type) == "urltest")
-        return base_url + "/group/" + clash_urlencode(proxy_tag) + "/delay";
-    return base_url + "/proxies/" + clash_urlencode(proxy_tag) + "/delay";
+        return base_url + "/group/" + core_url.encode(proxy_tag) + "/delay";
+    return base_url + "/proxies/" + core_url.encode(proxy_tag) + "/delay";
 }
 
 function latency_test_url() {
@@ -1482,18 +1432,8 @@ function latency_probe_concurrency() {
     return value > 8 ? 8 : value;
 }
 
-function latency_curl_args(endpoint, timeout) {
-    // The core receives a timeout in milliseconds. Allow extra time for the
-    // HTTP exchange, but bound curl even if the controller stops responding.
-    let milliseconds = int(timeout);
-    if (milliseconds <= 0)
-        milliseconds = 5000;
-    let seconds = int(milliseconds / 1000) + 3;
-    return [ "curl", "--max-time", as_string(seconds), "-G", "-fs", endpoint ];
-}
-
 function latency_probe_command(base_url, proxy_tag, proxy_type, test_url, timeout) {
-    let args = latency_curl_args(clash_latency_endpoint(base_url, proxy_tag, proxy_type), timeout);
+    let args = clash_api_network.latency_args(clash_latency_endpoint(base_url, proxy_tag, proxy_type), timeout);
     push(args, "--data-urlencode");
     push(args, "url=" + as_string(test_url));
     push(args, "--data-urlencode");
@@ -1543,7 +1483,7 @@ function probe_proxy_latencies(plan, proxy_tags, progress) {
                 fs.unlink(probe.path);
             }
             let group = lc(as_string(plan.proxy_types[probe.tag])) == "urltest";
-            if (parse_clash_latency(output, group) == null)
+            if (clash_api_network.parse_latency(output, group) == null)
                 progress.failed++;
             progress.completed++;
             if (progress.path != "")
@@ -1578,7 +1518,7 @@ function clash_api(action, arg1, arg2, arg3) {
         if (url == "")
             url = test_url;
         let timeout = as_string(arg2 || "2000");
-        let args = latency_curl_args(base_url + "/proxies/" + clash_urlencode(arg1) + "/delay", timeout);
+        let args = clash_api_network.latency_args(base_url + "/proxies/" + core_url.encode(arg1) + "/delay", timeout);
         push(args, "--data-urlencode");
         push(args, "url=" + url);
         push(args, "--data-urlencode");
@@ -1639,7 +1579,7 @@ function clash_api(action, arg1, arg2, arg3) {
         if (as_string(arg1) == "")
             return clash_json_error("group_tag required");
         let timeout = as_string(arg2 || "5000");
-        let args = latency_curl_args(base_url + "/group/" + clash_urlencode(arg1) + "/delay", timeout);
+        let args = clash_api_network.latency_args(base_url + "/group/" + core_url.encode(arg1) + "/delay", timeout);
         push(args, "--data-urlencode");
         push(args, "url=" + test_url);
         push(args, "--data-urlencode");
@@ -1651,7 +1591,7 @@ function clash_api(action, arg1, arg2, arg3) {
         if (as_string(arg1) == "" || as_string(arg2) == "")
             return clash_json_error("group_tag and proxy_tag required");
         let payload = status_output([ "clash-set-group-proxy-payload", arg2 ], null);
-        let args = [ "curl", "-X", "PUT", "-s", "-w", "\n%{http_code}", base_url + "/proxies/" + clash_urlencode(arg1) ];
+        let args = [ "curl", "-X", "PUT", "-s", "-w", "\n%{http_code}", base_url + "/proxies/" + core_url.encode(arg1) ];
         push(args, "--data-raw");
         push(args, payload);
         let result = status_capture([ "clash-set-group-proxy-result", arg1, arg2 ], command_output(command_from_args(args)));
@@ -1663,7 +1603,7 @@ function clash_api(action, arg1, arg2, arg3) {
     if (action == "close_connection") {
         if (as_string(arg1) == "")
             return clash_json_error("connection_id required");
-        let args = [ "curl", "-X", "DELETE", "-s", "-w", "\n%{http_code}", base_url + "/connections/" + clash_urlencode(arg1) ];
+        let args = [ "curl", "-X", "DELETE", "-s", "-w", "\n%{http_code}", base_url + "/connections/" + core_url.encode(arg1) ];
         let result = status_capture([ "clash-close-connection-result", arg1 ], command_output(command_from_args(args)));
         if (result.output != "")
             print(result.output);
@@ -2111,6 +2051,8 @@ else if (mode == "check-fakeip-fixture")
     exit(check_fakeip_fixture(ARGV[1]));
 else if (mode == "clash-api")
     exit(clash_api(ARGV[1], ARGV[2], ARGV[3], ARGV[4]));
+else if (mode == "clash-api-address")
+    print(clash_api_network.local_request_address(), "\n");
 else if (mode == "clash-api-ready")
     exit(clash_api_ready() ? 0 : 1);
 else if (mode == "proxy-outbounds-signature")

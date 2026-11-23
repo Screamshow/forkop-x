@@ -68,6 +68,7 @@ export namespace Forkop {
     GET_SYSTEM_INFO = 'get_system_info',
     GET_UI_CAPABILITIES = 'get_ui_capabilities',
     GET_UI_STATE = 'get_ui_state',
+    GET_UI_ACTION_STATE = 'get_ui_action_state',
     SERVICE_ACTION_ASYNC = 'service_action_async',
     SERVICE_ACTION_STATUS = 'service_action_status',
     LATENCY_TEST_ASYNC = 'latency_test_async',
@@ -342,7 +343,7 @@ export namespace Forkop {
     bootstrap_dns_server_index: number;
     bootstrap_dns_server_count: number;
     bootstrap_dns_status: 0 | 1;
-    bootstrap_dns_required: 0 | 1;
+    bootstrap_dns_required?: 0 | 1;
     dhcp_config_status: 0 | 1;
     dont_touch_dhcp: 0 | 1;
   }

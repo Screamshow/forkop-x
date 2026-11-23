@@ -63,6 +63,7 @@ UPDATE_ROLLBACK_ATTEMPTED=0
 UPDATE_ROLLBACK_FAILED=0
 UPDATE_ROLLBACK_MANIFEST=""
 UPDATE_HAD_I18N=0
+UPDATE_HAD_APP=0
 REPAIR_XRUST=0
 REPAIR_XRUST_ACTIVE=0
 REPAIR_XRUST_LOCK=""
@@ -2410,6 +2411,8 @@ installed_forkop_package_version() (
 
 prepare_current_update_rollback() {
     [ "$INSTALL_MODE" = "update" ] || return 0
+    UPDATE_HAD_I18N=0
+    UPDATE_HAD_APP=0
     rollback_original_catalog=""
     rollback_catalog="$(http_get "$MIRROR_BASE_URL/forkop/updates/releases.json")" ||
         fail "Cannot obtain exact previous Forkop packages for rollback"
@@ -2422,10 +2425,11 @@ prepare_current_update_rollback() {
         rollback_version="$(installed_forkop_package_version "$rollback_name")" ||
             fail "Cannot determine installed $rollback_name version"
         if [ -z "$rollback_version" ]; then
-            [ "$rollback_name" = luci-i18n-forkop-ru ] && continue
+            [ "$rollback_name" != forkop ] && continue
             fail "Cannot cache missing $rollback_name for rollback"
         fi
         [ "$rollback_name" != luci-i18n-forkop-ru ] || UPDATE_HAD_I18N=1
+        [ "$rollback_name" != luci-app-forkop ] || UPDATE_HAD_APP=1
         rollback_tag="$(printf '%s' "$rollback_version" | sed 's/_rc\([0-9][0-9]*\)$/-canary.\1/')"
         if ! rollback_release="$(printf '%s' "$rollback_catalog" | install_json_ucode release-catalog-entry "$rollback_tag")"; then
             # Original Forkop uses the same package names. Its immutable
@@ -2530,6 +2534,9 @@ rollback_current_update() {
         fi
         if [ "$UPDATE_HAD_I18N" -eq 0 ] && pkg_is_installed luci-i18n-forkop-ru; then
             pkg_remove_name luci-i18n-forkop-ru || rollback_ok=0
+        fi
+        if [ "$UPDATE_HAD_APP" -eq 0 ] && pkg_is_installed luci-app-forkop; then
+            pkg_remove_name luci-app-forkop || rollback_ok=0
         fi
         while IFS="$(printf '\t')" read -r rollback_name rollback_version rollback_file; do
             [ "$(installed_forkop_package_version "$rollback_name")" = "$rollback_version" ] || rollback_ok=0
@@ -3577,11 +3584,12 @@ main() {
 
     parse_args "$@"
     check_root
+    normalize_mirror_base_url
+    export FORKOP_MIRROR_BASE_URL="$MIRROR_BASE_URL"
     init_tmp_dir
     detect_fetcher
     if [ "$REPAIR_XRUST" -eq 1 ] || forkop_needs_xrust_repair; then
         check_system
-        normalize_mirror_base_url
         repair_xrust
         release_xrust_repair_locks || fail "Could not release the Xrust repair locks"
         [ "$REPAIR_XRUST" -ne 1 ] || return 0

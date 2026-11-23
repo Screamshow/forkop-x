@@ -2,6 +2,7 @@
 let fs = require("fs");
 let xrust = require("xrust.binary");
 let common = require("core.common");
+let process_identity = require("core.process_identity");
 let uci = require("core.uci");
 let subscription_recovery = require("xrust.subscription_recovery");
 const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
@@ -30,11 +31,8 @@ function provenance() {
 // The start time read straight from /proc: enough to prove that the PID
 // still names the process whose full provenance was checked before HUP.
 function start_ticks(pid) {
-    let stat = str(fs.readfile("/proc/" + int(pid) + "/stat"));
-    let marker = index(stat, ") ");
-    if (marker < 0) return null;
-    let fields = split(trim(substr(stat, marker + 2)), /[ \t\r\n]+/);
-    return length(fields) >= 20 && match(fields[19], /^[0-9]+$/) != null ? int(fields[19]) : null;
+    let ticks = process_identity.start_ticks(pid);
+    return ticks == null ? null : int(ticks);
 }
 function same_process(expected, actual) {
     return type(expected) == "object" && type(actual) == "object" &&

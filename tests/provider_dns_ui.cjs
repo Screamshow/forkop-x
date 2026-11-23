@@ -5,11 +5,12 @@ const source = fs.readFileSync(path.join(__dirname,'../luci-app-forkop/htdocs/lu
 const start = source.indexOf('  const providerOption =');
 const end = source.indexOf('  const dnsProtocol = section.option(', start);
 let enabled='0';
+let providerCalls=0;
 const flag={formvalue:()=>enabled,cfgvalue:()=>enabled};
-const create = new Function('section','form','_','E','fs','uci','UCI_PACKAGE',source.slice(start,end)+';return {renderProviderList,providerOption};');
+const create = new Function('section','form','_','E','fs','uci','UCI_PACKAGE','main',source.slice(start,end)+';return {renderProviderList,providerOption};');
 const ui=create({option:()=>flag},{Flag:{}},x=>x,(tag,attrs,children)=>({tag,...attrs,children,style:{setProperty(key,value,priority){this[key]=value;this.priority=priority;}}}),
-  {exec:async()=>({stdout:JSON.stringify({candidates:[{server:'10.1.0.1',interface:'wan'}]})})},
-  {get:()=>enabled},'forkop');
+  {exec:async()=>{ providerCalls++; return {stdout:JSON.stringify({candidates:[{server:'10.1.0.1',interface:'wan'}]})}; }},
+  {get:()=>enabled},'forkop',{});
 const manual={saved:['https://dns.example/dns-query'],renderWidget(){return {manual:true};}};
 ui.renderProviderList(manual);
 
@@ -111,17 +112,24 @@ async function testLegacyProtocolSelection() {
 
 (async()=>{
  const widget=await manual.renderWidget('settings');
+ const bootstrap={renderWidget(){return {manual:true};}};
+ ui.renderProviderList(bootstrap);
+ const second=await bootstrap.renderWidget('settings');
  await Promise.resolve();
  const [original,provider]=widget.children;
  assert.equal(original.hidden,false);
  assert.equal(provider.hidden,true);
+ assert.equal(providerCalls,0,'manual DNS never probes WAN');
  enabled='1';ui.providerOption.onchange(null,'settings','1');
+ await new Promise(resolve => setImmediate(resolve));
  assert.equal(original.hidden,true);
  assert.equal(original.style.display,'none');
  assert.equal(original.style.priority,'important');
  assert.equal(provider.hidden,false);
  assert.equal(provider.readonly,true);
  assert.equal(provider.value,'10.1.0.1 (wan)');
+ assert.equal(second.children[1].value,provider.value);
+ assert.equal(providerCalls,1,'main and bootstrap share the same preview request');
  enabled='0';ui.providerOption.onchange(null,'settings','0');
  assert.equal(original.hidden,false);
  assert.deepEqual(manual.saved,['https://dns.example/dns-query']);

@@ -372,7 +372,8 @@ function createSettingsContent(section) {
       : uci.get(UCI_PACKAGE, sectionId, "dns_use_provider");
     return value === "1" || value === true;
   };
-  let providerCandidates = [];
+  let providerDisplay;
+  let providerRequest;
   const setProviderVisibility = (field, active) => {
     // LuCI/theme styles can override the browser's default [hidden] rule.
     field.manual.hidden = active;
@@ -382,15 +383,30 @@ function createSettingsContent(section) {
   };
   const refreshProviderFields = (sectionId) => {
     const active = providerEnabled(sectionId);
-    for (const field of providerFields) {
+    for (const field of providerFields.filter((item) => item.sectionId === sectionId)) {
       setProviderVisibility(field, active);
-      field.provider.value = providerCandidates.length
-        ? providerCandidates.map((entry) => `${entry.server} (${entry.interface})`).join(", ")
-        : _("No online WAN supplies usable DNS");
+      field.provider.value = providerDisplay ?? _("Checking status…");
     }
+    if (!active || providerDisplay !== undefined || providerRequest) return;
+    const request = main.isReadOnlyForkopView?.()
+      ? main.readForkopStatus("provider_dns")
+      : fs.exec("/usr/bin/forkop", ["provider_dns"]);
+    providerRequest = request.then((result) => {
+      if (result.code) throw new Error("provider_dns");
+      const candidates = JSON.parse(result.stdout || "{}").candidates || [];
+      providerDisplay = candidates.length
+        ? candidates.map((entry) => `${entry.server} (${entry.interface})`).join(", ")
+        : _("No online WAN supplies usable DNS");
+    }).catch(() => {
+      providerDisplay = _("Unable to read provider DNS");
+    }).finally(() => {
+      providerRequest = undefined;
+      for (const field of providerFields) field.provider.value = providerDisplay;
+    });
   };
   providerOption.onchange = function (_event, sectionId, value) {
     providerEdits.set(sectionId, value);
+    if (providerEnabled(sectionId)) providerDisplay = undefined;
     refreshProviderFields(sectionId);
   };
   const renderProviderList = (option) => {
@@ -399,16 +415,8 @@ function createSettingsContent(section) {
       return Promise.resolve(render.call(this, sectionId, ...args)).then((node) => {
         const manual = E("div", {}, [node]);
         const provider = E("input", { type: "text", readonly: true, class: "cbi-input-text" });
-        providerFields.push({ manual, provider });
-        const active = providerEnabled(sectionId);
-        setProviderVisibility({ manual, provider }, active);
-        fs.exec("/usr/bin/forkop", ["provider_dns"]).then((result) => {
-          try { providerCandidates = JSON.parse(result.stdout || "{}").candidates || []; }
-          catch (_error) { providerCandidates = []; }
-          provider.value = providerCandidates.length
-            ? providerCandidates.map((entry) => `${entry.server} (${entry.interface})`).join(", ")
-            : _("No online WAN supplies usable DNS");
-        }).catch(() => { provider.value = _("Unable to read provider DNS"); });
+        providerFields.push({ sectionId, manual, provider });
+        refreshProviderFields(sectionId);
         return E("div", {}, [manual, provider]);
       });
     };
@@ -494,17 +502,10 @@ function createSettingsContent(section) {
   );
   o.default = "60";
   o.rmempty = false;
-  o.validate = function (section_id, value) {
-    if (!value) {
-      return _("TTL value cannot be empty");
-    }
-
-    const ttl = parseInt(value);
-    if (isNaN(ttl) || ttl < 0) {
-      return _("TTL must be a positive number");
-    }
-
-    return true;
+  o.validate = function (_section_id, value) {
+    return /^\d+$/.test(value) && Number(value) <= 4294967295
+      ? true
+      : _("TTL must be an integer from 0 to 4294967295");
   };
 
   o = section.option(form.ListValue, "dns_strategy", _("DNS Strategy"));

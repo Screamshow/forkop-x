@@ -6,6 +6,7 @@
 let fs = require("fs");
 let uci = require("core.uci");
 let locks = require("core.locks");
+let constants = require("core.constants");
 
 const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
 const BIN_PATH = getenv("FORKOP_BIN") || "/usr/bin/forkop";
@@ -13,6 +14,8 @@ const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
 const STATE_UC = getenv("FORKOP_SERVICE_STATE_UC") || LIB_DIR + "/service/state.uc";
 const UI_UC = LIB_DIR + "/service/ui.uc";
 const DIAGNOSTICS_UC = LIB_DIR + "/diagnostics/runtime.uc";
+const LIFECYCLE_UC = LIB_DIR + "/service/lifecycle.uc";
+const NFT_UC = LIB_DIR + "/nft/apply.uc";
 const RUNTIME_STATE_DIR = getenv("FORKOP_RUNTIME_STATE_DIR") || "/var/run/forkop";
 const RELOAD_LOCK_DIR = getenv("FORKOP_RELOAD_LOCK_DIR") || "/var/run/forkop.reload.lock";
 const INTERVAL_SECONDS = int(getenv("FORKOP_WATCHDOG_INTERVAL_SECONDS") || "5");
@@ -43,11 +46,21 @@ function transitioning() {
 
 function xrust_runtime_kind() {
     let pipe = fs.popen("ucode -L " + quote(LIB_DIR) + " " + quote(STATE_UC) +
-        " sing-box-owned-service-kind 2>/dev/null", "r");
+        " xrust-watchdog-runtime-kind 2>/dev/null", "r");
     if (!pipe)
-        return "other";
+        return "ambiguous";
     let kind = trim(pipe.read("all") || "");
-    return pipe.close() == 0 ? kind : "other";
+    return pipe.close() == 0 ? kind : "ambiguous";
+}
+
+function transition_guard_present() {
+    return system([ "ucode", "-L", LIB_DIR, NFT_UC,
+        "transition-guard-present", constants.NFT_TABLE_NAME ]) == 0;
+}
+
+function recover_runtime() {
+    return system("ucode -L " + quote(LIB_DIR) + " " + quote(LIFECYCLE_UC) +
+        " watchdog-recover >/dev/null 2>&1");
 }
 
 function resume_due_latency_test(now) {
@@ -83,22 +96,39 @@ function sleep_seconds(seconds) {
 }
 
 function main() {
-    let started = int(clock()[0]);
-    let failed_since = 0;
+    let started = int(clock(true)[0]);
+    let failed_since = null;
+    let guard_retry_at = 0;
+    let ambiguity_reported = false;
     let replacement_attempted = false;
 
     while (true) {
-        let now = int(clock()[0]);
+        let now = int(clock(true)[0]);
 
         // Forkop is intentionally stopped, or its own lifecycle currently
         // owns a transition.  Neither case is an outage for this watchdog.
         let observing = active() && !transitioning() && now - started >= GRACE_SECONDS;
-        let kind = observing ? xrust_runtime_kind() : "other";
+        let kind = observing ? xrust_runtime_kind() : "ambiguous";
         if (!observing) {
-            failed_since = 0;
+            failed_since = null;
+        }
+        else if (kind == "ambiguous") {
+            failed_since = null;
+            if (!ambiguity_reported)
+                log("Xrust ownership could not be verified; preserving the existing runtime", "warn");
+            ambiguity_reported = true;
+        }
+        else if (transition_guard_present()) {
+            failed_since = null;
+            ambiguity_reported = false;
+            if (now >= guard_retry_at) {
+                recover_runtime();
+                guard_retry_at = int(clock(true)[0]) + FAILURE_SECONDS;
+            }
         }
         else if (kind == "deleted") {
-            failed_since = 0;
+            failed_since = null;
+            ambiguity_reported = false;
             if (!replacement_attempted) {
                 replacement_attempted = true;
                 log("replacing the verified procd-owned deleted Xrust runtime", "warn");
@@ -107,19 +137,21 @@ function main() {
             }
         }
         else if (kind == "current") {
-            failed_since = 0;
+            failed_since = null;
+            ambiguity_reported = false;
             replacement_attempted = false;
-            resume_due_latency_test(now);
+            resume_due_latency_test(int(clock()[0]));
         }
-        else {
-            if (failed_since == 0) {
+        else if (kind == "absent") {
+            ambiguity_reported = false;
+            if (failed_since == null) {
                 failed_since = now;
                 log("Xrust became unavailable; waiting " + FAILURE_SECONDS + " seconds before DNS rollback", "warn");
             }
             else if (now - failed_since >= FAILURE_SECONDS) {
                 log("Xrust remained unavailable; stopping Forkop and restoring dnsmasq DNS", "fatal");
-                system(quote(BIN_PATH) + " stop >/dev/null 2>&1");
-                failed_since = 0;
+                recover_runtime();
+                failed_since = null;
             }
         }
 

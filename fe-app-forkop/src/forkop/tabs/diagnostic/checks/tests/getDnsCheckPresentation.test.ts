@@ -51,4 +51,27 @@ describe('getDnsCheckPresentation', () => {
       }),
     ).toMatchObject({ state: 'success' });
   });
+
+  it('reports failure when all performed DNS checks fail', () => {
+    expect(
+      getDnsCheckPresentation({
+        ...baseDnsResult,
+        dns_status: 0,
+        dns_on_router: 0,
+        bootstrap_dns_required: 0,
+        dont_touch_dhcp: 1,
+      }),
+    ).toMatchObject({ state: 'error', description: 'Checks failed' });
+  });
+
+  it('keeps missing bootstrap requirement metadata compatible', () => {
+    expect(
+      getDnsCheckPresentation({
+        ...baseDnsResult,
+        dhcp_config_status: 1,
+        bootstrap_dns_status: 0,
+        bootstrap_dns_required: undefined,
+      }),
+    ).toMatchObject({ state: 'warning' });
+  });
 });

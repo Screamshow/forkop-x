@@ -33,6 +33,9 @@ r = selection.reconcile([ "Same" ], [], duplicates,
 eq(r.names, [ "A", "B" ], "duplicate names keep both selected connections");
 eq(r.records[0].keys, [ "source-a" ], "split names receive their own identity");
 eq(r.records[1].keys, [ "source-b" ], "split selection remains independently editable");
+r = selection.reconcile([ "Same" ], [], duplicates,
+    [ { name: "B", key: "source-b" }, { name: "A", key: "source-a" } ]);
+eq(r.names, [ "B", "A" ], "resolved names retain their order in the new feed");
 r = selection.reconcile([ "Explicit new choice" ], [ { name: "Old", keys: [ "old" ] } ],
     [ { name: "Explicit new choice", key: "new" } ], [ { name: "Renamed", key: "new" } ]);
 eq(r.names, [ "Renamed" ], "user selection overrides previous binding");

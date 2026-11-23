@@ -15,6 +15,7 @@ LIB = ROOT / "forkop/files/usr/lib"
 requests = []
 FALLBACK_USER_AGENT = "sing-box/1.14.2"
 runtime_rejected = False
+redirect_destination = "/redirect-final"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -25,6 +26,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         requests.append((self.path, dict(self.headers)))
         fallback = self.headers.get("User-Agent") == FALLBACK_USER_AGENT
+        if self.path == "/redirect":
+            self.send_response(302)
+            self.send_header("Location", redirect_destination)
+            self.end_headers()
+            return
         if "/rate-limit" in self.path:
             self.send_error(429)
             return
@@ -40,7 +46,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if "/invalid" in self.path or ("/fallback-invalid" in self.path and not fallback) or (
                 "/fallback-runtime" in self.path and (not fallback or runtime_rejected)):
-            body = b"invalid provider response"
+            body = (b'{"outbounds":[{"type":"direct","tag":"Provider Direct"}]}'
+                    if "/fallback-runtime" in self.path else b"invalid provider response")
             self.send_response(200)
             self.send_header("profile-title", "Rejected profile")
             self.send_header("Content-Length", str(len(body)))
@@ -56,9 +63,18 @@ class Handler(BaseHTTPRequestHandler):
             replacement = state.with_suffix(".new")
             replacement.write_text(reordered_sources)
             replacement.replace(state)
-        body = json.dumps({"outbounds": [{"type": "vless", "tag": "Working server",
-                                         "server": "203.0.113.9", "server_port": 443,
-                                         "uuid": "12345678-1234-1234-1234-123456789abc"}]}).encode()
+        if self.path == "/yaml-comment":
+            body = (
+                "proxies:\n"
+                "  - {name: A, type: vless, server: a.test, port: 443, uuid: 12345678-1234-1234-1234-123456789abc}\n"
+                "# This comment does not terminate the sequence.\n"
+                "  - {name: B, type: vless, server: b.test, port: 443, uuid: 12345678-1234-1234-1234-123456789abc}\n"
+            ).encode()
+        else:
+            tag = "Replacement server" if self.path == "/pending" else "Working server"
+            body = json.dumps({"outbounds": [{"type": "vless", "tag": tag,
+                                             "server": "203.0.113.9", "server_port": 443,
+                                             "uuid": "12345678-1234-1234-1234-123456789abc"}]}).encode()
         if "/gzip" in self.path:
             body = gzip.compress(body)
         self.send_response(200)
@@ -169,6 +185,9 @@ with tempfile.TemporaryDirectory(prefix="forkop-preview-test-") as temp:
         _, direct = download("direct", f"http://127.0.0.1:{port}/direct")
         assert "error" not in direct, direct
         _, compressed = download("gzip", f"http://127.0.0.1:{port}/gzip")
+        yaml_path, yaml_profile = download("yaml", f"http://127.0.0.1:{port}/yaml-comment")
+        assert not yaml_profile.get("error"), yaml_profile
+        assert [node["tag"] for node in json.loads(yaml_path.with_suffix(".json").read_text())["outbounds"]] == ["A", "B"]
         assert "error" not in compressed, compressed
         _, too_large = download("too-large", f"http://127.0.0.1:{port}/too-large")
         assert "error" in too_large
@@ -221,14 +240,16 @@ with tempfile.TemporaryDirectory(prefix="forkop-preview-test-") as temp:
         assert json.loads(config.read_text()) == active, "preview mutated active config"
         print("PASS: real preview proxy/direct download, shared headers/parser, private request, NO_PROXY, unavailable/stopped/wrong target, HTTP failure, no direct fallback or UCI/runtime mutation")
 
-        def update_runtime():
+        def cache_command(*args):
             result = subprocess.run(
-                ["ucode", "-L", str(lib), str(LIB / "subscription/cache.uc"),
-                 "update-request", "1", "rule", "1"],
+                ["ucode", "-L", str(lib), str(LIB / "subscription/cache.uc"), *args],
                 env=env, capture_output=True, text=True, timeout=90,
             )
             assert result.returncode == 0, result.stderr
             return result.stdout.strip()
+
+        def update_runtime(force=True, source="1", guarded=False):
+            return cache_command("update-request", str(int(force)), "rule", source, str(int(guarded)))
 
         common_uci = (
             f"forkop.settings=settings\nforkop.settings.config_path={inactive}\n"
@@ -297,6 +318,53 @@ with tempfile.TemporaryDirectory(prefix="forkop-preview-test-") as temp:
             cached = json.loads((work / "persistent" / "rule-subscription-1.json").read_text())
             assert cached["__forkop_source_cache"]["url"] == f"{base}/new"
             print("PASS: discard a response after source relocation, then publish the current slot")
+
+            def source_uci(name, url, interval="4h"):
+                return (f"forkop.{name}=subscription_url\nforkop.{name}.section=rule\n"
+                        f"forkop.{name}.url={url}\nforkop.{name}.subscription_update_interval={interval}\n")
+
+            state.write_text(common_uci + source_uci("feed", f"{base}/redirect"))
+            before = len(requests)
+            assert update_runtime() in {"1\t0\t0\t0", "0\t0\t1\t0"}
+            assert [path for path, _ in requests[before:]] == ["/redirect", "/redirect-final"]
+            working = persistent.read_bytes()
+            redirect_destination = f"http://127.0.0.1:{port}/insecure"
+            before = len(requests)
+            assert update_runtime() == "0\t1\t0\t0"
+            assert all(path == "/redirect" for path, _ in requests[before:])
+            assert persistent.read_bytes() == runtime.read_bytes() == working
+            print("PASS: runtime follows HTTPS redirects and rejects HTTPS-to-HTTP downgrade")
+
+            redirect_destination = "/pending"
+            assert update_runtime(guarded=True) == "1\t0\t0\t0"
+            proposed = runtime.read_bytes()
+            assert proposed != working and persistent.read_bytes() == working
+            cache_command("finish-source-update", "rollback")
+            assert persistent.read_bytes() == runtime.read_bytes() == working
+            assert update_runtime(guarded=True) == "1\t0\t0\t0"
+            cache_command("finish-source-update", "commit")
+            assert persistent.read_bytes() == runtime.read_bytes() == proposed
+            state.write_text(common_uci + source_uci("feed", f"{base}/changed-source"))
+            assert update_runtime(guarded=True) == "1\t0\t0\t0"
+            assert runtime.read_bytes() != proposed and persistent.read_bytes() == proposed
+            cache_command("finish-source-update", "rollback")
+            assert persistent.read_bytes() == runtime.read_bytes() == proposed
+            print("PASS: guarded runtime cache only promotes after apply and restores the prior bytes on rollback")
+
+            state.write_text(common_uci + source_uci("fast", f"{base}/schedule-fast", "1m") +
+                             source_uci("slow", f"{base}/schedule-slow", "12h"))
+            timestamps = runtime_state / "subscription-update"
+            initial = set(timestamps.glob("*.timestamp"))
+            update_runtime(source="1")
+            fast_stamp, = set(timestamps.glob("*.timestamp")) - initial
+            before = len(requests)
+            update_runtime(force=False, source="")
+            assert [path for path, _ in requests[before:]] == ["/schedule-slow"]
+            fast_stamp.write_text("1\n")
+            before = len(requests)
+            update_runtime(force=False, source="")
+            assert [path for path, _ in requests[before:]] == ["/schedule-fast"]
+            print("PASS: manually refreshed and scheduled sources use separate timestamps and intervals")
         finally:
             tls_server.shutdown()
             tls_server.server_close()

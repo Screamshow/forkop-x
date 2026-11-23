@@ -14,6 +14,8 @@ endif
 # apk-tools uses rc prerelease syntax; embedded/public version remains canary.N.
 PKG_VERSION:=$(if $(CONFIG_USE_APK),$(subst -canary.,_rc,$(or $(FORKOP_HAS_RELEASE_VERSION),0.0.0)),$(or $(FORKOP_HAS_RELEASE_VERSION),0.0.0))
 PKG_RELEASE:=
+FORKOP_CORE_PIN:=$(file <$(CURDIR)/xrust-pin)
+FORKOP_CORE_PREINST:=$(subst @FORKOP_VERSION@,$(PKG_VERSION),$(subst @XRUST_REVISION@,$(word 2,$(FORKOP_CORE_PIN)),$(subst @XRUST_VERSION@,$(word 1,$(FORKOP_CORE_PIN)),$(file <$(CURDIR)/package-preinst.sh))))
 
 PKG_MAINTAINER:=Screamshow <235684779+Screamshow@users.noreply.github.com>
 PKG_LICENSE:=GPL-2.0-or-later
@@ -41,19 +43,7 @@ define Build/Compile
 endef
 
 define Package/forkop/preinst
-#!/bin/sh
-if [ -z "$${IPKG_INSTROOT:-}" ] && [ ! -L /etc/rc.d/S98forkop-upgrade-recovery ]; then
-    banner="$$(/usr/bin/xrust version 2>/dev/null)" && \
-        printf '%s\n' "$$banner" | head -n 1 | grep -Eq '^xrust version [0-9]+\.[0-9]+\.[0-9]+$$' || {
-        printf '%s\n' 'Forkop 3 requires native Xrust. Run the official Forkop installer to upgrade the packages together: https://mirror.51343.ru/forkop/install.sh' >&2
-        # opkg has already run the old prerm. Its abort path does not run postinst.
-        if [ "$${PKG_UPGRADE:-}" = 1 ] && [ "$${1:-}" = upgrade ] && [ -x /usr/bin/forkop ]; then
-            FORKOP_LIB=/usr/lib/forkop /usr/bin/forkop package_postinst || \
-                printf '%s\n' 'Could not restore the previous Forkop service. Check the Forkop log.' >&2
-        fi
-        exit 1
-    }
-fi
+$(FORKOP_CORE_PREINST)
 endef
 
 define Package/forkop/prerm

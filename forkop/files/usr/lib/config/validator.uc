@@ -652,6 +652,10 @@ function dns_setting_values(settings, key) {
 }
 
 function validate_dns_settings(settings, sections, context) {
+    let ttl = as_string(option(settings, "dns_rewrite_ttl", "60"));
+    if (!match(ttl, /^[0-9]+$/) || int(ttl, 10) > 4294967295)
+        fail_validation("Invalid DNS rewrite TTL: use an integer from 0 to 4294967295. Aborted.");
+
     if (bool_option(settings, "whatsapp_real_dns", false)) {
         let has_meta = false;
         for (let section in sections) {
@@ -1100,6 +1104,40 @@ function validate_dns_action(section, sections, context) {
         fail_validation("DNS rule '" + name + "' references detour section '" + target_name + "' with unsupported action '" + rule_action(target) + "'. Select an enabled Connection or VPN section. Aborted.");
 }
 
+function valid_wireguard_prefixes(value) {
+    if (type(value) == "string")
+        return core_ip.valid_ip_cidr(value);
+    if (type(value) != "array" || !length(value))
+        return false;
+    for (let item in value)
+        if (type(item) != "string" || !core_ip.valid_ip_cidr(item))
+            return false;
+    return true;
+}
+
+function nonempty_wireguard_text(value) {
+    return type(value) == "string" && trim(value) != "";
+}
+
+function valid_wireguard_profile(raw) {
+    let profile;
+    try { profile = json(raw); }
+    catch (e) { return false; }
+    if (type(profile) != "object" || profile.type != "wireguard" ||
+        (profile.system != null && profile.system !== false) ||
+        !nonempty_wireguard_text(profile.private_key) ||
+        !valid_wireguard_prefixes(profile.address) ||
+        type(profile.peers) != "array" || length(profile.peers) != 1)
+        return false;
+
+    let peer = profile.peers[0];
+    return type(peer) == "object" && nonempty_wireguard_text(peer.address) &&
+        !match(peer.address, /[[:space:]]/) && type(peer.port) == "int" &&
+        peer.port >= 1 && peer.port <= 65535 && nonempty_wireguard_text(peer.public_key) &&
+        valid_wireguard_prefixes(peer.allowed_ips) &&
+        (peer.pre_shared_key == null || type(peer.pre_shared_key) == "string");
+}
+
 function validate_rule(section, sections, context) {
     if (!section_enabled(section))
         return;
@@ -1120,8 +1158,9 @@ function validate_rule(section, sections, context) {
 
     if (connections.is_connections_action(action)) {
         let tunnel = connections.native_tunnel(section);
+        let profile = option(section, "native_tunnel_profile", "");
         if (tunnel != "" && (!contains([ "warp", "amneziawg" ], tunnel) ||
-            option(section, "native_tunnel_profile", "") == ""))
+            profile == "" || (tunnel == "amneziawg" && !valid_wireguard_profile(profile))))
             fail_validation("Connection rule '" + name + "' requires a valid native tunnel profile. Aborted.");
 
         if (connections.native_tunnel_dns_enabled(section)) {

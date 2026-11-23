@@ -48,6 +48,7 @@ reset() {
     UPDATE_ROLLBACK_ATTEMPTED=0
     UPDATE_ROLLBACK_FAILED=0
     UPDATE_HAD_I18N=0
+    UPDATE_HAD_APP=1
     FORKOP_WAS_ENABLED=0
     FORKOP_WAS_RUNNING=0
     STOP_OK=1
@@ -90,6 +91,14 @@ for PKG_IS_APK in 0 1; do
     rollback_current_update
     if grep -q '^remove:' "$work/events"; then fail 'existing translation removed'; fi
     [ "$(tail -n 1 "$work/events")" = service:0:0 ] || fail 'stopped service state not preserved'
+    reset
+    saved_plan="$UPDATE_ROLLBACK_MANIFEST"
+    UPDATE_ROLLBACK_MANIFEST="$work/rollback/no-luci.tsv"
+    printf 'forkop\t1.2.3\tbackend.ipk\n' > "$UPDATE_ROLLBACK_MANIFEST"
+    UPDATE_HAD_APP=0
+    rollback_current_update
+    grep -qx 'remove:luci-app-forkop' "$work/events" || fail 'rollback added LuCI to a headless installation'
+    UPDATE_ROLLBACK_MANIFEST="$saved_plan"
     reset
     UPDATE_TRANSACTION_ACTIVE=0
     rollback_current_update

@@ -14,6 +14,7 @@ trap cleanup EXIT INT TERM
 
 mkdir -p "$WORK_DIR/lib/core"
 cp "$SOURCE_LIB/core/worker_identity.uc" "$WORK_DIR/lib/core/worker_identity.uc"
+cp "$SOURCE_LIB/core/process_identity.uc" "$WORK_DIR/lib/core/process_identity.uc"
 cat >"$WORK_DIR/worker.uc" <<'UCODE'
 while (true) system("sleep 1");
 UCODE
@@ -69,6 +70,7 @@ foreign_pid=""
 # recognised and stopped, or it survives unreachable while a second copy is started.
 mkdir -p "$WORK_DIR/moved/lib/core"
 cp "$SOURCE_LIB/core/worker_identity.uc" "$WORK_DIR/moved/lib/core/worker_identity.uc"
+cp "$SOURCE_LIB/core/process_identity.uc" "$WORK_DIR/moved/lib/core/process_identity.uc"
 cp "$WORK_DIR/worker.uc" "$WORK_DIR/moved/worker.uc"
 cp "$WORK_DIR/check.uc" "$WORK_DIR/moved/check.uc"
 ucode -L "$WORK_DIR/lib" "$WORK_DIR/worker.uc" worker >/dev/null 2>&1 &

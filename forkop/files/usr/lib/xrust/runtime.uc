@@ -493,7 +493,10 @@ function save_config_file(temp_file_path, config_path) {
 
 function discard_config_stage(stage_path) {
     stage_path = as_string(stage_path);
+    if (stage_path == "")
+        return false;
     remove_file(stage_path + ".hot-plan");
+    remove_file(stage_path + ".rulesets");
     remove_file(stage_path);
     command_success_from_args([ "rm", "-rf", stage_path + ".section-cache" ]);
     return true;
@@ -795,7 +798,8 @@ function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferre
     // declaration would prune the existing last-known-good ruleset cache.
     if (getenv("FORKOP_LIFECYCLE_LIST_BOOTSTRAP") != "1" &&
         !module_success([ RULESET_CACHE_UC, "materialize-config", temp_config,
-            as_string(stage_path) != "" ? "required" : "cache-only" ])) {
+            as_string(stage_path) != "" ? "required" : "cache-only",
+            as_string(stage_path) != "" ? "stage" : "" ])) {
         log_message("[rule-set-unavailable] A required rule-set could not be downloaded or validated. Settings were not applied; the previous running configuration is preserved.", "error");
         discard_config_stage(temp_config);
         remove_file(runtime_log);
@@ -837,12 +841,22 @@ function init_config(populate_nft, caches_prepared, no_refresh, prepared_deferre
     }
 
     if (as_string(stage_path) != "") {
-        if (file_exists(temp_config + ".section-cache") &&
-            !fs.rename(temp_config + ".section-cache", stage_path + ".section-cache")) {
+        if (!ensure_parent_dir(stage_path)) {
+            discard_config_stage(temp_config);
             remove_file(runtime_log);
             exit(1);
         }
-        if (!ensure_parent_dir(stage_path) || !command_success_from_args([ "mv", "-f", temp_config, stage_path ])) {
+        for (let suffix in [ ".section-cache", ".rulesets" ]) {
+            if (file_exists(temp_config + suffix) && !fs.rename(temp_config + suffix, stage_path + suffix)) {
+                discard_config_stage(temp_config);
+                discard_config_stage(stage_path);
+                remove_file(runtime_log);
+                exit(1);
+            }
+        }
+        if (!command_success_from_args([ "mv", "-f", temp_config, stage_path ])) {
+            discard_config_stage(temp_config);
+            discard_config_stage(stage_path);
             remove_file(runtime_log);
             exit(1);
         }
@@ -882,6 +896,8 @@ else if (mode == "prepare-config-stage")
     init_config(arg_bool(ARGV[1] || "0"), arg_bool(ARGV[2] || "0"), arg_bool(ARGV[3] || "0"), ARGV[4] || "", ARGV[5] || "", false, ARGV[6]);
 else if (mode == "commit-config-stage")
     exit(commit_config_stage(ARGV[1] || "", ARGV[2] || "", ARGV[3]) ? 0 : 1);
+else if (mode == "commit-ruleset-stage")
+    exit(ARGV[1] && module_success([ RULESET_CACHE_UC, "commit-staged", ARGV[1] ]) ? 0 : 1);
 else if (mode == "restore-config-stage")
     exit(restore_config_stage(ARGV[1] || "", ARGV[2]) ? 0 : 1);
 else if (mode == "discard-config-stage")

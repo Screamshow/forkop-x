@@ -29,6 +29,7 @@ ops/deployed-nginx/
 !/tests/luci_save_apply.cjs
 !/tests/native_tunnel_profile.cjs
 !/tests/list_change_cache.sh
+!/tests/component_action_rollback.uc
 !/tests/ruleset_rollback_references.sh
 !/tests/latency_reload_serialization.sh
 !/tests/automatic_latency_pending.sh
@@ -107,6 +108,7 @@ ops/deployed-nginx/
 !/tests/private_files_vm.sh
 !/tests/reality_xhttp_vm.sh
 !/tests/dns_apply.sh
+!/tests/dns_action_source_exclusions.sh
 !/tests/dns_rollback_transaction.sh
 !/tests/subscription_bootstrap_dns.sh
 !/tests/sing_box_package_preflight.sh
@@ -137,6 +139,10 @@ ops/deployed-nginx/
 !/tests/section_cache_rollback.sh
 !/tests/discord_cold_start_vm.sh
 !/tests/watchdog_outage_vm.sh
+!/tests/watchdog_recovery.sh
+!/tests/network_runtime_p2.sh
+!/tests/network_runtime_optimizations.sh
+!/tests/dns_failover_health_listener.py
 !/tests/list_download_update_vm.sh
 !/tests/list_download_subscription_vm.sh
 !/tests/list_download_cancel_vm.sh
@@ -192,6 +198,7 @@ ops/deployed-nginx/
 !/tests/hysteria2_certificate_pins.sh
 !/tests/hysteria2_default_port.sh
 !/tests/hysteria2_uri_auth.sh
+!/tests/socks_uri_auth.sh
 !/tests/packages_installed_version.sh
 !/tests/installer_version_verification.sh
 !/tests/nft_reply_direction.sh

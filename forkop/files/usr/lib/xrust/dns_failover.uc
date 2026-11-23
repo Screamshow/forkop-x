@@ -3,6 +3,7 @@
 let fs = require("fs");
 let uci_core = require("core.uci");
 let common = require("core.common");
+let duration = require("core.duration");
 let core_ip = require("core.ip");
 let bootstrap_endpoint = require("dns.bootstrap_endpoint");
 let runtime_dns = require("xrust.dns");
@@ -89,23 +90,8 @@ function log_message(message, level) {
     command_success_from_args([ "logger", "-t", "forkop", "[" + as_string(level || "info") + "] DNS failover: " + as_string(message) ]);
 }
 
-function duration_milliseconds(value, fallback) {
-    let rest = as_string(value);
-    let total = 0.0;
-    let units = { ns: 0.000001, us: 0.001, ms: 1, s: 1000, m: 60000, h: 3600000, d: 86400000 };
-    while (rest != "") {
-        let matched = match(rest, /^([0-9]+(\.[0-9]+)?)(ns|us|ms|s|m|h|d)/);
-        if (!matched)
-            return fallback;
-        total += (matched[1] * 1) * units[matched[3]];
-        rest = substr(rest, length(matched[0]));
-    }
-    return total > 0 ? int(total + 0.5) : fallback;
-}
-
 function duration_seconds(value, fallback) {
-    let milliseconds = duration_milliseconds(value, fallback * 1000);
-    return int((milliseconds + 999) / 1000);
+    return duration.ceil_seconds(value, fallback);
 }
 
 function probe_timeout(settings_value) {
@@ -117,9 +103,11 @@ function failure_threshold(settings_value) {
     return value > 0 ? value : 3;
 }
 
-function probe_port(kind, index_value, timeout_seconds) {
+function probe_port(kind, index_value, timeout_seconds, state) {
+    let probe = runtime_dns.health_probe(kind, index_value, state);
+    let options = probe.source == "" ? [] : [ "-b", probe.source ];
     let args = [
-        "dig", "-p", as_string(runtime_dns.health_port(kind, index_value)),
+        "dig", ...options, "-p", as_string(probe.port),
         "@" + runtime_dns.DNS_HEALTH_ADDRESS,
         CHECK_DOMAIN, "A", "+short",
         "+timeout=" + as_string(timeout_seconds), "+tries=1"
@@ -131,15 +119,7 @@ function probe_port(kind, index_value, timeout_seconds) {
 }
 
 function probe_canonical_main(timeout_seconds) {
-    let args = [
-        "dig", "-p", as_string(runtime_dns.health_port("active", 0)),
-        "@" + runtime_dns.DNS_HEALTH_ADDRESS, CHECK_DOMAIN, "A", "+short",
-        "+timeout=" + as_string(timeout_seconds), "+tries=1"
-    ];
-    for (let line in split(command_output_from_args(args), "\n"))
-        if (core_ip.valid_ipv4(trim(as_string(line))))
-            return true;
-    return false;
+    return probe_port("active", 0, timeout_seconds);
 }
 
 function verification_plan(previous, candidate) {
@@ -165,14 +145,14 @@ function verify_state(path, preflight, report) {
     // Before publishing, the main candidate still uses the current bootstrap.
     // A simultaneous bootstrap change must verify main after both are applied.
     let main_ok = !plan.main || (preflight
-        ? plan.bootstrap || probe_port("main", state.main_index, timeout_seconds)
+        ? plan.bootstrap || probe_port("main", state.main_index, timeout_seconds, state)
         : probe_canonical_main(timeout_seconds));
     if (!main_ok) {
         if (report) log_message((preflight ? "preflight" : "runtime") +
             " main DNS probe failed for priority " + as_string(state.main_index + 1) + " (" + state.dns_type + ")", "warn");
         return false;
     }
-    if (plan.bootstrap && !probe_port("bootstrap", state.bootstrap_index, timeout_seconds)) {
+    if (plan.bootstrap && !probe_port("bootstrap", state.bootstrap_index, timeout_seconds, state)) {
         if (report) log_message((preflight ? "preflight" : "runtime") +
             " bootstrap DNS probe failed for priority " + as_string(state.bootstrap_index + 1), "warn");
         return false;
@@ -186,7 +166,7 @@ function commit_state(path) {
 }
 
 function now_seconds() {
-    return int(clock()[0]);
+    return int(clock(true)[0]);
 }
 
 function choose_index(kind, state, current_index, timeout_seconds, recovery) {
@@ -196,18 +176,18 @@ function choose_index(kind, state, current_index, timeout_seconds, recovery) {
 
     if (recovery) {
         for (let i = 0; i < current_index; i++)
-            if (probe_port(kind, i, timeout_seconds))
+            if (probe_port(kind, i, timeout_seconds, state))
                 return { index: i, reason: "recovery", alive: true };
         return { index: current_index, reason: "unchanged", alive: true };
     }
 
-    if (probe_port(kind, current_index, timeout_seconds))
+    if (probe_port(kind, current_index, timeout_seconds, state))
         return { index: current_index, reason: "alive", alive: true };
 
     for (let i = 0; i < length(values); i++) {
         if (i == current_index)
             continue;
-        if (probe_port(kind, i, timeout_seconds))
+        if (probe_port(kind, i, timeout_seconds, state))
             return { index: i, reason: i < current_index ? "recovery" : "active_dead", alive: true };
     }
     return { index: current_index, reason: "all_down", alive: false };

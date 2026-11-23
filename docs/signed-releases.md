@@ -58,6 +58,10 @@ on GitHub and the mirror where they are. Forkop 2.7.6 still uses the mirror's
 Each Forkop release keeps the pin in `forkop-manifest.json`. A resumed
 public release uses its existing pin. The release command verifies that the
 public GitHub release and exact Xrust mirror archive describe the same packages.
+Before integrating a new Forkop release into main, set `forkop/xrust-pin` to
+the intended Xrust version and numeric package revision. The build embeds this
+pin in the APK and IPK pre-install hooks, and the release command verifies the
+revision against the archived Xrust packages.
 
 Before the first 3.x publication, deploy the mirror scripts from this
 checkout. The release command checks the installed publisher and catalog
@@ -166,8 +170,14 @@ python scripts/release.py --forkop 2.2.3-canary.1 --resume
 python scripts/release.py --rust 0.0.8 --resume
 ```
 
-A draft can be finalized on retry. An already public signed release can only
-be downloaded, verified and synchronized; its assets are never replaced.
+Resume reuses the run ID in the release output's `.workflow-run.json` while
+that build is in progress. If the draft lacks build assets, the command
+requests a build for the same release source. When main has moved and the
+draft has no tag, the command creates its release tag at the original commit
+to trigger that build. Resumed Forkop 3.x drafts read the core pin from their
+build source. Legacy drafts without a source pin still need `--xrust-version`.
+An already public signed release can only be
+downloaded, verified and synchronized. Its assets are never replaced.
 Older unsigned Forkop releases cannot be converted using `--resume` because
 their mirror archives and hashes are immutable. Publish a new version.
 Do not resume an old release to move a channel pointer backward.

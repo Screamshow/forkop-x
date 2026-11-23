@@ -45,6 +45,17 @@ describe('ForkopShellMethods.componentAction', () => {
         });
       }
 
+      if (args[0] === 'get_ui_state') {
+        return Promise.resolve({
+          stdout: JSON.stringify({
+            service: { forkop: { running: 1, status: 'running & enabled' } },
+            actions: { component: [] },
+          }),
+          stderr: '',
+          code: 0,
+        });
+      }
+
       return Promise.resolve({
         stdout: '',
         stderr: 'Unexpected command',
@@ -57,6 +68,7 @@ describe('ForkopShellMethods.componentAction', () => {
       'forkop',
       'install',
       '0.7.17.11',
+      true,
     );
 
     await vi.advanceTimersByTimeAsync(33000);
@@ -73,6 +85,61 @@ describe('ForkopShellMethods.componentAction', () => {
         changed: true,
         status: 'latest',
       },
+    });
+  });
+
+  it('releases the UI when the lost self-update has no known expected version', async () => {
+    mocks.fsRead.mockRejectedValue(new Error('State unavailable'));
+    mocks.executeShellCommand.mockResolvedValue({
+      stdout: '',
+      stderr: 'Component action job was not found',
+      code: 1,
+    });
+
+    const waiting = ForkopShellMethods.waitComponentActionJob(
+      'job-lost',
+      'forkop',
+      'install',
+    );
+    await vi.advanceTimersByTimeAsync(1500);
+    await expect(waiting).resolves.toEqual({
+      success: false,
+      error: 'Component action job was not found',
+    });
+  });
+
+  it('checks expected runtime health before inferring recovery from version alone', async () => {
+    mocks.fsRead.mockRejectedValue(new Error('State unavailable'));
+    mocks.executeShellCommand.mockImplementation(({ args }) => {
+      if (args[0] === 'show_version')
+        return { stdout: '3.0.0', stderr: '', code: 0 };
+      if (args[0] === 'get_ui_state')
+        return {
+          stdout: JSON.stringify({
+            service: { forkop: { running: 0, status: 'stopped but enabled' } },
+            actions: { component: [] },
+          }),
+          stderr: '',
+          code: 0,
+        };
+      return {
+        stdout: '',
+        stderr: 'Component action job was not found',
+        code: 1,
+      };
+    });
+
+    const waiting = ForkopShellMethods.waitComponentActionJob(
+      'job-lost',
+      'forkop',
+      'install',
+      '3.0.0',
+      true,
+    );
+    await vi.advanceTimersByTimeAsync(63000);
+    await expect(waiting).resolves.toEqual({
+      success: false,
+      error: 'Component action job was not found',
     });
   });
 

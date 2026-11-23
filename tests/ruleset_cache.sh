@@ -62,6 +62,10 @@ esac
 EOF
 cat >"$FORKOP_XRUST_BIN" <<'EOF'
 #!/bin/sh
+if [ "$1" = check ]; then
+    [ "$2" = -c ] && [ -s "$3" ]
+    exit $?
+fi
 [ "$1" = rule-set ] && [ "$2" = match ] || exit 1
 [ "$3" = --format ] && [ "$4" = binary ] || exit 1
 [ -f "$5" ] && [ "$6" = forkop-validation.invalid ] || exit 1
@@ -112,9 +116,14 @@ RULESET_TEST_SOURCE_SRS="$WORK_DIR/source.srs" \
 FORKOP_RULESET_CACHE_DIR="$WORK_DIR/cache" \
 FORKOP_RULESET_CACHE_MANIFEST="$WORK_DIR/cache/manifest.json" \
   ucode -L "$FORKOP_LIB" "$RULESET_CACHE_UC" materialize-config "$WORK_DIR/config-prune.json"
+test -e "$WORK_DIR/cache/aaaaaaaaaaaa.srs" ||
+    fail "materialization pruned a previous generation before ACK"
+FORKOP_RULESET_CACHE_DIR="$WORK_DIR/cache" \
+FORKOP_SING_BOX_CONFIG_PATH="$WORK_DIR/config-prune.json" \
+  ucode -L "$FORKOP_LIB" "$RULESET_CACHE_UC" prune-applied
 for orphan in aaaaaaaaaaaa.srs aaaaaaaaaaaa.srs.validated bbbbbbbbbbbb.json empty-cccccccccccc.json; do
   [ ! -e "$WORK_DIR/cache/$orphan" ] ||
-    fail "materialization must prune stale managed rule-set cache file $orphan"
+    fail "ACK cleanup did not prune stale managed rule-set cache file $orphan"
 done
 [ "$(find "$WORK_DIR/cache" -maxdepth 1 -type f -name '*.srs' | wc -l)" -eq 1 ] ||
   fail "materialization must retain the active binary rule-set cache"
@@ -155,6 +164,7 @@ cat >"$WORK_DIR/partial-config.json" <<'EOF'
   {"type":"remote","tag":"bad","format":"source","url":"https://bad.test/rules.json"}
 ]}}
 EOF
+cp "$WORK_DIR/partial-config.json" "$WORK_DIR/partial-candidate.json"
 PATH="$WORK_DIR/bin:$PATH" \
 RULESET_TEST_SOURCE_JSON="$WORK_DIR/partial-old.json" \
 RULESET_TEST_SOURCE_SRS="$WORK_DIR/source.srs" \
@@ -187,11 +197,21 @@ FORKOP_RULESET_CACHE_DIR="$WORK_DIR/partial-cache" \
 FORKOP_RULESET_CACHE_MANIFEST="$WORK_DIR/partial-cache/manifest.json" \
   ucode -L "$FORKOP_LIB" "$RULESET_CACHE_UC" refresh >/dev/null 2>&1 ||
   fail "a changed rule set must request reload even when another source failed"
-grep -Fq 'new.test' "$good_path" || fail "successful rule-set refresh was not committed"
+grep -Fq 'old.test' "$good_path" || fail "refresh modified bytes referenced by the active config"
 grep -Fq 'old.test' "$bad_path" || fail "failed rule-set refresh did not retain last-known-good data"
 
 export FORKOP_RULESET_CACHE_DIR="$WORK_DIR/partial-cache"
 export FORKOP_RULESET_CACHE_MANIFEST="$WORK_DIR/partial-cache/manifest.json"
+ucode -L "$FORKOP_LIB" "$RULESET_CACHE_UC" materialize-config "$WORK_DIR/partial-candidate.json" required
+new_good_path="$(ucode -e 'let fs=require("fs"); let c=json(fs.readfile(ARGV[0])); print(c.route.rule_set[0].path)' "$WORK_DIR/partial-candidate.json")"
+[ "$new_good_path" != "$good_path" ] || fail "candidate reused the active generation's path"
+grep -Fq 'new.test' "$new_good_path" || fail "validated refresh was not selected by the candidate"
+FORKOP_SING_BOX_CONFIG_PATH="$WORK_DIR/partial-config.json" \
+  ucode -L "$FORKOP_LIB" "$RULESET_CACHE_UC" refresh-if-due ||
+    fail "a not-yet-applied generation must request a local retry"
+FORKOP_SING_BOX_CONFIG_PATH="$WORK_DIR/partial-candidate.json" \
+  ucode -L "$FORKOP_LIB" "$RULESET_CACHE_UC" prune-applied
+[ ! -e "$good_path" ] || fail "ACK cleanup retained the previous generation"
 status=0
 PATH="$WORK_DIR/bin:$PATH" RULESET_TEST_SOURCE_JSON="$WORK_DIR/partial-new.json" \
   ucode -L "$FORKOP_LIB" "$RULESET_CACHE_UC" refresh-for-restart || status=$?
@@ -340,8 +360,32 @@ case "$runtime_path" in
   *) fail "low-flash rule-set was not served from runtime storage" ;;
 esac
 
-# If space becomes available later, identical runtime data is promoted to the
-# persistent cache without requiring another rule change or service reload.
+# A successful retry with byte-identical RAM data advances the due clock.
+ucode -e 'let fs=require("fs"); let path=ARGV[0]; let manifest=json(fs.readfile(path));
+for (let key, entry in manifest) entry.last_success=1;
+fs.writefile(path, sprintf("%J", manifest));' "$WORK_DIR/quota-runtime-manifest.json"
+(
+  export PATH="$WORK_DIR/bin:$PATH"
+  export RULESET_TEST_SOURCE_JSON="$WORK_DIR/quota-new.json"
+  export FORKOP_RULESET_CACHE_DIR="$WORK_DIR/quota-cache"
+  export FORKOP_RULESET_CACHE_MANIFEST="$WORK_DIR/quota-cache/manifest.json"
+  export FORKOP_RULESET_RUNTIME_CACHE_DIR="$WORK_DIR/quota-runtime"
+  export FORKOP_RULESET_RUNTIME_MANIFEST="$WORK_DIR/quota-runtime-manifest.json"
+  export FORKOP_PERSISTENT_LIST_CACHE_DIR="$WORK_DIR/quota-list-cache"
+  export FORKOP_PERSISTENT_LIST_CACHE_AVAILABLE_BYTES=8390000
+  status=0
+  ucode -L "$FORKOP_LIB" "$RULESET_CACHE_UC" refresh-if-due || status=$?
+  [ "$status" = 1 ] || fail "unchanged RAM-only data triggered a changed verdict"
+  ucode -e 'let fs=require("fs"); let manifest=json(fs.readfile(ARGV[0]));
+  assert(values(manifest)[0].last_success > 1, "successful RAM refresh did not advance its clock");' "$FORKOP_RULESET_RUNTIME_MANIFEST"
+  status=0
+  RULESET_TEST_SOURCE_JSON="$WORK_DIR/absent.json" \
+    ucode -L "$FORKOP_LIB" "$RULESET_CACHE_UC" refresh-if-due || status=$?
+  [ "$status" = 1 ] || fail "fresh RAM-only data was downloaded again"
+)
+
+# A later promotion uses a separate flash path. Both old references remain
+# readable until the promoted configuration is acknowledged.
 PATH="$WORK_DIR/bin:$PATH" \
 RULESET_TEST_SOURCE_JSON="$WORK_DIR/quota-new.json" \
 FORKOP_RULESET_CACHE_DIR="$WORK_DIR/quota-cache" \
@@ -351,8 +395,14 @@ FORKOP_RULESET_RUNTIME_MANIFEST="$WORK_DIR/quota-runtime-manifest.json" \
 FORKOP_PERSISTENT_LIST_CACHE_DIR="$WORK_DIR/quota-list-cache" \
 FORKOP_PERSISTENT_LIST_CACHE_AVAILABLE_BYTES=33554432 \
   ucode -L "$FORKOP_LIB" "$RULESET_CACHE_UC" refresh >/dev/null 2>&1 || true
-grep -Fq 'quota-new.test' "$persistent_path" ||
+promoted_path="$(ucode -e 'let fs=require("fs"); print(values(json(fs.readfile(ARGV[0])))[0].path)' "$WORK_DIR/quota-cache/manifest.json")"
+[ "$promoted_path" != "$persistent_path" ] ||
+  fail "RAM promotion reused the old flash generation's path"
+grep -Fq 'quota-new.test' "$promoted_path" ||
   fail "runtime rule-set was not promoted when flash space became available"
-[ ! -e "$runtime_path" ] || fail "promoted runtime rule-set copy was not removed"
+grep -Fq 'quota-old.test' "$persistent_path" ||
+  fail "RAM promotion changed the previous flash file"
+grep -Fq 'quota-new.test' "$runtime_path" ||
+  fail "RAM promotion removed a file referenced by the live config before ACK"
 
 printf 'ruleset cache checks passed\n'

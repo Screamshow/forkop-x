@@ -10,6 +10,7 @@ import {
 import { StartRecoveryNotificationController } from './startRecoveryNotification.service';
 import { getLogErrorMessage } from './logErrorMessage.service';
 import { ForkopShellMethods } from '../methods';
+import { isReadOnlyForkopView } from '../methods/shell/readForkopStatus';
 import {
   registerRuntimeStateResumeRefresh,
   startRuntimeUiStatePolling,
@@ -179,6 +180,12 @@ export function coreService(options: CoreServiceOptions = {}) {
     });
   });
 
+  if (isReadOnlyForkopView()) {
+    registerRuntimeStateResumeRefresh();
+    startRuntimeUiStatePolling();
+    return;
+  }
+
   const watcher = ForkopLogWatcher.getInstance();
   const logNotificationDeduper = new LogNotificationDeduper();
   const startRecoveryNotifications = new StartRecoveryNotificationController(
@@ -197,7 +204,7 @@ export function coreService(options: CoreServiceOptions = {}) {
         return logs.data as string;
       }
 
-      return '';
+      return undefined;
     },
     {
       intervalMs: LOG_WATCHER_INTERVAL_MS,

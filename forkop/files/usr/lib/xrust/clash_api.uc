@@ -31,17 +31,42 @@ function listen_address() {
 }
 
 function local_request_address() {
-    let address = listen_address();
-    if (address == LOOPBACK)
-        return LOOPBACK;
-
-    // LAN may have come up since generation. Honor the published loopback
-    // binding until Xrust is restarted, without trusting an arbitrary host
-    // from an older configuration.
+    // Read the applied bind, since netifd may already report a different LAN
+    // address while the old core still owns the listener.
     let path = trim(split(fs.readfile(xrust.APPLIED_CONFIG_PATH_FILE) || "", "\n")[0]);
     let config = path == "" ? null : common.read_json_file(path);
-    let controller = config?.experimental?.clash_api?.external_controller;
-    return controller == LOOPBACK + ":9090" ? LOOPBACK : address;
+    let controller = common.as_string(config?.experimental?.clash_api?.external_controller);
+    let fields = match(controller, /^([0-9.]+):9090$/);
+    if (fields && core_ip.valid_ipv4(fields[1], false, true))
+        return fields[1] == "0.0.0.0" ? LOOPBACK : fields[1];
+    return listen_address();
 }
 
-return { listen_address, local_request_address };
+function latency_args(endpoint, timeout) {
+    // The core receives milliseconds. Allow HTTP overhead while keeping
+    // curl bounded even if the local controller stops responding.
+    let milliseconds = int(timeout);
+    if (milliseconds <= 0)
+        milliseconds = 5000;
+    return [ "curl", "--max-time", common.as_string(int(milliseconds / 1000) + 3), "-G", "-fs", endpoint ];
+}
+
+function valid_latency(value) {
+    return type(value) == "int" && value > 0;
+}
+
+function parse_latency(output, group) {
+    let value;
+    try { value = json(output); }
+    catch (e) { return null; }
+    if (type(value) != "object")
+        return null;
+    if (!group)
+        return valid_latency(value.delay) ? value : null;
+    for (let _, delay in value)
+        if (valid_latency(delay))
+            return value;
+    return null;
+}
+
+return { listen_address, local_request_address, latency_args, parse_latency };

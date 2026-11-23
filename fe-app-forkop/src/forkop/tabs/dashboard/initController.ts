@@ -2,7 +2,8 @@ import {
   observeConnections,
   closedConnections,
 } from '../../services/connectionHistory';
-import { pollDashboardMetrics } from './metricsPolling';
+import { isDashboardSnapshot, pollDashboardMetrics } from './metricsPolling';
+import { startDirectConnections } from '../monitoring/connectionsTransport';
 import {
   getClashWsUrl,
   canUseDirectClashApi,
@@ -12,6 +13,7 @@ import {
 import { showToast } from '../../../helpers/showToast';
 import { prettyBytes } from '../../../helpers/prettyBytes';
 import { CustomForkopMethods, ForkopShellMethods } from '../../methods';
+import { isReadOnlyForkopView } from '../../methods/shell/readForkopStatus';
 import {
   logger,
   markUiActionOwned,
@@ -60,7 +62,6 @@ let dashboardDataUpdatesId = 0;
 let dashboardSocketUnsubscribes: Array<() => void> = [];
 let pageUnloading = false;
 let stopMetricsPolling: (() => void) | null = null;
-let socketConnectTimer: ReturnType<typeof setTimeout> | null = null;
 const followedSubscriptionJobs = new Set<string>();
 const followedLatencyJobs = new Set<string>();
 const handledSubscriptionJobs = new Set<string>();
@@ -496,8 +497,6 @@ function startMetricsPolling(dataUpdatesId: number) {
       getDashboardServiceAvailability() === 'stopped'
     )
       return;
-    if (socketConnectTimer) clearTimeout(socketConnectTimer);
-    socketConnectTimer = null;
     for (const unsubscribe of dashboardSocketUnsubscribes) unsubscribe();
     dashboardSocketUnsubscribes = [];
     stopMetricsPolling = pollDashboardMetrics(
@@ -558,102 +557,65 @@ function connectToClashSockets(dataUpdatesId: number) {
     return;
   }
 
-  if (
-    !dashboardMounted ||
-    dataUpdatesId !== dashboardDataUpdatesId ||
-    getDashboardServiceAvailability() === 'stopped'
-  ) {
-    return;
-  }
-
-  let trafficReceived = false;
-  let connectionsReceived = false;
-  socketConnectTimer = setTimeout(() => {
-    if (!trafficReceived || !connectionsReceived)
-      startMetricsPolling(dataUpdatesId);
-  }, 5000);
-
-  dashboardSocketUnsubscribes.push(
-    socket.subscribe(
-      `${getClashWsUrl()}/traffic`,
-      (msg) => {
-        if (
-          dataUpdatesId !== dashboardDataUpdatesId ||
-          getDashboardServiceAvailability() === 'stopped'
-        ) {
-          return;
-        }
-
-        trafficReceived = true;
-        const parsedMsg = JSON.parse(msg);
-
-        store.set({
-          bandwidthWidget: {
-            loading: false,
-            failed: false,
-            data: { up: parsedMsg.up, down: parsedMsg.down },
-          },
-        });
-      },
-      (_err) => {
-        if (
-          dataUpdatesId !== dashboardDataUpdatesId ||
-          getDashboardServiceAvailability() === 'stopped'
-        ) {
-          return;
-        }
-
-        startMetricsPolling(dataUpdatesId);
-      },
-    ),
-  );
+  const isCurrent = () =>
+    dashboardMounted &&
+    dataUpdatesId === dashboardDataUpdatesId &&
+    getDashboardServiceAvailability() !== 'stopped';
+  const onFallback = () => startMetricsPolling(dataUpdatesId);
+  const subscribe = (path: string, onData: (message: string) => void) =>
+    startDirectConnections({
+      isCurrent,
+      onData,
+      onFallback,
+      subscribe: (onMessage, onError) =>
+        socket.subscribe(getClashWsUrl() + path, onMessage, onError),
+    });
 
   dashboardSocketUnsubscribes.push(
-    socket.subscribe(
-      `${getClashWsUrl()}/connections`,
-      (msg) => {
-        if (
-          dataUpdatesId !== dashboardDataUpdatesId ||
-          getDashboardServiceAvailability() === 'stopped'
-        ) {
-          return;
-        }
+    subscribe('/traffic', (message) => {
+      const data = JSON.parse(message);
+      if (
+        ![data?.up, data?.down].every(
+          (value) =>
+            typeof value === 'number' && Number.isFinite(value) && value >= 0,
+        )
+      )
+        throw new Error('Invalid traffic statistics');
 
-        connectionsReceived = true;
-        const parsedMsg = JSON.parse(msg);
-        observeConnections(parsedMsg.connections);
+      store.set({
+        bandwidthWidget: {
+          loading: false,
+          failed: false,
+          data: { up: data.up, down: data.down },
+        },
+      });
+    }),
+    subscribe('/connections', (message) => {
+      const data: unknown = JSON.parse(message);
+      if (!isDashboardSnapshot(data))
+        throw new Error('Invalid core statistics');
 
-        store.set({
-          trafficTotalWidget: {
-            loading: false,
-            failed: false,
-            data: {
-              downloadTotal: parsedMsg.downloadTotal,
-              uploadTotal: parsedMsg.uploadTotal,
-            },
+      observeConnections(data.connections);
+      store.set({
+        trafficTotalWidget: {
+          loading: false,
+          failed: false,
+          data: {
+            downloadTotal: data.downloadTotal,
+            uploadTotal: data.uploadTotal,
           },
-          systemInfoWidget: {
-            loading: false,
-            failed: false,
-            data: {
-              connections: parsedMsg.connections?.length,
-              closedConnections: closedConnections.size,
-              memory: parsedMsg.memory,
-            },
+        },
+        systemInfoWidget: {
+          loading: false,
+          failed: false,
+          data: {
+            connections: data.connections.length,
+            closedConnections: closedConnections.size,
+            memory: data.memory,
           },
-        });
-      },
-      (_err) => {
-        if (
-          dataUpdatesId !== dashboardDataUpdatesId ||
-          getDashboardServiceAvailability() === 'stopped'
-        ) {
-          return;
-        }
-
-        startMetricsPolling(dataUpdatesId);
-      },
-    ),
+        },
+      });
+    }),
   );
 }
 
@@ -679,8 +641,6 @@ function stopDashboardDataUpdates() {
   sectionsRefreshQueued = false;
   stopMetricsPolling?.();
   stopMetricsPolling = null;
-  if (socketConnectTimer) clearTimeout(socketConnectTimer);
-  socketConnectTimer = null;
   for (const unsubscribe of dashboardSocketUnsubscribes) unsubscribe();
   dashboardSocketUnsubscribes = [];
 }
@@ -720,7 +680,7 @@ function syncDashboardServiceAvailability() {
 
 // Handlers
 
-async function handleChooseOutbound(
+export async function handleChooseOutbound(
   sectionName: string,
   selector: string,
   tag: string,
@@ -743,9 +703,18 @@ async function handleChooseOutbound(
   setSelectorSwitching(sectionName, tag);
 
   try {
-    await ForkopShellMethods.setClashApiGroupProxy(selector, tag);
-    await fetchDashboardSections({ force: true });
+    const result = await ForkopShellMethods.setClashApiGroupProxy(
+      selector,
+      tag,
+    );
+    if (!result.success) throw new Error(result.error);
+    if (!result.data?.success)
+      throw new Error(result.data?.message || 'Core rejected the selection');
+  } catch (error) {
+    logger.error('[DASHBOARD]', 'handleChooseOutbound: failed', error);
+    if (!pageUnloading) showToast(_('Failed to select server'), 'error');
   } finally {
+    await fetchDashboardSections({ force: true });
     setSelectorSwitching(sectionName);
   }
 }
@@ -1074,6 +1043,7 @@ function renderUrlTestInfoModal(outbound: Forkop.Outbound) {
         {
           type: 'button',
           class: 'btn cbi-button cbi-button-action',
+          disabled: isReadOnlyForkopView() || undefined,
           click: () => renderUrlTestEditorModal(outbound),
         },
         _('Edit'),
@@ -1833,7 +1803,7 @@ async function renderSystemInfoWidget() {
         value: String(systemInfoWidget.data.connections),
       },
       {
-        key: _('Closed Connections'),
+        key: _('Closed in history'),
         value: String(systemInfoWidget.data.closedConnections ?? 0),
       },
     ],

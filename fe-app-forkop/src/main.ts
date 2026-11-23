@@ -21,8 +21,14 @@ export { parseValueList } from './helpers/parseValueList';
 export { getProxyUrlName } from './helpers/getProxyUrlName';
 export { injectGlobalStyles } from './helpers/injectGlobalStyles';
 export { showToast } from './helpers/showToast';
+export { pollLuciTab } from './forkop/helpers/pollLuciTab';
 export { getClashUIUrl } from './helpers/getClashApiUrl';
 export { ForkopShellMethods } from './forkop/methods/shell';
+export {
+  isReadOnlyForkopView,
+  readForkopStatus,
+  writeForkopUi,
+} from './forkop/methods/shell/readForkopStatus';
 export { coreService } from './forkop/services/core.service';
 export { store } from './forkop/services/store.service';
 export { applyUiStateToStore } from './forkop/services/uiState.service';

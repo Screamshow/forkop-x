@@ -3,6 +3,7 @@ set -eu
 LIB=${FORKOP_LIB:-/usr/lib/forkop}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT HUP INT TERM
+export FORKOP_RUNTIME_LIST_GENERATION_DIR="$WORK/runtime-generation"
 mkdir -p "$WORK/runtime" "$WORK/persistent"
 printf '{"version":3,"rules":[{"domain_suffix":["iana.org"]}]}' > "$WORK/runtime/baseline-lists-ruleset.json"
 printf 'stale-cache' > "$WORK/persistent/manifest.json"

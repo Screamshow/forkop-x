@@ -1,5 +1,9 @@
 import { startDirectConnections } from './connectionsTransport';
 import {
+  isReadOnlyForkopView,
+  readForkopRuntimeConfig,
+} from '../../methods/shell/readForkopStatus';
+import {
   activeConnections,
   closedConnections,
   moveConnectionToClosed,
@@ -24,6 +28,7 @@ import { logger, socket, store, StoreType } from '../../services';
 import { Forkop } from '../../types';
 import { formatRouteReason } from './routeReason';
 import { customRulesetTag, customRulesetLabel } from './rulesetLabels';
+import { getConnectionPage, reconcileRows } from './reconcileRows';
 import {
   createRuntimeRouteRulesLoader,
   expandRouteConditions,
@@ -42,10 +47,11 @@ import {
 let runtimeRouteRules: RuntimeRouteRule[] = [];
 const expandedRouteConditions = new Map<string, string>();
 const runtimeRouteRulesLoader = createRuntimeRouteRulesLoader(
-  (path) => fs.read(path),
+  readForkopRuntimeConfig,
   (rules) => {
     runtimeRouteRules = rules;
     expandedRouteConditions.clear();
+    rowPresentationRevision++;
     if (monitoringMounted) renderConnections();
   },
 );
@@ -94,6 +100,9 @@ let connectionsUpdatesId = 0;
 let renderSkippedForSelection = false;
 let pendingConnectionsPayload: ClashConnectionsPayload | null = null;
 let pollingConnections = false;
+let connectionPage = 0;
+let rowPresentationRevision = 0;
+let tableView: ReturnType<typeof renderConnectionsTable> | undefined;
 
 let activeTab: MonitoringTabId = 'active';
 let selectedDeviceFilter = ALL_FILTER_VALUE;
@@ -464,6 +473,7 @@ function setTab(tab: MonitoringTabId) {
   }
 
   activeTab = tab;
+  connectionPage = 0;
   renderControls();
   renderConnections();
 }
@@ -584,6 +594,7 @@ function renderControls() {
   if (closeAllButton) {
     closeAllButton.replaceChildren(renderXIcon24());
     closeAllButton.disabled =
+      isReadOnlyForkopView() ||
       serviceAvailability !== 'running' ||
       failed ||
       loading ||
@@ -702,7 +713,7 @@ function renderConnectionRow(connection: MonitoredConnection) {
   const source = getSourceCellParts(connection);
   const isClosing = closingConnectionIds.has(connection.id);
   const closeButton =
-    activeTab === 'active'
+    activeTab === 'active' && !isReadOnlyForkopView()
       ? E(
           'button',
           {
@@ -717,7 +728,10 @@ function renderConnectionRow(connection: MonitoredConnection) {
         )
       : E('span', {}, '-');
 
-  return E(
+  const age = renderValue(formatConnectionDuration(connection));
+  const downloaded = renderValue(formatBytes(connection.download));
+  const uploaded = renderValue(formatBytes(connection.upload));
+  const node = E(
     'div',
     {
       class: [
@@ -741,19 +755,63 @@ function renderConnectionRow(connection: MonitoredConnection) {
           getFullRouteRule(connection),
         ),
       ]),
-      renderTableCell(_('Time'), [
-        renderValue(formatConnectionDuration(connection)),
-      ]),
-      renderTableCell(_('Downloaded'), [
-        renderValue(formatBytes(connection.download)),
-      ]),
-      renderTableCell(_('Uploaded'), [
-        renderValue(formatBytes(connection.upload)),
-      ]),
+      renderTableCell(_('Time'), [age]),
+      renderTableCell(_('Downloaded'), [downloaded]),
+      renderTableCell(_('Uploaded'), [uploaded]),
       renderTableCell(_('Source'), [renderSourceValue(source)]),
       renderTableCell(_('Close'), [closeButton]),
     ],
   );
+  return { node, age, downloaded, uploaded, closeButton };
+}
+
+type ConnectionRow = ReturnType<typeof renderConnectionRow> & {
+  key: string;
+  connection: MonitoredConnection;
+};
+
+function setRowValue(element: HTMLElement, text: string) {
+  if (element.textContent === text) return;
+  element.textContent = text;
+  element.title = text;
+  element.setAttribute('data-copy-value', text);
+}
+
+function updateConnectionRow(
+  connection: MonitoredConnection,
+  previous?: ConnectionRow,
+): ConnectionRow {
+  const { metadata, rule, rulePayload, chains, id } = connection;
+  const key = JSON.stringify([
+    rowPresentationRevision,
+    activeTab,
+    isReadOnlyForkopView(),
+    rule,
+    rulePayload,
+    chains,
+    Boolean(metadata),
+    metadata?.host,
+    metadata?.sniffHost,
+    metadata?.destinationIP,
+    metadata?.destinationPort,
+    metadata?.sourceIP,
+    metadata?.network,
+  ]);
+  if (!previous || previous.key !== key) {
+    return { ...renderConnectionRow(connection), key, connection };
+  }
+  previous.connection = connection;
+  const isClosing = closingConnectionIds.has(id);
+  previous.node.classList.toggle(
+    'fkp_monitoring-page__row--closing',
+    isClosing,
+  );
+  if (previous.closeButton instanceof HTMLButtonElement)
+    previous.closeButton.disabled = isClosing;
+  setRowValue(previous.downloaded, formatBytes(connection.download));
+  setRowValue(previous.uploaded, formatBytes(connection.upload));
+  setRowValue(previous.age, formatConnectionDuration(connection));
+  return previous;
 }
 
 function renderStateRow(text: string, className = '') {
@@ -787,15 +845,12 @@ function renderStateRow(text: string, className = '') {
   );
 }
 
-function renderConnectionsTable(
-  connections: MonitoredConnection[],
-  state?: { text: string; className?: string },
-) {
-  const rows = state
-    ? [renderStateRow(state.text, state.className)]
-    : connections.map(renderConnectionRow);
-
-  return E('div', { class: 'fkp_monitoring-page__table-wrap' }, [
+function renderConnectionsTable() {
+  const rows = E('div', {
+    class: 'fkp_monitoring-page__rows',
+    role: 'rowgroup',
+  });
+  const root = E('div', { class: 'fkp_monitoring-page__table-wrap' }, [
     E(
       'div',
       {
@@ -829,14 +884,48 @@ function renderConnectionsTable(
             ),
           ),
         ]),
-        E(
-          'div',
-          { class: 'fkp_monitoring-page__rows', role: 'rowgroup' },
-          rows,
-        ),
+        rows,
       ],
     ),
   ]);
+  const previous = E(
+    'button',
+    { type: 'button', class: 'cbi-button' },
+    _('Previous page'),
+  ) as HTMLButtonElement;
+  const next = E(
+    'button',
+    { type: 'button', class: 'cbi-button' },
+    _('Next page'),
+  ) as HTMLButtonElement;
+  const pageNumber = E('span');
+  pageNumber.setAttribute('aria-live', 'polite');
+  const pager = E(
+    'div',
+    {
+      style:
+        'display:none;align-items:center;gap:0.75rem;justify-content:center;margin-top:0.75rem',
+    },
+    [previous, pageNumber, next],
+  );
+  previous.onclick = () => {
+    connectionPage--;
+    renderConnections({ force: true });
+  };
+  next.onclick = () => {
+    connectionPage++;
+    renderConnections({ force: true });
+  };
+  return {
+    root,
+    rows,
+    pager,
+    previous,
+    next,
+    pageNumber,
+    visibleRows: new Map<string, ConnectionRow>(),
+    stateKey: '',
+  };
 }
 
 function isNodeInsideMonitoring(node: Node | null): boolean {
@@ -868,55 +957,79 @@ function renderConnections(options: { force?: boolean } = {}) {
   }
 
   renderSkippedForSelection = false;
-  const previousScrollLeft = container.scrollLeft;
-
+  if (tableView?.root.parentNode !== container) {
+    tableView = renderConnectionsTable();
+    container.replaceChildren(tableView.root, tableView.pager);
+  }
+  let state: { text: string; className?: string } | undefined;
   if (serviceAvailability === 'stopped') {
-    container.replaceChildren(
-      renderConnectionsTable([], {
-        text: _(
-          'Forkop service is stopped. Start the service to display connections.',
-        ),
-      }),
-    );
+    state = {
+      text: _(
+        'Forkop service is stopped. Start the service to display connections.',
+      ),
+    };
+  } else if (loading) {
+    state = {
+      text: _('Loading connections'),
+      className: 'fkp_monitoring-page__state--loading',
+    };
+  } else if (failed) {
+    state = {
+      text: _('Connections are unavailable'),
+      className: 'fkp_monitoring-page__state--error',
+    };
+  }
+
+  const connections = state ? [] : getVisibleConnections();
+  if (!connections.length) {
+    const text =
+      state?.text ??
+      (activeTab === 'active'
+        ? _('No active connections')
+        : _('No closed connections'));
+    const key = text + (state?.className || '');
+    if (tableView.stateKey !== key) {
+      tableView.rows.replaceChildren(renderStateRow(text, state?.className));
+      tableView.visibleRows.clear();
+      tableView.stateKey = key;
+    }
+    tableView.pager.style.display = 'none';
     return;
   }
 
-  if (loading) {
-    container.replaceChildren(
-      renderConnectionsTable([], {
-        text: _('Loading connections'),
-        className: 'fkp_monitoring-page__state--loading',
-      }),
-    );
-    return;
+  if (tableView.stateKey) {
+    tableView.rows.replaceChildren();
+    tableView.stateKey = '';
   }
+  const { page, pages, visible } = getConnectionPage(
+    connections,
+    connectionPage,
+  );
+  connectionPage = page;
+  tableView.pager.style.display = pages > 1 ? 'flex' : 'none';
+  tableView.previous.disabled = connectionPage === 0;
+  tableView.next.disabled = connectionPage >= pages - 1;
+  const pageNumber = `${connectionPage + 1} / ${pages}`;
+  if (tableView.pageNumber.textContent !== pageNumber)
+    tableView.pageNumber.textContent = pageNumber;
+  tableView.visibleRows = reconcileRows(
+    tableView.rows,
+    tableView.visibleRows,
+    visible,
+    (connection) => connection.id,
+    updateConnectionRow,
+  );
+}
 
-  if (failed) {
-    container.replaceChildren(
-      renderConnectionsTable([], {
-        text: _('Connections are unavailable'),
-        className: 'fkp_monitoring-page__state--error',
-      }),
-    );
+function refreshConnectionAges() {
+  if (
+    monitoringPaused ||
+    activeTab === 'closed' ||
+    isTextSelectionInsideMonitoring()
+  )
     return;
-  }
-
-  const visibleConnections = getVisibleConnections();
-
-  if (visibleConnections.length === 0) {
-    container.replaceChildren(
-      renderConnectionsTable([], {
-        text:
-          activeTab === 'active'
-            ? _('No active connections')
-            : _('No closed connections'),
-      }),
-    );
-    return;
-  }
-
-  container.replaceChildren(renderConnectionsTable(visibleConnections));
-  container.scrollLeft = previousScrollLeft;
+  for (const row of tableView?.visibleRows.values() || [])
+    setRowValue(row.age, formatConnectionDuration(row.connection));
 }
 
 function flushRenderAfterSelection() {
@@ -1183,7 +1296,7 @@ async function closeConnection(connectionId: string) {
   }
 }
 
-async function closeAllConnections() {
+export async function closeAllConnections() {
   if (activeConnections.size === 0 || closingAll) {
     return;
   }
@@ -1199,13 +1312,8 @@ async function closeAllConnections() {
       return;
     }
 
-    const now = Date.now();
-    activeConnections.forEach((connection) => {
-      moveConnectionToClosed(connection, now);
-    });
-    activeConnections.clear();
-    pendingConnectionsPayload = null;
-    trimClosedConnections();
+    // The API does not return which connections it closed. The snapshot stream
+    // reconciles both maps, including connections that arrived during the request.
   } catch (error) {
     logger.error('[MONITORING]', 'closeAllConnections: failed', error);
     showToast(_('Failed to close connections'), 'error');
@@ -1255,6 +1363,7 @@ function bindControls() {
   if (select) {
     select.onchange = () => {
       selectedDeviceFilter = select.value || ALL_FILTER_VALUE;
+      connectionPage = 0;
       renderConnections();
     };
   }
@@ -1262,6 +1371,7 @@ function bindControls() {
   if (searchInput) {
     searchInput.oninput = () => {
       searchQuery = searchInput.value;
+      connectionPage = 0;
       renderConnections();
     };
   }
@@ -1287,6 +1397,7 @@ async function loadLocalDevices() {
     logger.warn('[MONITORING]', 'loadLocalDevices: failed', error);
     localDeviceChoices = {};
   } finally {
+    rowPresentationRevision++;
     renderControls();
     renderConnections();
   }
@@ -1299,6 +1410,7 @@ async function loadRouteDisplayNames() {
     logger.warn('[MONITORING]', 'loadRouteDisplayNames: failed', error);
     buildRouteDisplayNames([]);
   } finally {
+    rowPresentationRevision++;
     renderControls();
     renderConnections();
   }
@@ -1470,6 +1582,9 @@ function watchServiceState() {
       legacyConfigRequested = false;
     } else if (uiState.runtime_config) {
       void runtimeRouteRulesLoader.load(uiState.runtime_config);
+    } else if (uiState.runtime_config === null) {
+      runtimeRouteRulesLoader.clear();
+      legacyConfigRequested = false;
     } else if (uiState.runtime_config === undefined && !legacyConfigRequested) {
       // Older backend packages only expose the configured path through UCI.
       legacyConfigRequested = true;
@@ -1500,6 +1615,7 @@ function watchServiceState() {
 
 function resetMonitoringState() {
   activeTab = 'active';
+  connectionPage = 0;
   selectedDeviceFilter = ALL_FILTER_VALUE;
   searchQuery = '';
   lastDeviceFilterSignature = '';
@@ -1553,18 +1669,13 @@ async function onPageMount() {
   document.addEventListener('selectionchange', flushRenderAfterSelection);
   document.addEventListener('copy', handleMonitoringValueCopy);
 
-  renderTimer = setInterval(() => {
-    if (monitoringPaused) {
-      return;
-    }
-
-    renderConnections();
-  }, RENDER_INTERVAL_MS);
+  renderTimer = setInterval(refreshConnectionAges, RENDER_INTERVAL_MS);
 }
 
 function onPageUnmount() {
   monitoringMounted = false;
   monitoringMountId += 1;
+  tableView = undefined;
   runtimeRouteRulesLoader.clear();
 
   if (renderTimer) {

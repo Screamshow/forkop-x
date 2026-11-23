@@ -72,7 +72,7 @@ if (mode == "sing-box-service-runtime-pid") {
     print(fs.readfile(getenv("TEST_PID_FILE")) || "123\n");
     exit(0);
 }
-if (mode == "sing-box-owned-service-kind")
+if (mode == "sing-box-owned-service-kind" || mode == "xrust-watchdog-runtime-kind")
     print("current\n");
 exit(0);
 EOF_STATE
@@ -145,6 +145,8 @@ export FORKOP_UI_STATE_DIR="$WORK_DIR/ui"
 export FORKOP_UI_COMPONENT_ACTION_DIR="$WORK_DIR/components"
 export FORKOP_UI_SUBSCRIPTION_ACTION_DIR="$WORK_DIR/subscriptions"
 export FORKOP_LIB FORKOP_UCI_STATE_FILE="$WORK_DIR/uci.state"
+export FORKOP_RUNTIME_STATE_DIR="$WORK_DIR/runtime"
+mkdir "$FORKOP_RUNTIME_STATE_DIR"
 export FORKOP_SERVICE_STATE_UC="$WORK_DIR/state-stub.uc"
 export FORKOP_AUTOMATIC_LATENCY_PENDING_FILE="$WORK_DIR/automatic-latency.pending"
 export FORKOP_AUTOMATIC_LATENCY_TEST_LOCK_DIR="$WORK_DIR/latency.lock"

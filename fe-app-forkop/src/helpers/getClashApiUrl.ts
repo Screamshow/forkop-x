@@ -1,3 +1,5 @@
+import { isReadOnlyForkopView } from '../forkop/methods/shell/readForkopStatus';
+
 function getWindowLocation(): Location | undefined {
   return typeof window !== 'undefined' ? window.location : undefined;
 }
@@ -6,6 +8,7 @@ export function canUseDirectClashApi(): boolean {
   const location = getWindowLocation();
 
   return (
+    !isReadOnlyForkopView() &&
     typeof location?.hostname === 'string' &&
     location.hostname !== '' &&
     location.protocol !== 'https:'

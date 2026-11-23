@@ -491,6 +491,41 @@ function extract_ip_cidr_nft_elements(json_path, unscoped_output_path, scoped_ou
     write_lines(scoped_output_path, scoped_lines);
 }
 
+// For an exact projection each matching branch can have at most one
+// destination-CIDR condition. Transport-only conditions can narrow an AND.
+function nft_projection_ip_terms(rule) {
+    if (type(rule) != "object" || rule.invert)
+        return -1;
+    if (rule.type != "logical") {
+        for (let key in keys(rule))
+            if (index([ "type", "invert", "ip_cidr", "network", "port", "port_range" ], key) < 0)
+                return -1;
+        return length(array_from_value(rule.ip_cidr)) > 0 ? 1 : 0;
+    }
+
+    for (let key in keys(rule))
+        if (index([ "type", "invert", "mode", "rules" ], key) < 0)
+            return -1;
+    if ((rule.mode != "and" && rule.mode != "or") || !length(array_or_empty(rule.rules)))
+        return -1;
+
+    let terms = null;
+    for (let child in rule.rules) {
+        let child_terms = nft_projection_ip_terms(child);
+        if (child_terms < 0)
+            return -1;
+        if (terms == null)
+            terms = child_terms;
+        else if (rule.mode == "and")
+            terms += child_terms;
+        else if (terms != child_terms)
+            return -1;
+        if (terms > 1)
+            return -1;
+    }
+    return terms;
+}
+
 // Keep the old two-output API for callers which only need IP/port extraction.
 // nft consumers use these additional transport-specific outputs instead.
 function extract_ip_cidr_nft_protocol_elements(json_path, unscoped_path, scoped_path, ports_text, port_ranges_text) {
@@ -501,7 +536,14 @@ function extract_ip_cidr_nft_protocol_elements(json_path, unscoped_path, scoped_
     });
     let tcp = { ips: {}, ports: {} };
     let udp = { ips: {}, ports: {} };
+    let needs_core_match = false;
     for (let rule in array_or_empty(ruleset.rules)) {
+        // An nft shortcut must be exact, including for bypass. Hand rules
+        // without a separable destination CIDR projection to Xrust.
+        if (nft_projection_ip_terms(rule) != 1) {
+            needs_core_match = true;
+            continue;
+        }
         collect_ip_cidr_nft_outputs(rule, outer_filter, tcp.ips, tcp.ports, "tcp");
         collect_ip_cidr_nft_outputs(rule, outer_filter, udp.ips, udp.ports, "udp");
     }
@@ -528,6 +570,7 @@ function extract_ip_cidr_nft_protocol_elements(json_path, unscoped_path, scoped_
     write_lines(scoped_path, common_ports);
     write_lines(scoped_path + ".tcp", tcp.ports);
     write_lines(scoped_path + ".udp", udp.ports);
+    return needs_core_match;
 }
 
 function value_has_domain_matchers(value) {

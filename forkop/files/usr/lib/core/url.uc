@@ -4,6 +4,19 @@ let common = require("core.common");
 
 let as_string = common.as_string;
 
+function encode(value) {
+    value = as_string(value);
+    let result = "";
+    for (let i = 0; i < length(value); i++) {
+        let byte = substr(value, i, 1);
+        let code = ord(byte);
+        let plain = (code >= 48 && code <= 57) || (code >= 65 && code <= 90) ||
+            (code >= 97 && code <= 122) || byte == "-" || byte == "_" || byte == "." || byte == "~";
+        result += plain ? byte : sprintf("%%%02X", code);
+    }
+    return result;
+}
+
 function first_index_any(value, needles, start) {
     value = as_string(value);
     start = int(start || 0);
@@ -184,6 +197,7 @@ function query_params(value) {
 
 return {
     decode,
+    encode,
     scheme,
     fragment,
     strip_fragment,

@@ -19,7 +19,7 @@ type Snapshot = {
   memory: number;
 };
 
-function isSnapshot(value: unknown): value is Snapshot {
+export function isDashboardSnapshot(value: unknown): value is Snapshot {
   if (!value || typeof value !== 'object') return false;
   const data = value as Snapshot;
   return (
@@ -50,7 +50,7 @@ export function pollDashboardMetrics(
       }
       const response = await request();
       if (stopped) return;
-      if (!response.success || !isSnapshot(response.data)) {
+      if (!response.success || !isDashboardSnapshot(response.data)) {
         throw new Error('Invalid core statistics');
       }
       const data = response.data;

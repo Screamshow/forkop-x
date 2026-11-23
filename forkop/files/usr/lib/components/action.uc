@@ -465,7 +465,7 @@ function pkg_install_files_command(files) {
         args = [ "apk", "--preserve-env", "add", "--allow-untrusted" ];
     for (let file in files)
         push(args, file);
-    return (forkop_package_init != "" ? command_env({ FORKOP_INIT: forkop_package_init }) + " " : "") +
+    return command_env({ FORKOP_MIRROR_BASE_URL, FORKOP_INIT: forkop_package_init || SERVICE_INIT }) + " " +
         command_from_args(args) + " </dev/null";
 }
 
@@ -477,53 +477,64 @@ function ipk_unpacked_bytes(path) {
     return int(trim(command_output(command)));
 }
 
-function staged_package_field(path, field) {
+let staged_package_metadata_cache = {};
+
+function staged_package_metadata(path) {
+    let stat = fs.stat(path);
+    if (stat == null || stat.size <= 0)
+        return {};
+    let signature = join(":", [ stat.inode, stat.size, stat.mtime, stat.ctime ]);
+    let cached = staged_package_metadata_cache[path];
+    if (cached?.signature == signature)
+        return cached.fields;
+
+    let apk = is_apk();
     let control_archive = "(tar -xzOf " + shell_quote(path) + " control.tar.gz 2>/dev/null || " +
         "tar -xzOf " + shell_quote(path) + " ./control.tar.gz 2>/dev/null)";
     // Both ./control (OpenWrt SDK) and control (Xrust) are valid IPK members.
-    let command = is_apk() ? command_from_args([ "apk", "--allow-untrusted", "adbdump", path ]) :
+    let command = apk ? command_from_args([ "apk", "--allow-untrusted", "adbdump", path ]) :
         "(" + control_archive + " | tar -xzOf - ./control 2>/dev/null || " +
         control_archive + " | tar -xzOf - control 2>/dev/null)";
     let metadata = command_output(command);
-    if (field == "installed-size") {
-        // Measure files stored on flash, including an UPX-packed executable.
-        // Producer metadata may describe an unpacked executable or use KiB.
-        if (!is_apk())
-            return sprintf("%d", ipk_unpacked_bytes(path));
-        let bytes = 0;
-        for (let line in split(metadata, "\n")) {
-            let size = match(line, /^        size: ([0-9]+)$/);
-            if (size != null) bytes += int(size[1]);
-        }
-        return sprintf("%d", bytes);
-    }
-    let key = (is_apk() ? field :
-        field == "name" ? "Package" : field == "version" ? "Version" :
-        field == "arch" ? "Architecture" : field == "depends" ? "Depends" :
-        field == "provides" ? "Provides" : "Installed-Size") + ": ";
+    let fields = { apk };
+    let names = apk ? { name: "name", version: "version", arch: "arch", provides: "provides" } :
+        { Package: "name", Version: "version", Architecture: "arch", Provides: "provides" };
+    let bytes = 0;
     for (let line in split(metadata, "\n")) {
-        line = trim(as_string(line));
-        if (substr(line, 0, length(key)) == key) {
-            let value = trim(substr(line, length(key)));
-            return value;
-        }
+        let size = apk ? match(line, /^        size: ([0-9]+)$/) : null;
+        if (size != null)
+            bytes += int(size[1]);
+        let property = match(trim(as_string(line)), /^(name|version|arch|provides|Package|Version|Architecture|Provides): (.*)$/);
+        let field = property != null ? names[property[1]] : null;
+        if (field != null && fields[field] == null)
+            fields[field] = trim(property[2]);
     }
-    return "";
+    // Measure actual flash files. The package header may use KiB or describe
+    // an executable before UPX packing.
+    if (apk)
+        fields["installed-size"] = bytes;
+    if (metadata != "")
+        staged_package_metadata_cache[path] = { signature, fields };
+    return fields;
+}
+
+function staged_package_field(path, field) {
+    return as_string(staged_package_metadata(path)[field]);
 }
 
 function staged_package_info(path, expected_name, expected_version) {
     if (!file_nonempty(path))
         return null;
-    let name = staged_package_field(path, "name");
-    let version = staged_package_field(path, "version");
-    let arch = staged_package_field(path, "arch");
-    let size = int(staged_package_field(path, "installed-size"));
-    if (name != expected_name || version == "" ||
+    let fields = staged_package_metadata(path);
+    let name = fields.name;
+    let version = fields.version;
+    let arch = fields.arch;
+    if (name != expected_name || as_string(version) == "" ||
         (as_string(expected_version) != "" && version != expected_version) ||
-        arch == "" || size <= 0)
+        as_string(arch) == "")
         return null;
     let supported = arch == "all" || arch == "noarch";
-    if (is_apk()) {
+    if (fields.apk) {
         // apk has a compatibility table which is broader than --print-arch.
         // For example, an OpenWrt 25 aarch64 APK host accepts the
         // aarch64_cortex-a53 package produced for mediatek/filogic.  Comparing
@@ -539,7 +550,11 @@ function staged_package_info(path, expected_name, expected_version) {
                 supported = true;
         }
     }
-    return supported ? { path, name, version, size } : null;
+    if (!supported)
+        return null;
+    fields["installed-size"] = fields["installed-size"] ?? ipk_unpacked_bytes(path);
+    let size = int(fields["installed-size"] || 0);
+    return size > 0 ? { path, name, version, size } : null;
 }
 
 function package_sha256(path) {
@@ -1272,7 +1287,7 @@ function stage_forkop_rollback_packages() {
     let release = selected_forkop_release(forkop_release_version(current.version));
     for (let name in [ "luci-app-forkop", "luci-i18n-forkop-ru", "forkop" ]) {
         let installed = name == "forkop" ? current : read_installed_package_version(name, forkop_package_version_reader);
-        if (name == "luci-i18n-forkop-ru" && installed.state == "missing")
+        if (name != "forkop" && installed.state == "missing")
             continue;
         if (installed.state != "found")
             return null;
@@ -1312,15 +1327,21 @@ function forkop_package_preflight(backend_file, app_file, i18n_file, rollback_pa
         [ i18n_file, "luci-i18n-forkop-ru" ] ]) {
         if (item[0] == "") continue;
         let info = staged_package_info(item[0], item[1], forkop_package_version(version));
-        if (info == null) return "Forkop release package is invalid or incompatible: " + item[1];
+        if (info == null) return { error: "Forkop release package is invalid or incompatible: " + item[1] };
         target_bytes += info.size;
     }
     let rollback_bytes = 0;
-    let recovery_bytes = file_bytes(forkop_configuration_backup || "/etc/config/forkop");
-    for (let item in rollback_packages) {
+    for (let item in rollback_packages)
         rollback_bytes += item.size;
+    return { target_bytes, rollback_bytes };
+}
+
+function forkop_package_preflight_space(plan, rollback_packages) {
+    let target_bytes = plan.target_bytes;
+    let rollback_bytes = plan.rollback_bytes;
+    let recovery_bytes = file_bytes(forkop_configuration_backup || "/etc/config/forkop");
+    for (let item in rollback_packages)
         recovery_bytes += file_bytes(item.path);
-    }
     let overlay_kib = available_kib("/usr/bin");
     let tmp_kib = temporary_available_kib();
     let error = forkop_package_space_error(overlay_kib, tmp_kib, target_bytes, rollback_bytes, recovery_bytes);
@@ -1380,8 +1401,7 @@ function stop_forkop_for_package_restore() {
         xrust_runtime_is_stopped();
 }
 
-function remove_new_forkop_translation(staged) {
-    let name = "luci-i18n-forkop-ru";
+function remove_new_forkop_ui_package(staged, name) {
     for (let archive in staged)
         if (archive.name == name)
             return true;
@@ -1390,7 +1410,7 @@ function remove_new_forkop_translation(staged) {
     if (installed.state == "missing")
         return true;
     if (installed.state == "found" &&
-        run_logged("Removing translation added by the failed upgrade",
+        run_logged("Removing " + name + " added by the failed upgrade",
             command_from_args(is_apk() ? [ "apk", "del", "--no-network", name ] : [ "opkg", "remove", name ]) + " </dev/null") &&
         read_installed_package_version(name, forkop_package_version_reader).state == "missing")
         return true;
@@ -1400,7 +1420,10 @@ function remove_new_forkop_translation(staged) {
 }
 
 function restore_forkop_packages(staged) {
-    let restored = remove_new_forkop_translation(staged);
+    let restored = true;
+    for (let name in [ "luci-i18n-forkop-ru", "luci-app-forkop" ])
+        if (!remove_new_forkop_ui_package(staged, name))
+            restored = false;
     // Keep the backend last, just as in the normal opkg upgrade. Its postinst
     // owns service restoration after the matching LuCI files are back in place.
     if (is_apk()) {
@@ -1408,7 +1431,8 @@ function restore_forkop_packages(staged) {
         for (let archive in staged)
             push(args, archive.path);
         if (!run_logged("Restoring previous Forkop package set",
-            command_env({ FORKOP_INIT: forkop_package_init }) + " " + command_from_args(args) + " </dev/null"))
+            command_env({ FORKOP_INIT: forkop_package_init, FORKOP_PACKAGE_RECOVERY: "1", FORKOP_MIRROR_BASE_URL }) +
+                " " + command_from_args(args) + " </dev/null"))
             restored = false;
     }
     else {
@@ -1642,7 +1666,8 @@ function install_forkop(requested_version) {
     let xrust = stage_forkop_xrust(release, current_xrust, latest_version);
     if (xrust != null)
         unshift(rollback_packages, xrust.rollback);
-    let preflight_error = forkop_package_preflight(backend_file, app_file, i18n_file, rollback_packages, latest_version, xrust);
+    let preflight = forkop_package_preflight(backend_file, app_file, i18n_file, rollback_packages, latest_version, xrust);
+    let preflight_error = preflight.error || forkop_package_preflight_space(preflight, rollback_packages);
     if (preflight_error != "")
         action_fail("forkop", "install", preflight_error, FORKOP_VERSION, latest_version);
     if (!preinstall_release_dependencies([ backend_file, app_file, i18n_file, xrust?.target.path || "" ]))
@@ -1659,7 +1684,7 @@ function install_forkop(requested_version) {
         action_fail("forkop", "install", "Failed to back up Forkop configuration", FORKOP_VERSION, latest_version);
     updates_log("Forkop configuration backup: " + forkop_configuration_backup);
 
-    preflight_error = forkop_package_preflight(backend_file, app_file, i18n_file, rollback_packages, latest_version, xrust);
+    preflight_error = forkop_package_preflight_space(preflight, rollback_packages);
     if (preflight_error != "")
         action_fail("forkop", "install", preflight_error, FORKOP_VERSION, latest_version);
     if (!write_file(tmp_dir + "/.forkop-recovery", "transition\n") ||
@@ -1742,6 +1767,11 @@ function install_forkop(requested_version) {
     action_success("forkop", "install", "Forkop has been installed", new_version, latest_version, 1, "latest", release.release_url);
 }
 
+function restore_component_option(package_name, path, value) {
+    return (value != "" ? uci_core.set(path, value) :
+        !uci_core.exists(path) || uci_core.delete(path)) && uci_core.commit(package_name);
+}
+
 function set_packet_steering(action) {
     let init_script = "/etc/init.d/packet_steering";
     let config_path = "network.@globals[0].packet_steering";
@@ -1750,11 +1780,15 @@ function set_packet_steering(action) {
 
     if (!file_exists(init_script))
         action_fail("packet_steering", action, "Packet Steering service is not available", current_mode, target_mode);
-    if (!uci_core.available() ||
-        !uci_core.set(config_path, target_mode) ||
-        !uci_core.commit("network") ||
-        !command_success_from_args([ init_script, "restart" ]))
-        action_fail("packet_steering", action, "Failed to apply Packet Steering mode " + target_mode, current_mode, target_mode);
+    if (!uci_core.available())
+        action_fail("packet_steering", action, "UCI is unavailable", current_mode, target_mode);
+    if (!uci_core.set(config_path, target_mode) || !uci_core.commit("network") ||
+        !command_success_from_args([ init_script, "restart" ])) {
+        let restored = restore_component_option("network", config_path, current_mode) &&
+            command_success_from_args([ init_script, "restart" ]);
+        action_fail("packet_steering", action, "Failed to apply Packet Steering mode " + target_mode +
+            (restored ? "" : "; restoring the previous mode failed"), current_mode, target_mode);
+    }
 
     remove_file(SYSTEM_INFO_CACHE_FILE);
     action_success("packet_steering", action,
@@ -1810,37 +1844,67 @@ function set_direct_proxy(action) {
         target_enabled, target_enabled, current_enabled == target_enabled ? 0 : 1, "", "");
 }
 
+function restore_torrserver_table(table, previous) {
+    let active = command_success_from_args([ "nft", "list", "table", "inet", table ]);
+    if (!active && previous == "")
+        return true;
+    let batch = make_tmp_file("torrserver-firewall");
+    if (batch == "")
+        return false;
+    let rules = (active ? "delete table inet " + table + "\n" : "") + previous + "\n";
+    let restored = write_file(batch, rules) && command_success_from_args([ "nft", "-f", batch ]);
+    remove_file(batch);
+    return restored;
+}
+
 function set_torrserver_direct(action) {
     let enabled_path = CONFIG_NAME + ".settings.torrserver_direct_enabled";
-    let current_enabled = trim(uci_core.get(enabled_path)) == "1" ? "1" : "0";
+    let previous_option = trim(uci_core.get(enabled_path));
+    let current_enabled = previous_option == "1" ? "1" : "0";
     let target_enabled = action == "enable" ? "1" : "0";
 
     if (!file_exists(TORRSERVER_DIRECT_INIT) || !file_exists(TORRSERVER_DIRECT_UC))
         action_fail("torrserver_direct", action, "TorrServer Direct service is not available", current_enabled, target_enabled);
     if (target_enabled == "1") {
-        if (!command_success_from_args([ "modprobe", "nft_socket" ]) &&
-            (!run_logged("Installing TorrServer Direct kernel support", pkg_install_name_command("kmod-nft-socket")) ||
-             !command_success_from_args([ "modprobe", "nft_socket" ])))
-            action_fail("torrserver_direct", action, "This firmware does not provide kmod-nft-socket required for TorrServer Direct", current_enabled, target_enabled);
         let status = parse_json_object(module_output([ TORRSERVER_DIRECT_UC, "status" ]));
         if (type(status) != "object" || int(status.running || 0) != 1)
             action_fail("torrserver_direct", action, "TorrServer is not running", current_enabled, target_enabled);
         if (int(status.available || 0) != 1)
             action_fail("torrserver_direct", action, "TorrServer does not have a dedicated cgroup", current_enabled, target_enabled);
+        if (!command_success_from_args([ "modprobe", "nft_socket" ]) &&
+            (!run_logged("Installing TorrServer Direct kernel support", pkg_install_name_command("kmod-nft-socket")) ||
+             !command_success_from_args([ "modprobe", "nft_socket" ])))
+            action_fail("torrserver_direct", action, "This firmware does not provide kmod-nft-socket required for TorrServer Direct", current_enabled, target_enabled);
     }
-    if (!uci_core.available() || !uci_core.set(enabled_path, target_enabled) || !uci_core.commit(CONFIG_NAME))
-        action_fail("torrserver_direct", action, "Failed to save TorrServer Direct settings", current_enabled, target_enabled);
+    let was_enabled = command_success_from_args([ TORRSERVER_DIRECT_INIT, "enabled" ]);
+    let was_running = command_success_from_args([ TORRSERVER_DIRECT_INIT, "running" ]);
+    let table = "ForkopTorrServerDirect";
+    if (!command_success_from_args([ "nft", "list", "tables" ]))
+        action_fail("torrserver_direct", action, "Could not verify the previous firewall state", current_enabled, target_enabled);
+    let tables = command_output_from_args([ "nft", "list", "tables" ]);
+    let had_table = match(tables, /(^|\n)table inet ForkopTorrServerDirect(\n|$)/) != null;
+    let previous_table = command_output_from_args([ "nft", "list", "table", "inet", table ]);
+    if (had_table && previous_table == "")
+        action_fail("torrserver_direct", action, "Could not save the previous firewall state", current_enabled, target_enabled);
+    if (!uci_core.available())
+        action_fail("torrserver_direct", action, "UCI is unavailable", current_enabled, target_enabled);
 
-    let applied = target_enabled == "1"
+    let saved = uci_core.set(enabled_path, target_enabled) && uci_core.commit(CONFIG_NAME);
+    let applied = saved && (target_enabled == "1"
         ? command_success_from_args([ TORRSERVER_DIRECT_INIT, "enable" ]) &&
             command_success_from_args([ TORRSERVER_DIRECT_INIT, "restart" ]) &&
             module_success([ TORRSERVER_DIRECT_UC, "reconcile" ])
         : command_success_from_args([ TORRSERVER_DIRECT_INIT, "stop" ]) &&
-            command_success_from_args([ TORRSERVER_DIRECT_INIT, "disable" ]);
+            command_success_from_args([ TORRSERVER_DIRECT_INIT, "disable" ]) &&
+            !command_success_from_args([ "nft", "list", "table", "inet", table ]));
     if (!applied) {
-        uci_core.set(enabled_path, current_enabled);
-        uci_core.commit(CONFIG_NAME);
-        action_fail("torrserver_direct", action, "Failed to apply TorrServer Direct settings", current_enabled, target_enabled);
+        let config_restored = restore_component_option(CONFIG_NAME, enabled_path, previous_option);
+        let enabled_restored = command_success_from_args([ TORRSERVER_DIRECT_INIT, was_enabled ? "enable" : "disable" ]);
+        let runtime_restored = command_success_from_args([ TORRSERVER_DIRECT_INIT, was_running ? "start" : "stop" ]);
+        let firewall_restored = restore_torrserver_table(table, previous_table);
+        action_fail("torrserver_direct", action, "Failed to apply TorrServer Direct settings" +
+            (config_restored && enabled_restored && runtime_restored && firewall_restored ?
+                "" : "; restoring the previous service or firewall state failed"), current_enabled, target_enabled);
     }
     remove_file(SYSTEM_INFO_CACHE_FILE);
     action_success("torrserver_direct", action,
@@ -1860,7 +1924,6 @@ function component_action(component, action, version) {
     }
     if (!init_tmp_dir())
         action_fail(component != "" ? component : "unknown", action != "" ? action : "unknown", "Failed to create temporary directory");
-    capture_forkop_running_state();
 
     if (component == "forkop" && action == "check_update")
         check_forkop();

@@ -135,6 +135,7 @@ function show_help() {
     print("    get_system_info         Get system information in JSON format\n");
     print("    get_ui_capabilities     Get lightweight UI capabilities in JSON format\n");
     print("    get_ui_state            Get lightweight UI service/action state in JSON format\n");
+    print("    get_ui_action_state     Get UI action state without runtime checks\n");
     print("    service_action_async    Start a service action in the background\n");
     print("    service_action_status   Get background service action status\n");
     print("    latency_test_async      Start a dashboard latency test in the background\n");
@@ -185,6 +186,7 @@ function command_spec(command) {
         check_xrust_logs: [ "diagnostics/runtime.uc", "check-xrust-logs", 0 ],
         check_fakeip: [ "diagnostics/runtime.uc", "check-fakeip", 0 ],
         clash_api: [ "diagnostics/runtime.uc", "clash-api", 4 ],
+        clash_api_address: [ "diagnostics/runtime.uc", "clash-api-address", 0 ],
         show_config: [ "diagnostics/runtime.uc", "show-config", 1 ],
         show_version: [ "diagnostics/runtime.uc", "show-version", 0 ],
         show_xrust_config: [ "diagnostics/runtime.uc", "show-xrust-config", 1 ],
@@ -196,6 +198,8 @@ function command_spec(command) {
         get_system_info: [ "diagnostics/runtime.uc", "get-system-info", 0 ],
         get_ui_capabilities: [ "service/ui.uc", "get-ui-capabilities", 0 ],
         get_ui_state: [ "service/ui.uc", "get-ui-state", 0 ],
+        get_ui_action_state: [ "service/ui.uc", "get-ui-action-state", 0 ],
+        runtime_config_reference: [ "service/ui.uc", "runtime-config-reference", 0 ],
         service_action_async: [ "service/ui.uc", "service-action-async", 1 ],
         service_action_status: [ "service/ui.uc", "service-action-status", 1 ],
         latency_test_async: [ "service/ui.uc", "latency-test-async", 4 ],
@@ -212,10 +216,10 @@ function command_spec(command) {
         global_check: [ "diagnostics/runtime.uc", "global-check", 2 ],
         support_report: [ "diagnostics/runtime.uc", "support-report", 0 ],
         tailscale_native_status: [ "tailscale/action.uc", "status", 0 ],
-        tailscale_native_connect: [ "tailscale/action.uc", "connect", 0 ],
+        tailscale_native_connect: [ "tailscale/action.uc", "connect", 1 ],
         tailscale_native_disconnect: [ "tailscale/action.uc", "disconnect", 0 ],
         tailscale_native_ssh: [ "tailscale/action.uc", "ssh", 1 ],
-        tailscale_native_lan: [ "tailscale/action.uc", "lan", 1 ],
+        tailscale_native_lan: [ "tailscale/action.uc", "lan", 2 ],
         tailscale_native_exit: [ "tailscale/action.uc", "exit", 1 ],
         package_prerm: [ "service/package.uc", "prerm", 1 ],
         package_postinst: [ "service/package.uc", "postinst", 0 ],

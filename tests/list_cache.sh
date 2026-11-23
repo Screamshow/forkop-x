@@ -67,6 +67,14 @@ EOF_LOGGER
 chmod +x "$WORK_DIR/bin/logger"
 export LIST_CACHE_WGET_LOG="$WORK_DIR/wget.log"
 export LIST_CACHE_LOG="$WORK_DIR/cache.log"
+export LIST_CACHE_MD5_LOG="$WORK_DIR/md5.log"
+export REAL_MD5SUM="$(command -v md5sum)"
+cat >"$WORK_DIR/bin/md5sum" <<'EOF_MD5'
+#!/bin/sh
+printf '%s\n' "$1" >> "$LIST_CACHE_MD5_LOG"
+exec "$REAL_MD5SUM" "$@"
+EOF_MD5
+chmod +x "$WORK_DIR/bin/md5sum"
 : >"$LIST_CACHE_WGET_LOG"
 : >"$LIST_CACHE_LOG"
 
@@ -109,7 +117,10 @@ grep -Fq 'Using the newer RAM-only list generation from this boot' "$LIST_CACHE_
   fail "RAM-only list generation use was not logged"
 grep -Fq 'runtime-new.example' "$WORK_DIR/runtime-rulesets/alpha-remote-domains-ruleset.json" ||
   fail "older persistent cache overwrote newer RAM-only lists"
+: > "$LIST_CACHE_MD5_LOG"
 cache_cmd apply-list-cache || fail "RAM-only list state could not bypass persistent cache application"
+[ "$(grep -Fxc "$WORK_DIR/runtime-generation/source-1" "$LIST_CACHE_MD5_LOG")" = 1 ] ||
+  fail "runtime cache recovery, restore and import repeated the source digest"
 grep -Fq 'runtime-new.example' "$WORK_DIR/runtime-rulesets/alpha-remote-domains-ruleset.json" ||
   fail "persistent cache application overwrote newer RAM-only lists"
 
@@ -226,6 +237,7 @@ mkdir -p "$WORK_DIR/quota-runtime" "$WORK_DIR/quota-cache"
 cat >"$WORK_DIR/quota-runtime/alpha-lists-ruleset.json" <<'EOF_QUOTA_RULESET'
 {"version":3,"rules":[{"domain_suffix":["first.example"]}]}
 EOF_QUOTA_RULESET
+head -c 1048576 /dev/zero | tr '\000' ' ' >> "$WORK_DIR/quota-runtime/alpha-lists-ruleset.json"
 quota_cmd() {
   FORKOP_UCI_STATE_FILE="$WORK_DIR/uci.state" \
   FORKOP_PERSISTENT_LIST_CACHE_DIR="$WORK_DIR/quota-cache" \
@@ -247,6 +259,18 @@ quota_cmd commit-runtime-list-generation || fail "an identical runtime generatio
 FORKOP_PERSISTENT_LIST_CACHE_AVAILABLE_BYTES=33554432 quota_cmd persist-list-cache 100 ||
   fail "a fitting persistent cache was not committed"
 first_md5="$(md5sum "$WORK_DIR/quota-cache/alpha-lists-ruleset.json" | cut -d' ' -f1)"
+payload_inode="$(stat -c %i "$WORK_DIR/quota-cache/alpha-lists-ruleset.json")"
+manifest_inode="$(stat -c %i "$WORK_DIR/quota-cache/manifest.json")"
+FORKOP_PERSISTENT_LIST_CACHE_AVAILABLE_BYTES=8392704 quota_cmd persist-list-cache 101 ||
+  fail "an unchanged generation could not refresh its timestamp alone"
+[ "$(stat -c %i "$WORK_DIR/quota-cache/alpha-lists-ruleset.json")" = "$payload_inode" ] &&
+  [ "$(stat -c %i "$WORK_DIR/quota-cache/manifest.json")" = "$manifest_inode" ] &&
+  [ "$(cat "$WORK_DIR/quota-cache/last-success.timestamp")" = 101 ] ||
+  fail "an unchanged generation replaced files other than its timestamp"
+[ ! -e "$WORK_DIR/quota-cache.stage" ] || fail "unchanged cache created a full staging generation"
+printf 'Unchanged refresh writes %s timestamp bytes while retaining %s checked payload bytes\n' \
+    "$(wc -c < "$WORK_DIR/quota-cache/last-success.timestamp")" \
+    "$(wc -c < "$WORK_DIR/quota-cache/alpha-lists-ruleset.json")"
 cat >"$WORK_DIR/quota-runtime/alpha-lists-ruleset.json" <<'EOF_QUOTA_CHANGED'
 {"version":3,"rules":[{"domain_suffix":["second.example"]}]}
 EOF_QUOTA_CHANGED
@@ -256,7 +280,7 @@ if FORKOP_PERSISTENT_LIST_CACHE_AVAILABLE_BYTES=8390000 quota_cmd persist-list-c
 fi
 [ "$first_md5" = "$(md5sum "$WORK_DIR/quota-cache/alpha-lists-ruleset.json" | cut -d' ' -f1)" ] ||
   fail "failed persistence replaced the previous complete cache"
-[ "$(cat "$WORK_DIR/quota-cache/last-success.timestamp")" = 100 ] ||
+[ "$(cat "$WORK_DIR/quota-cache/last-success.timestamp")" = 101 ] ||
   fail "failed persistence changed the previous success timestamp"
 
 # Every pre-publication runtime failure retains the old active generation and
@@ -356,7 +380,7 @@ legacy_cmd() {
 }
 : >"$LIST_CACHE_WGET_LOG"
 legacy_cmd list-cache-valid || fail "valid 1.3.8 v1 cache was not migrated to v2"
-[ "$(jsonfilter -i "$WORK_DIR/legacy-v1/manifest.json" -e '@.format')" = 2 ] ||
+[ "$(ucode -e 'print(json(require("fs").readfile(ARGV[0])).format)' "$WORK_DIR/legacy-v1/manifest.json")" = 2 ] ||
   fail "v1 cache was not replaced by a v2 manifest"
 legacy_cmd restore-list-cache || fail "migrated v2 cache was not restored offline"
 [ ! -s "$LIST_CACHE_WGET_LOG" ] || fail "v1 to v2 migration attempted network I/O"
@@ -378,7 +402,7 @@ legacy_bad_cmd() {
   FORKOP_LIB="$FORKOP_LIB" ucode -L "$FORKOP_LIB" "$UPDATES_UC" "$@"
 }
 legacy_bad_cmd list-cache-valid && fail "corrupt v1 cache was migrated"
-[ "$(jsonfilter -i "$WORK_DIR/legacy-v1-invalid/manifest.json" -e '@.format')" = 1 ] ||
+[ "$(ucode -e 'print(json(require("fs").readfile(ARGV[0])).format)' "$WORK_DIR/legacy-v1-invalid/manifest.json")" = 1 ] ||
   fail "failed v1 migration destroyed its LKG"
 [ ! -e "$WORK_DIR/legacy-v1-invalid.stage" ] || fail "failed v1 migration retained a stage"
 

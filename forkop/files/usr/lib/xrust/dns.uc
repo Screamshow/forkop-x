@@ -15,8 +15,11 @@ let option = common.option;
 let read_json_file = common.read_json_file;
 
 const DNS_FAILOVER_STATE_FILE = getenv("FORKOP_DNS_FAILOVER_STATE_FILE") || "/var/run/forkop/dns-failover.json";
-const DNS_HEALTH_ADDRESS = getenv("FORKOP_DNS_HEALTH_ADDRESS") || "127.0.0.42";
+const DNS_HEALTH_ADDRESS_OVERRIDE = getenv("FORKOP_DNS_HEALTH_ADDRESS");
+const DNS_HEALTH_ADDRESS = DNS_HEALTH_ADDRESS_OVERRIDE || "127.0.0.42";
 const DNS_HEALTH_PORT_BASE = int(getenv("FORKOP_DNS_HEALTH_PORT_BASE") || "10053");
+const DNS_ACTIVE_HEALTH_TAG = "dns-health-active-main-in";
+const DNS_HEALTH_SOURCE_MODE = "loopback-source-v1";
 
 function server_list(settings, key, fallback) {
     let result = [];
@@ -124,6 +127,13 @@ function active_values(settings, override_state) {
     };
 }
 
+function doh_ipv6_tls(address) {
+    // Xrust 0.0.46 derives the HTTP authority from the TLS name. Keep the
+    // bracketed authority separate from the literal used for IP SAN checks.
+    return { enabled: true, server_name: "[" + address + "]",
+        disable_sni: true, verify_server_name: address };
+}
+
 function server_from_options(tag_name, dns_type, dns_server, detour) {
     let server = runtime_url.host(dns_server);
     let port = runtime_url.port(dns_server);
@@ -148,6 +158,8 @@ function server_from_options(tag_name, dns_type, dns_server, detour) {
         let path = runtime_url.path(dns_server);
         if (path != "")
             result.path = path;
+        if (core_ip.ip_family(server) == 6)
+            result.tls = doh_ipv6_tls(server);
     }
     else {
         return { unsupported: "unsupported dns_type " + dns_type };
@@ -176,17 +188,13 @@ function bootstrap_server(tag_name, dns_type, value) {
         server.path = endpoint.path;
     if (endpoint.tls_name != "")
         server.tls = { enabled: true, server_name: endpoint.tls_name };
-    else if (dns_type == "doh" && core_ip.ip_family(endpoint.address) == 6) {
-        // Xrust 0.0.45 reuses the TLS name as the HTTP authority. Bracket the
-        // authority, omit SNI for the IP literal and verify its actual IP SAN.
-        server.tls = { enabled: true, server_name: "[" + endpoint.address + "]",
-            disable_sni: true, verify_server_name: endpoint.address };
-    }
+    else if (dns_type == "doh" && core_ip.ip_family(endpoint.address) == 6)
+        server.tls = doh_ipv6_tls(endpoint.address);
     return server;
 }
 
 function provider_tag(route) {
-    return "provider-dns-wan-" + route.interface;
+    return "provider-dns-wan-" + route.device + "-" + sprintf("%x", int(route.mark || 0));
 }
 
 function provider_outbound(route) {
@@ -244,26 +252,34 @@ function health_port(kind, index_value) {
     return DNS_HEALTH_PORT_BASE + int(index_value) * 2 + (kind == "bootstrap" ? 1 : 0);
 }
 
+function health_probe(kind, index_value, applied) {
+    if (kind == "active" || applied?.health_probe_mode != DNS_HEALTH_SOURCE_MODE)
+        return { port: health_port(kind, index_value), source: "" };
+    let slot = int(index_value) + 1;
+    let subnet = kind == "main" ? "127.16." : "127.32.";
+    return { port: health_port("active", 0), source: subnet + int(slot / 256) + "." + (slot % 256) };
+}
+
 function add_active_health_inbound(result) {
-    let inbound_tag = "dns-health-active-main-in";
     push(result.inbounds, {
         type: "direct",
-        tag: inbound_tag,
+        tag: DNS_ACTIVE_HEALTH_TAG,
         listen: DNS_HEALTH_ADDRESS,
         listen_port: health_port("active", 0)
     });
     push(result.rules, {
         action: "route",
-        inbound: inbound_tag,
+        inbound: DNS_ACTIVE_HEALTH_TAG,
         server: runtime_constants.DNS_SERVER_TAG,
         disable_cache: true
     });
-    push(result.sniff_inbounds, inbound_tag);
+    push(result.sniff_inbounds, DNS_ACTIVE_HEALTH_TAG);
 }
 
 function add_health_candidate(result, kind, index_value, server) {
     let server_tag = health_tag(kind, index_value, "server");
-    let inbound_tag = health_tag(kind, index_value, "in");
+    let probe = health_probe(kind, index_value, result.state);
+    let inbound_tag = probe.source != "" ? DNS_ACTIVE_HEALTH_TAG : health_tag(kind, index_value, "in");
     let dns_server = bind_provider(kind == "main"
         ? server_from_options(server_tag, result.state.dns_type, server, result.state.dns_detour)
         : bootstrap_server(server_tag, result.state.bootstrap_dns_type || "udp", server), result.state, index_value);
@@ -274,19 +290,19 @@ function add_health_candidate(result, kind, index_value, server) {
     }
 
     push(result.servers, dns_server);
-    push(result.inbounds, {
-        type: "direct",
-        tag: inbound_tag,
-        listen: DNS_HEALTH_ADDRESS,
-        listen_port: health_port(kind, index_value)
-    });
-    push(result.rules, {
+    let rule = {
         action: "route",
         inbound: inbound_tag,
         server: server_tag,
         disable_cache: true
-    });
-    push(result.sniff_inbounds, inbound_tag);
+    };
+    if (probe.source != "")
+        rule.source_ip_cidr = probe.source + "/32";
+    else {
+        push(result.inbounds, { type: "direct", tag: inbound_tag, listen: DNS_HEALTH_ADDRESS, listen_port: probe.port });
+        push(result.sniff_inbounds, inbound_tag);
+    }
+    push(result.rules, rule);
 }
 
 function add_health_slot(result, kind, index_value) {
@@ -344,8 +360,9 @@ function config_from_state(state, ntp_required) {
     };
     let seen_provider = {};
     for (let route in state.provider_routes) {
-        if (seen_provider[route.interface]) continue;
-        seen_provider[route.interface] = true;
+        let tag = provider_tag(route);
+        if (seen_provider[tag]) continue;
+        seen_provider[tag] = true;
         push(result.outbounds, provider_outbound(route));
     }
     if (ntp_required && bootstrap.type != "udp") {
@@ -353,20 +370,27 @@ function config_from_state(state, ntp_required) {
         add_ntp_resolver(result, bootstrap, state.ntp_wan_routes);
     }
 
-    // Reserve loopback health listeners independently of selected DNS mode.
-    // Changing listeners requires a cold core restart. Eight slots per kind
-    // covers normal dual/multi-WAN lists without adding duplicate resolvers.
-    // Larger existing lists remain supported (their capacity changes may restart).
-    add_active_health_inbound(result);
+    // The standard IPv4 loopback can bind a distinct probe source for every
+    // resolver. The single listener stays compatible across hot reloads.
+    // Preserve the port layout when an operator overrides the listen address.
+    let shared_probe = !DNS_HEALTH_ADDRESS_OVERRIDE &&
+        length(state.main_servers) < 65536 && length(state.bootstrap_servers) < 65536;
+    state.health_probe_mode = shared_probe ? DNS_HEALTH_SOURCE_MODE : null;
+    if (!shared_probe)
+        add_active_health_inbound(result);
     for (let kind in [ "main", "bootstrap" ]) {
         let values = kind == "main" ? state.main_servers : state.bootstrap_servers;
-        for (let i = 0; i < max(8, length(values)); i++) {
+        let count = shared_probe ? length(values) : max(8, length(values));
+        for (let i = 0; i < count; i++) {
             if (length(values) > 1 && i < length(values))
                 add_health_candidate(result, kind, i, values[i]);
-            else
+            else if (!shared_probe)
                 add_health_slot(result, kind, i);
         }
     }
+    // The canonical probe is the fallback within the shared inbound.
+    if (shared_probe)
+        add_active_health_inbound(result);
 
     return result;
 }
@@ -431,6 +455,7 @@ return {
     failover_enabled,
     failover_selection,
     health_port,
+    health_probe,
     health_settings,
     normalize_state,
     runtime_state,

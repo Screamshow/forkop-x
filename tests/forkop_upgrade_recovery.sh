@@ -80,6 +80,7 @@ case "$1" in
     enable) touch "$root/enabled" ;;
     disable) rm -f "$root/enabled" ;;
     start) touch "$root/started" ;;
+    status) [ "${FORCE_UNREADY:-0}" = 0 ] && [ -f "$root/started" ] ;;
 esac
 SH
     cat > "$root/usr/bin/xrust" <<'SH'
@@ -98,11 +99,13 @@ SH
     ext=ipk core=0.0.45-1
     if [ "$manager" = apk ]; then ext=apk core=0.0.45-r1; fi
     for name in rust-x luci-app-forkop forkop; do
+        if [ "$mode:$name" = native:luci-app-forkop ]; then continue; fi
         case "$name" in rust-x) version="$core" ;; *) version=3.0.0 ;; esac
         archive="$root/staged/$name.$ext"
         printf '%s %s\n' "$name" "$version" > "$archive"
         printf '%s\t%s\t%s\n' "$name" "$version" "$archive"
     done > "$root/plan"
+    mkdir -p "$root/tmp/forkop-upgrade-recovery.lock"
     sh "$recovery" prepare "$manager" 1 "$core" "$root/configuration.tar.gz" "$root/etc/init.d/forkop" "$root/plan" "$mode"
     [ -L "$boot" ]
     # Simulate a discarded RAM stage and a mixed, interrupted package set.
@@ -110,9 +113,12 @@ SH
     printf 'updated user settings\n' > "$root/etc/config/forkop"
     echo 3.0.1 > "$root/packages/forkop"
     echo 3.0.1 > "$root/packages/luci-i18n-forkop-ru"
+    echo 3.0.1 > "$root/packages/luci-app-forkop"
     touch "$root/enabled"
 
     if [ "$manager_mode" = apk:native ]; then
+        "$boot" verify-preinst 3.0.0 "$core"
+        if "$boot" verify-preinst 3.0.1 "$core"; then exit 1; fi
         cp "$state/rust-x.$ext" "$root/original-package"
         echo 'corrupted' >> "$state/rust-x.$ext"
         if "$boot" boot; then
@@ -128,13 +134,24 @@ SH
         exit 1
     fi
     [ -L "$boot" ] && [ ! -e "$root/enabled" ]
+    if FORCE_UNREADY=1 FORKOP_UPGRADE_RECOVERY_WAIT_SECONDS=0 "$boot" boot; then
+        echo 'Unready runtime must not commit the recovery journal' >&2
+        exit 1
+    fi
+    [ -L "$boot" ]
+    for package in rust-x forkop; do [ -s "$state/$package.$ext" ]; done
     : > "$root/install-order"
     "$boot" boot
     [ ! -L "$boot" ] && [ ! -e "$state" ]
     [ -f "$root/enabled" ] && [ -f "$root/started" ]
     [ ! -e "$root/packages/luci-i18n-forkop-ru" ]
     grep -Fxq 'previous user settings' "$root/etc/config/forkop"
-    printf '%s\n' rust-x luci-app-forkop forkop | cmp "$root/install-order" -
+    if [ "$mode" = native ]; then
+        [ ! -f "$root/packages/luci-app-forkop" ]
+        printf '%s\n' rust-x forkop | cmp "$root/install-order" -
+    else
+        printf '%s\n' rust-x luci-app-forkop forkop | cmp "$root/install-order" -
+    fi
 done
 echo 'Interrupted Forkop package recovery passed for APK and IPK'
 

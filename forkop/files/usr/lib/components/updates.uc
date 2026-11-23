@@ -2,6 +2,7 @@
 
 let fs = require("fs");
 let common = require("core.common");
+let duration = require("core.duration");
 let uci_core = require("core.uci");
 let connections = require("config.connections");
 let core_ip = require("core.ip");
@@ -39,6 +40,8 @@ const PERSISTENT_LIST_CACHE_MIN_FREE_BYTES = int(getenv("FORKOP_PERSISTENT_LIST_
 const PERSISTENT_LIST_CACHE_MANIFEST_ALLOWANCE = 65536;
 const LIST_DOWNLOAD_MIN_FREE_BYTES = int(getenv("FORKOP_LIST_DOWNLOAD_MIN_FREE_BYTES") || "8388608");
 const LIST_UPDATE_PID_FILE = getenv("FORKOP_LIST_UPDATE_PID_FILE") || "/var/run/forkop_list_update.pid";
+const LIST_CACHE_LOCK_FILE = RUNTIME_LIST_GENERATION_DIR + ".guard";
+let list_worker_identity = require("core.worker_identity");
 const SUBSCRIPTION_UPDATE_STATE_DIR = getenv("FORKOP_SUBSCRIPTION_UPDATE_STATE_DIR") || RUNTIME_STATE_DIR + "/subscription-update";
 const SUBSCRIPTION_JOB_DIR = getenv("FORKOP_SUBSCRIPTION_UPDATE_JOB_DIR") || "/var/run/forkop/subscription-update-jobs";
 const SUBSCRIPTION_UPDATE_LOCK_DIR = getenv("FORKOP_SUBSCRIPTION_UPDATE_LOCK_DIR") || RUNTIME_STATE_DIR + "/subscription-update.lock";
@@ -495,6 +498,17 @@ function ensure_parent_dir(path) {
     return dir == "" || dir == "." || ensure_dir(dir);
 }
 
+function with_file_lock(path, action) {
+    if (!ensure_parent_dir(path))
+        return null;
+    let handle = fs.open(path, "a");
+    if (!handle)
+        return null;
+    let result = handle.lock("x") ? action() : null;
+    handle.close();
+    return result;
+}
+
 function list_cache_log_once(key, message, level) {
     key = as_string(key);
     if (key != "" && trim(file_first_line_value(LIST_CACHE_LOG_STATE_FILE)) == key)
@@ -669,7 +683,7 @@ function list_generation_validation(root, expected_signature) {
         if (as_string(entry.kind) == "source") sources++;
         if (as_string(entry.kind) == "ruleset") rulesets++;
     }
-    return { valid: true, manifest, signature: expected_signature, source_count: sources, file_count: rulesets, total_bytes: bytes };
+    return { valid: true, root, manifest, signature: expected_signature, source_count: sources, file_count: rulesets, total_bytes: bytes };
 }
 
 // Generation identities are deliberately unique publication labels, not a
@@ -813,37 +827,36 @@ function recover_list_generation_transaction(root, signature) {
     let stage = root + ".stage";
     let previous = root + ".previous";
     let active = list_generation_validation(root, signature);
-    let old = list_generation_validation(previous, signature);
 
     // A stage has no publication marker, so it is never a recovery source.
     // If active is corrupt, only a fully validated previous generation may
     // replace it. This also handles interruption after active -> previous.
-    if (!active.valid && old.valid) {
-        if (file_exists_value(root))
-            command_success_from_args([ "rm", "-rf", root ]);
-        if (!fs.rename(previous, root))
-            return false;
-        active = list_generation_validation(root, signature);
+    if (!active.valid && file_exists_value(previous)) {
+        let old = list_generation_validation(previous, signature);
+        if (old.valid) {
+            if (file_exists_value(root))
+                command_success_from_args([ "rm", "-rf", root ]);
+            if (!fs.rename(previous, root))
+                return active;
+            active = { ...old, root };
+        }
     }
     if (active.valid && file_exists_value(previous))
         command_success_from_args([ "rm", "-rf", previous ]);
-    command_success_from_args([ "rm", "-rf", stage ]);
-    return active.valid;
+    if (file_exists_value(stage))
+        command_success_from_args([ "rm", "-rf", stage ]);
+    return active;
 }
 
-function persistent_list_cache_validation() {
-    let signature = current_list_update_signature();
+function persistent_list_cache_validation(signature) {
     let manifest = persistent_list_cache_manifest();
     if (manifest != null && as_string(manifest.format) == LEGACY_PERSISTENT_LIST_CACHE_FORMAT)
         migrate_legacy_v1_persistent_list_cache();
-    recover_list_generation_transaction(PERSISTENT_LIST_CACHE_DIR, signature);
-    return list_generation_validation(PERSISTENT_LIST_CACHE_DIR, signature);
+    return recover_list_generation_transaction(PERSISTENT_LIST_CACHE_DIR, signature);
 }
 
 function runtime_list_cache_active() {
-    let signature = current_list_update_signature();
-    recover_list_generation_transaction(RUNTIME_LIST_GENERATION_DIR, signature);
-    return list_generation_validation(RUNTIME_LIST_GENERATION_DIR, signature).valid;
+    return recover_list_generation_transaction(RUNTIME_LIST_GENERATION_DIR, current_list_update_signature()).valid;
 }
 
 function activate_persistent_list_generation(validation) {
@@ -880,89 +893,14 @@ function activate_persistent_list_generation(validation) {
 }
 
 function persistent_list_cache_valid() {
-    return persistent_list_cache_validation().valid;
+    return persistent_list_cache_validation(current_list_update_signature()).valid;
 }
 
-function restore_persistent_list_cache() {
-    // A successful RAM-only update is newer than the flash cache. Preserve it
-    // across service reloads during this boot; /var/run and /tmp disappear on
-    // a real reboot, when the last persistent cache becomes the fallback.
-    if (runtime_list_cache_active()) {
-        let runtime_timestamp = trim(file_first_line_value(LIST_UPDATE_RUNTIME_STATE_FILE));
-        let runtime_signature = trim(file_first_line_value(LIST_UPDATE_RUNTIME_SIGNATURE_FILE));
-        let runtime = list_generation_validation(RUNTIME_LIST_GENERATION_DIR, current_list_update_signature());
-        let persistent = persistent_list_cache_validation();
-        // A normal successful update leaves a runtime copy of the same
-        // generation.  It is not RAM-only; reserve that diagnostic for a
-        // missing or older persistent LKG.
-        if (runtime_timestamp != "" && runtime_signature == current_list_update_signature() && runtime.valid &&
-            (!persistent.valid || as_string(persistent.manifest.generation) != as_string(runtime.manifest.generation)))
-            list_cache_log_once(
-                "ram-" + runtime_timestamp + "-" + runtime_signature,
-                "Using the newer RAM-only list generation from this boot; the older persistent cache was not restored",
-                "info"
-            );
-        return true;
-    }
-
-    let validation = persistent_list_cache_validation();
-    if (!validation.valid) {
-        list_cache_log_once(
-            "rejected-" + as_string(validation.key),
-            "Persistent list cache was not restored: " + as_string(validation.reason),
-            "warn"
-        );
-        return false;
-    }
-
-    let manifest = validation.manifest;
-    let generation_root = PERSISTENT_LIST_CACHE_DIR;
+function restore_list_ruleset_files(validation) {
     if (!ensure_dir(TMP_RULESET_FOLDER)) {
-        list_cache_log_once("restore-runtime-dir", "Persistent list cache was not restored: runtime rule-set directory could not be created", "warn");
+        list_cache_log_once("restore-runtime-dir", "List cache was not restored: runtime rule-set directory could not be created", "warn");
         return false;
     }
-
-    let keep = {};
-    for (let entry in manifest.files) {
-        entry = object_or_empty(entry);
-        if (as_string(entry.kind) != "ruleset")
-            continue;
-        let name = as_string(entry.name);
-        let source = generation_root + "/" + name;
-        let target = TMP_RULESET_FOLDER + "/" + name;
-        let temporary = target + ".restore." + as_string(now_seconds());
-        keep[name] = true;
-        remove_file(temporary);
-        if (!cache_copy_file(source, temporary) || file_md5(temporary) != as_string(entry.md5) || !fs.rename(temporary, target)) {
-            remove_file(temporary);
-            list_cache_log_once("restore-copy-" + name, "Persistent list cache was not restored: failed to copy and verify rule-set file '" + name + "'", "warn");
-            return false;
-        }
-    }
-
-    for (let path in fs.glob(TMP_RULESET_FOLDER + "/*")) {
-        let name = substr(path, length(TMP_RULESET_FOLDER) + 1);
-        if (managed_list_ruleset_name(name) && !keep[name])
-            remove_file(path);
-    }
-    if (!activate_persistent_list_generation(validation))
-        return false;
-    list_cache_log_once(
-        "restored-" + as_string(validation.signature) + "-" + as_string(validation.total_bytes),
-        "Restored " + validation.source_count + " list sources and " + validation.file_count +
-            " rule-set files from persistent cache (" + validation.total_bytes +
-            " bytes); network access was not required",
-        "info"
-    );
-    return true;
-}
-
-function restore_runtime_list_generation() {
-    let validation = list_generation_validation(RUNTIME_LIST_GENERATION_DIR, current_list_update_signature());
-    if (!validation.valid)
-        return false;
-    if (!ensure_dir(TMP_RULESET_FOLDER))
-        return false;
     let keep = {};
     for (let entry in validation.manifest.files) {
         entry = object_or_empty(entry);
@@ -973,9 +911,10 @@ function restore_runtime_list_generation() {
         let temporary = target + ".restore." + as_string(now_seconds());
         keep[name] = true;
         remove_file(temporary);
-        if (!cache_copy_file(RUNTIME_LIST_GENERATION_DIR + "/" + name, temporary) ||
+        if (!cache_copy_file(validation.root + "/" + name, temporary) ||
             file_md5(temporary) != as_string(entry.md5) || !fs.rename(temporary, target)) {
             remove_file(temporary);
+            list_cache_log_once("restore-copy-" + name, "List cache was not restored: failed to copy and verify rule-set file '" + name + "'", "warn");
             return false;
         }
     }
@@ -985,6 +924,49 @@ function restore_runtime_list_generation() {
             remove_file(path);
     }
     return true;
+}
+
+function restore_persistent_list_cache(runtime, signature) {
+    signature = signature ?? current_list_update_signature();
+    runtime = runtime ?? recover_list_generation_transaction(RUNTIME_LIST_GENERATION_DIR, signature);
+    // A successful RAM-only update is newer than the flash cache. Preserve it
+    // across service reloads during this boot; /var/run and /tmp disappear on
+    // a real reboot, when the last persistent cache becomes the fallback.
+    if (runtime.valid) {
+        let runtime_timestamp = trim(file_first_line_value(LIST_UPDATE_RUNTIME_STATE_FILE));
+        let runtime_signature = trim(file_first_line_value(LIST_UPDATE_RUNTIME_SIGNATURE_FILE));
+        // A normal successful update leaves a runtime copy of the same
+        // generation.  It is not RAM-only; reserve that diagnostic for a
+        // missing or older persistent LKG.
+        if (runtime_timestamp != "" && runtime_signature == signature) {
+            let persistent = persistent_list_cache_validation(signature);
+            if (!persistent.valid || !list_generation_manifest_content_equal(persistent.manifest, runtime.manifest))
+                list_cache_log_once("ram-" + runtime_timestamp + "-" + runtime_signature,
+                    "Using the newer RAM-only list generation from this boot; the older persistent cache was not restored", "info");
+        }
+        return runtime;
+    }
+
+    let validation = persistent_list_cache_validation(signature);
+    if (!validation.valid) {
+        list_cache_log_once(
+            "rejected-" + as_string(validation.key),
+            "Persistent list cache was not restored: " + as_string(validation.reason),
+            "warn"
+        );
+        return false;
+    }
+
+    if (!restore_list_ruleset_files(validation) || !activate_persistent_list_generation(validation))
+        return false;
+    list_cache_log_once(
+        "restored-" + as_string(validation.signature) + "-" + as_string(validation.total_bytes),
+        "Restored " + validation.source_count + " list sources and " + validation.file_count +
+            " rule-set files from persistent cache (" + validation.total_bytes +
+            " bytes); network access was not required",
+        "info"
+    );
+    return { ...validation, root: RUNTIME_LIST_GENERATION_DIR };
 }
 
 function invalidate_persistent_list_cache(preserve_runtime) {
@@ -1024,8 +1006,7 @@ function commit_runtime_list_generation(signature) {
     }
     let stage = RUNTIME_LIST_GENERATION_DIR + ".stage";
     let previous = RUNTIME_LIST_GENERATION_DIR + ".previous";
-    recover_list_generation_transaction(RUNTIME_LIST_GENERATION_DIR, signature);
-    command_success_from_args([ "rm", "-rf", stage ]);
+    let active_validation = recover_list_generation_transaction(RUNTIME_LIST_GENERATION_DIR, signature);
     if (generation_phase_failed("runtime-stage-create") || !ensure_dir(stage))
         return false;
     let files = [];
@@ -1062,14 +1043,13 @@ function commit_runtime_list_generation(signature) {
         command_success_from_args([ "rm", "-rf", stage ]);
         return false;
     }
-    let active_validation = list_generation_validation(RUNTIME_LIST_GENERATION_DIR, signature);
     // Failure injection deliberately exercises every publication phase even
     // for equal data. It is test-only; normal runtime never sets this switch.
     let failure_injection_enabled = as_string(getenv("FORKOP_LIST_GENERATION_FAIL_PHASE")) != "";
     if (!failure_injection_enabled && active_validation.valid && list_generation_manifest_content_equal(staged_validation.manifest, active_validation.manifest)) {
         command_success_from_args([ "rm", "-rf", stage ]);
         log_message("Validated list generation is unchanged; runtime policy reload is not needed", "info");
-        return true;
+        return active_validation;
     }
     command_success_from_args([ "rm", "-rf", previous ]);
     if (generation_phase_failed("runtime-rename-previous") ||
@@ -1088,16 +1068,30 @@ function commit_runtime_list_generation(signature) {
     runtime_generation_commit_changed = true;
     if (!generation_phase_failed("runtime-cleanup-previous"))
         command_success_from_args([ "rm", "-rf", previous ]);
-    return true;
+    return { ...staged_validation, root: RUNTIME_LIST_GENERATION_DIR };
 }
 
-function persist_list_cache(timestamp) {
+function persist_list_cache(timestamp, runtime) {
     let signature = current_list_update_signature();
-    recover_list_generation_transaction(RUNTIME_LIST_GENERATION_DIR, signature);
-    recover_list_generation_transaction(PERSISTENT_LIST_CACHE_DIR, signature);
-    let runtime = list_generation_validation(RUNTIME_LIST_GENERATION_DIR, signature);
-    if (!runtime.valid)
+    runtime = runtime ?? recover_list_generation_transaction(RUNTIME_LIST_GENERATION_DIR, signature);
+    if (!runtime.valid || runtime.signature != signature)
         return false;
+    let persistent = recover_list_generation_transaction(PERSISTENT_LIST_CACHE_DIR, runtime.signature);
+    let timestamp_path = PERSISTENT_LIST_CACHE_DIR + "/last-success.timestamp";
+    if (as_string(getenv("FORKOP_LIST_GENERATION_FAIL_PHASE")) == "" && persistent.valid &&
+        list_generation_manifest_content_equal(runtime.manifest, persistent.manifest)) {
+        if (trim(file_first_line_value(timestamp_path)) == as_string(timestamp))
+            return true;
+        if (persistent_list_cache_available_bytes() < PERSISTENT_LIST_CACHE_MIN_FREE_BYTES + 4096)
+            return false;
+        let stamp = clock();
+        let temporary = sprintf("%s.%d.%d.tmp", timestamp_path, stamp[0], stamp[1]);
+        if (common.write_private_file(temporary, as_string(timestamp) + "\n") != null &&
+            fs.rename(temporary, timestamp_path))
+            return true;
+        remove_file(temporary);
+        return false;
+    }
 
     let stage = PERSISTENT_LIST_CACHE_DIR + ".stage";
     let previous = PERSISTENT_LIST_CACHE_DIR + ".previous";
@@ -1173,11 +1167,6 @@ function remove_files(paths) {
     for (let path in paths)
         if (as_string(path) != "")
             remove_file(path);
-}
-
-function runtime_pid_running(pid) {
-    pid = as_string(pid);
-    return match(pid, /^[0-9]+$/) != null && command_success_from_args([ "kill", "-0", pid ]);
 }
 
 function module_command(args) {
@@ -1315,37 +1304,7 @@ function update_due_status(now_value, last_run_value, interval_value, subscripti
 }
 
 function duration_to_seconds_value(value) {
-    let rest = as_string(value);
-    if (rest == "")
-        return null;
-
-    let total = 0.0;
-    let multipliers = {
-        ns: 0.000000001,
-        us: 0.000001,
-        ms: 0.001,
-        s: 1,
-        m: 60,
-        h: 3600,
-        d: 86400
-    };
-
-    while (rest != "") {
-        let matched = match(rest, /^([0-9]+(\.[0-9]+)?)(ns|us|ms|s|m|h|d)/);
-        if (!matched)
-            return null;
-
-        let token = as_string(matched[0]);
-        let amount = matched[1] * 1;
-        let unit = matched[3];
-        total = total + amount * multipliers[unit];
-        rest = substr(rest, length(token));
-    }
-
-    if (total <= 0)
-        return null;
-
-    return int(total + 0.5);
+    return duration.round_seconds(value);
 }
 
 function scheduled_update_seconds(interval) {
@@ -3009,11 +2968,7 @@ function cleanup_list_downloads() {
     list_download_metadata = [];
 }
 
-function load_persistent_list_sources() {
-    let root = runtime_list_cache_active() ? RUNTIME_LIST_GENERATION_DIR : PERSISTENT_LIST_CACHE_DIR;
-    let validation = list_generation_validation(root, current_list_update_signature());
-    if (!validation.valid)
-        return false;
+function load_persistent_list_sources(validation) {
     list_download_cache = {};
     list_download_metadata = [];
     for (let entry in validation.manifest.files) {
@@ -3021,11 +2976,10 @@ function load_persistent_list_sources() {
         if (as_string(entry.kind) != "source")
             continue;
         let source = { name: as_string(entry.name), url: as_string(entry.url), format: as_string(entry.source_format) };
-        let path = root + "/" + as_string(entry.name);
+        let path = validation.root + "/" + as_string(entry.name);
         list_download_cache[source.url] = path;
         push(list_download_metadata, source);
     }
-    return true;
 }
 
 function convert_crlf_to_lf(path) {
@@ -3493,21 +3447,32 @@ function import_subnets_from_remote_subnet_lists(section, settings) {
     return ok;
 }
 
-function list_update_pid_begin() {
-    let existing_pid = trim(as_string(fs.readfile(LIST_UPDATE_PID_FILE) || ""));
-    let current_pid = owner_pid();
-    if (existing_pid != "" && existing_pid != current_pid && runtime_pid_running(existing_pid)) {
-        log_message("Another lists update is already running, skipping", "info");
-        return false;
-    }
+function list_update_worker() {
+    let fields = split(trim(as_string(fs.readfile(LIST_UPDATE_PID_FILE))), /[ \t\r\n]+/);
+    if (length(fields) != 2 || match(fields[0], /^[1-9][0-9]*$/) == null ||
+        match(fields[1], /^[0-9]+$/) == null || list_worker_identity.start_ticks(fields[0]) != fields[1])
+        return null;
+    return { pid: fields[0], ticks: fields[1] };
+}
 
-    ensure_parent_dir(LIST_UPDATE_PID_FILE);
-    write_file(LIST_UPDATE_PID_FILE, current_pid + "\n");
-    return true;
+function list_update_pid_begin() {
+    let pid = as_string(fs.readlink("/proc/self"));
+    return with_file_lock(LIST_UPDATE_PID_FILE + ".guard", () => {
+        if (list_update_worker() != null) {
+            log_message("Another lists update is already running, skipping", "info");
+            return false;
+        }
+        let ticks = list_worker_identity.start_ticks(pid);
+        return ticks != "" && write_file(LIST_UPDATE_PID_FILE, pid + "\n" + ticks + "\n");
+    });
 }
 
 function list_update_pid_end() {
-    remove_file(LIST_UPDATE_PID_FILE);
+    let pid = as_string(fs.readlink("/proc/self"));
+    with_file_lock(LIST_UPDATE_PID_FILE + ".guard", () => {
+        if (list_update_worker()?.pid == pid)
+            remove_file(LIST_UPDATE_PID_FILE);
+    });
 }
 
 function begin_list_ruleset_snapshot() {
@@ -3617,36 +3582,30 @@ function reset_remote_plain_rulesets(sections) {
     }
 }
 
+function rebuild_list_composition(sections, settings) {
+    reset_remote_plain_rulesets(sections);
+    let ok = true;
+    for (let importer in [ rebuild_domain_ip_lists_from_rule, import_builtin_subnets_from_rule,
+        import_domains_from_remote_domain_lists, import_subnets_from_remote_subnet_lists, import_rule_sets_with_subnets_from_rule ])
+        for (let section in sections)
+            if (!importer(section, settings))
+                ok = false;
+    return ok;
+}
+
 function apply_persistent_list_cache() {
     // The runtime generation is authoritative for this boot, including a
     // successful RAM-only update.  Reloads must rebuild from it locally and
     // never replace it with an older flash generation.
-    if (runtime_list_cache_active()) {
-        if (!restore_runtime_list_generation() || !load_persistent_list_sources())
-            return false;
-    }
-    else if (!restore_persistent_list_cache() || !load_persistent_list_sources())
+    let signature = current_list_update_signature();
+    let runtime = recover_list_generation_transaction(RUNTIME_LIST_GENERATION_DIR, signature);
+    let generation = runtime.valid ?
+        (restore_list_ruleset_files(runtime) ? runtime : null) :
+        restore_persistent_list_cache(runtime, signature);
+    if (!generation)
         return false;
-
-    let settings = uci_settings();
-    let sections = uci_sections("section");
-    reset_remote_plain_rulesets(sections);
-    let ok = true;
-    for (let section in sections)
-        if (!rebuild_domain_ip_lists_from_rule(section, settings))
-            ok = false;
-    for (let section in sections)
-        if (!import_builtin_subnets_from_rule(section, settings))
-            ok = false;
-    for (let section in sections)
-        if (!import_domains_from_remote_domain_lists(section, settings))
-            ok = false;
-    for (let section in sections)
-        if (!import_subnets_from_remote_subnet_lists(section, settings))
-            ok = false;
-    for (let section in sections)
-        if (!import_rule_sets_with_subnets_from_rule(section, settings))
-            ok = false;
+    load_persistent_list_sources(generation);
+    let ok = rebuild_list_composition(uci_sections("section"), uci_settings());
     list_download_cache = {};
     list_download_metadata = [];
     return ok;
@@ -3804,24 +3763,7 @@ function list_update(reuse_sources, scheduled) {
         for (let path in fs.glob(TMP_RULESET_FOLDER + "/*"))
             if (managed_list_ruleset_name(substr(path, length(TMP_RULESET_FOLDER) + 1)))
                 remove_file(path);
-    reset_remote_plain_rulesets(sections);
-    let ok = true;
-
-    for (let section in sections)
-        if (!rebuild_domain_ip_lists_from_rule(section, settings))
-            ok = false;
-    for (let section in sections)
-        if (!import_builtin_subnets_from_rule(section, settings))
-            ok = false;
-    for (let section in sections)
-        if (!import_domains_from_remote_domain_lists(section, settings))
-            ok = false;
-    for (let section in sections)
-        if (!import_subnets_from_remote_subnet_lists(section, settings))
-            ok = false;
-    for (let section in sections)
-        if (!import_rule_sets_with_subnets_from_rule(section, settings))
-            ok = false;
+    let ok = rebuild_list_composition(sections, settings);
 
     if (current_list_update_signature() != list_update_signature_at_start) {
         log_message("List sources changed during the update; discarding the stale generation", "warn");
@@ -3834,11 +3776,14 @@ function list_update(reuse_sources, scheduled) {
         ? int(trim(file_first_line_value(LIST_UPDATE_RUNTIME_STATE_FILE)) ||
             trim(file_first_line_value(LIST_UPDATE_STATE_FILE)) || "0")
         : now_seconds();
-    let runtime_committed = ok && commit_runtime_list_generation(list_update_signature_at_start);
-    if (!runtime_committed)
+    let generation = ok ? with_file_lock(LIST_CACHE_LOCK_FILE, () => {
+        let runtime = commit_runtime_list_generation(list_update_signature_at_start);
+        return runtime ? { persisted: persist_list_cache(completed_at, runtime) } : null;
+    }) : null;
+    if (generation == null)
         ok = false;
     let generation_changed = ok && runtime_generation_commit_changed;
-    let cache_persisted = ok && persist_list_cache(completed_at);
+    let cache_persisted = ok && generation.persisted;
     if (ok) {
         ensure_parent_dir(LIST_UPDATE_RUNTIME_STATE_FILE);
         write_file(LIST_UPDATE_RUNTIME_STATE_FILE, as_string(completed_at) + "\n");
@@ -3861,7 +3806,11 @@ function list_update_after_start() {
         exit(0);
     }
 
-    if (!restore_persistent_list_cache()) {
+    if (!acquire_runtime_lock(RELOAD_LOCK_DIR, true))
+        exit(1);
+    let restored = with_file_lock(LIST_CACHE_LOCK_FILE, restore_persistent_list_cache);
+    release_runtime_lock(RELOAD_LOCK_DIR);
+    if (!restored) {
         log_message("Persistent list cache is missing, stale or invalid; scheduling a recovery update", "info");
         list_update();
     }
@@ -3887,12 +3836,13 @@ function list_update_if_due() {
 }
 
 function stop_list_update() {
-    let pid = trim(as_string(fs.readfile(LIST_UPDATE_PID_FILE) || ""));
-    if (pid != "" && runtime_pid_running(pid)) {
-        command_success_from_args([ "kill", pid ]);
-        log_message("Stopped list_update", "info");
-    }
-    remove_file(LIST_UPDATE_PID_FILE);
+    with_file_lock(LIST_UPDATE_PID_FILE + ".guard", () => {
+        let worker = list_update_worker();
+        if (worker != null && list_worker_identity.start_ticks(worker.pid) == worker.ticks &&
+            command_success_from_args([ "kill", worker.pid ]))
+            log_message("Stopped list_update", "info");
+        remove_file(LIST_UPDATE_PID_FILE);
+    });
 }
 
 function subscription_cache_env() {
@@ -3973,12 +3923,13 @@ function run_pending_reload_if_requested() {
     service_state_success([ "run-pending-reload-if-requested", PENDING_RELOAD_FILE, SERVICE_INIT ]);
 }
 
-function subscription_prepare_cache_request(force, target_section, target_source_index) {
+function subscription_prepare_cache_request(force, target_section, target_source_index, guarded) {
     let result = subscription_cache_capture([
         "update-request",
         force ? "1" : "0",
         as_string(target_section),
-        as_string(target_source_index)
+        as_string(target_source_index),
+        guarded ? "1" : "0"
     ]);
     if (result.status != 0) {
         log_file_lines_from_text(result.output, "error", "subscription update: ");
@@ -4088,6 +4039,8 @@ function subscription_hot_transition(config_path, prepared_work) {
         else log_message("Subscription rollback files retained at " + work, "error");
         return { handled: true, ok: subscription_apply_failure(cache_restored ? reason : "rollback_failed", cache_restored ? "previous" : "recovery_failed") };
     }
+    if (!xrust_runtime_success([ "commit-ruleset-stage", stage ]))
+        log_message("Subscriptions applied, but the remote rule-set schedule could not be saved", "warn");
     xrust_runtime_success([ "discard-config-stage", stage ]);
     command_success_from_args([ "rm", "-rf", work ]);
     log_message("Subscriptions applied with acknowledged Xrust hot reload; core process preserved", "info");
@@ -4159,6 +4112,8 @@ function subscription_runtime_change_check(config_path) {
         return { ok: true, changed: true, work };
 
     let published = !unchanged || xrust_runtime_success([ "publish-section-cache", stage ]);
+    if (unchanged && published && !xrust_runtime_success([ "commit-ruleset-stage", stage ]))
+        log_message("Subscriptions refreshed, but the remote rule-set schedule could not be saved", "warn");
     xrust_runtime_success([ "discard-config-stage", stage ]);
     command_success_from_args([ "rm", "-rf", work ]);
     return { ok: prepared && valid && published, changed: !unchanged };
@@ -4167,7 +4122,7 @@ function subscription_runtime_change_check(config_path) {
 function subscription_update_common_locked(force, target_section, target_source_index) {
     subscription_failure_detail = null;
     subscription_outbounds_changed = false;
-    let prepared = subscription_prepare_cache_request(force, target_section, target_source_index);
+    let prepared = subscription_prepare_cache_request(force, target_section, target_source_index, true);
     if (!prepared.ok)
         return false;
     let updated = prepared.updated;
@@ -4316,7 +4271,14 @@ function subscription_update_common(force, target_section, target_source_index) 
         return force ? 1 : 0;
     }
 
-    let ok = subscription_update_common_locked(force, target_section, target_source_index);
+    let ok = subscription_cache_success([ "finish-source-update", "rollback" ]);
+    if (ok) {
+        ok = subscription_update_common_locked(force, target_section, target_source_index);
+        let finished = subscription_cache_success([ "finish-source-update", ok ? "commit" : "rollback" ]);
+        if (!finished)
+            log_message("Could not finalize subscription source cache transaction", "error");
+        ok = ok && finished;
+    }
     subscription_record_result(ok, target_section);
     release_runtime_lock(RELOAD_LOCK_DIR);
     release_runtime_lock(SUBSCRIPTION_UPDATE_LOCK_DIR);
@@ -4344,7 +4306,8 @@ function subscription_prepare_only(target_section, target_source_index) {
         exit(1);
     }
 
-    let prepared = subscription_prepare_cache_request(true, target_section, target_source_index);
+    let restored = subscription_cache_success([ "finish-source-update", "rollback" ]);
+    let prepared = restored ? subscription_prepare_cache_request(true, target_section, target_source_index) : { ok: false };
     if (owns_reload_lock)
         release_runtime_lock(RELOAD_LOCK_DIR);
     release_runtime_lock(SUBSCRIPTION_UPDATE_LOCK_DIR);
@@ -4441,25 +4404,25 @@ else if (mode == "finish-list-update-fixture")
 else if (mode == "safe-remote-source-identity")
     print(safe_remote_source_identity(ARGV[1], ARGV[2]), "\n");
 else if (mode == "restore-list-cache")
-    exit(restore_persistent_list_cache() ? 0 : 1);
+    exit(with_file_lock(LIST_CACHE_LOCK_FILE, restore_persistent_list_cache) ? 0 : 1);
 else if (mode == "list-cache-valid")
-    exit(persistent_list_cache_valid() ? 0 : 1);
+    exit(with_file_lock(LIST_CACHE_LOCK_FILE, persistent_list_cache_valid) ? 0 : 1);
 else if (mode == "list-cache-capacity")
     exit(list_cache_has_capacity(int(ARGV[1]), false) ? 0 : 1);
 else if (mode == "runtime-list-cache-active")
-    exit(runtime_list_cache_active() ? 0 : 1);
+    exit(with_file_lock(LIST_CACHE_LOCK_FILE, runtime_list_cache_active) ? 0 : 1);
 else if (mode == "commit-runtime-list-generation")
-    exit(commit_runtime_list_generation(current_list_update_signature()) ? 0 : 1);
+    exit(with_file_lock(LIST_CACHE_LOCK_FILE, () => commit_runtime_list_generation(current_list_update_signature())) ? 0 : 1);
 else if (mode == "schedule-automatic-latency-test")
     exit(schedule_automatic_latency_test(ARGV[1]) ? 0 : 1);
 else if (mode == "persist-list-cache")
-    exit(persist_list_cache(int(ARGV[1])) ? 0 : 1);
+    exit(with_file_lock(LIST_CACHE_LOCK_FILE, () => persist_list_cache(int(ARGV[1]))) ? 0 : 1);
 else if (mode == "download-list-file")
     exit(download_to_file_network(ARGV[1], ARGV[2], ARGV[3]) ? 0 : 1);
 else if (mode == "apply-list-cache")
-    exit(apply_persistent_list_cache() ? 0 : 1);
+    exit(with_file_lock(LIST_CACHE_LOCK_FILE, apply_persistent_list_cache) ? 0 : 1);
 else if (mode == "invalidate-list-cache")
-    exit(invalidate_persistent_list_cache(ARGV[1] == "preserve-runtime") ? 0 : 1);
+    exit(with_file_lock(LIST_CACHE_LOCK_FILE, () => invalidate_persistent_list_cache(ARGV[1] == "preserve-runtime")) ? 0 : 1);
 else if (mode == "stop-list-update")
     stop_list_update();
 else if (mode == "list-update-due-status-fixture")

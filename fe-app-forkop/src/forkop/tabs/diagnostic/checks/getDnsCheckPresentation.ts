@@ -5,25 +5,16 @@ type DnsCheckState = 'error' | 'success' | 'warning';
 
 export function getDnsCheckPresentation(data: Forkop.DnsCheckResult) {
   const dhcpManagedManually = Boolean(data.dont_touch_dhcp);
-  const dhcpCheckOk = dhcpManagedManually || Boolean(data.dhcp_config_status);
   // Keep Bootstrap DNS mandatory for an older backend that does not send this field.
   const bootstrapCheckRequired = data.bootstrap_dns_required !== 0;
-  const bootstrapCheckOk =
-    !bootstrapCheckRequired || Boolean(data.bootstrap_dns_status);
+  const checks = [Boolean(data.dns_on_router), Boolean(data.dns_status)];
+  if (!dhcpManagedManually) checks.push(Boolean(data.dhcp_config_status));
+  if (bootstrapCheckRequired) checks.push(Boolean(data.bootstrap_dns_status));
 
-  const allGood =
-    Boolean(data.dns_on_router) &&
-    dhcpCheckOk &&
-    bootstrapCheckOk &&
-    Boolean(data.dns_status);
-
-  const atLeastOneGood =
-    Boolean(data.dns_on_router) ||
-    dhcpCheckOk ||
-    bootstrapCheckOk ||
-    Boolean(data.dns_status);
-
-  const meta = getMeta({ atLeastOneGood, allGood });
+  const meta = getMeta({
+    atLeastOneGood: checks.some(Boolean),
+    allGood: checks.every(Boolean),
+  });
   const state: DnsCheckState =
     dhcpManagedManually && meta.state === 'success' ? 'warning' : meta.state;
   const description =

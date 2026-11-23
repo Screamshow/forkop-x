@@ -5,14 +5,17 @@ Run on the operator computer with gh authentication and mirror SSH access.
 Private signing and SSH keys never enter GitHub Actions.
 """
 import argparse
+import base64
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -24,6 +27,7 @@ KEY = '/srv/mirror/keys/forkop-apk.pem'
 PUBLIC_KEY = '/srv/mirror/public/forkop/forkop-apk.pem'
 DEFAULT_SSH = Path.home() / '.ssh/codex_forkop_mt6000'
 BASE = 'https://mirror.51343.ru'
+GITHUB_DISPATCH_API_VERSION = '2026-03-10'
 
 
 def run(*args, capture=False):
@@ -69,7 +73,7 @@ def verify_mirror_asset(url, size, sha256):
         raise ValueError(f'Mirror package size or checksum mismatch: {url.rsplit("/", 1)[-1]}')
 
 
-def verify_xrust_pin(version):
+def verify_xrust_pin(version, expected_revision=None):
     """Require the immutable mirror archive to match the public Xrust release."""
     tag = f'rust-x-v{version}'
     release = gh('api', f'repos/Screamshow/xrust/releases/tags/{tag}')
@@ -80,7 +84,8 @@ def verify_xrust_pin(version):
     revision = manifest.get('package_revision')
     if (manifest.get('schema') != 1 or manifest.get('name') != 'rust-x' or manifest.get('apk_signed') is not True or
             manifest.get('version') != version or manifest.get('minimum_forkop_major') != 3 or
-            type(revision) is not int or revision <= 0):
+            type(revision) is not int or revision <= 0 or
+            (expected_revision is not None and revision != expected_revision)):
         raise ValueError(f'Invalid mirror manifest for pinned Xrust {version}')
 
     github_packages = {asset['name']: asset for asset in release['assets']
@@ -162,16 +167,54 @@ class Release:
     def __init__(self, args, project, version):
         self.args, self.project, self.version = args, project, version
         self.xrust_version = args.xrust_version if project == 'forkop' else None
+        self.xrust_revision = None
         forkop_version = getattr(args, 'forkop', None)
         self.archive_only = project == 'rust-x' and bool(forkop_version and version_key(forkop_version)[0] >= 3)
         self.repo = 'Screamshow/' + ('forkop-x' if project == 'forkop' else 'xrust')
         self.tag = version if project == 'forkop' else 'rust-x-v' + version
         self.directory = (args.output / project / self.tag).resolve()
+        self.build_record = self.directory / '.workflow-run.json'
+        self.workflow = 'build.yml' if project == 'forkop' else 'release.yml'
         self.ssh = ['ssh', '-i', str(args.ssh_key), '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', HOST]
         self.scp = ['scp', '-i', str(args.ssh_key), '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10']
 
     def remote(self, command):
         return run(*self.ssh, command, capture=True)
+
+    def saved_build(self):
+        if not self.args.resume or not self.build_record.is_file():
+            return None
+        record = json.loads(self.build_record.read_text(encoding='utf-8'))
+        run_id = record.get('run_id')
+        pending_tag_push = run_id is None and record.get('pending_tag_push') is True
+        if (record.get('repo') != self.repo or record.get('tag') != self.tag or
+                not re.fullmatch(r'[0-9a-f]{40}', record.get('source', '')) or
+                (not pending_tag_push and (type(run_id) is not int or run_id <= 0))):
+            raise ValueError('Invalid local workflow run record for this release')
+        return record
+
+    def save_build(self, run_id, *, pending_tag_push=False):
+        if not pending_tag_push and (type(run_id) is not int or run_id <= 0):
+            raise ValueError('GitHub dispatch did not return a workflow run ID')
+        self.directory.mkdir(parents=True, exist_ok=True)
+        descriptor, path = tempfile.mkstemp(dir=self.directory, prefix='.workflow-run-')
+        path = Path(path)
+        try:
+            with os.fdopen(descriptor, 'w', encoding='utf-8') as file:
+                json.dump(dict(repo=self.repo, tag=self.tag, source=self.source, run_id=run_id,
+                               pending_tag_push=pending_tag_push), file)
+            path.replace(self.build_record)
+        finally:
+            path.unlink(missing_ok=True)
+
+    def exact_tag_exists(self):
+        tag_ref = 'refs/tags/' + self.tag
+        refs = gh('api', f'repos/{self.repo}/git/matching-refs/tags/{self.tag}')
+        if not any(item['ref'] == tag_ref for item in refs):
+            return False
+        if gh('api', f'repos/{self.repo}/commits/{self.tag}')['sha'] != self.source:
+            raise ValueError('Existing release tag points to a different commit')
+        return True
 
     def preflight(self):
         releases = gh('api', '--paginate', f'repos/{self.repo}/releases', '--slurp')
@@ -179,29 +222,29 @@ class Release:
         self.existing = found[0] if found else None
         if self.existing and not self.args.resume:
             raise ValueError(f'{self.tag} already exists; use --resume to continue verification/sync')
-        if (self.project == 'forkop' and version_key(self.version)[0] >= 3 and
-                (not self.existing or self.existing['draft']) and self.xrust_version is None):
-            raise ValueError('A new Forkop 3.x release or draft requires --xrust-version')
-        self.source = gh('api', f'repos/{self.repo}/commits/main')['sha']
+        saved = self.saved_build() if not self.existing or self.existing['draft'] else None
+        needs_xrust_pin = self.project == 'forkop' and version_key(self.version)[0] >= 3
+        if needs_xrust_pin and not self.existing and not saved and self.xrust_version is None:
+            raise ValueError('A new Forkop 3.x release requires --xrust-version')
         if self.existing:
             # A draft created by workflow_dispatch may not create its tag until
             # publication. Resume from its pinned build commit in that case.
             ref = release_source_ref(self.existing)
             self.source = gh('api', f'repos/{self.repo}/commits/{ref}')['sha']
+            if saved and saved['source'] != self.source:
+                raise ValueError('Draft source differs from the local workflow run record')
+        else:
+            self.source = saved['source'] if saved else gh('api', f'repos/{self.repo}/commits/main')['sha']
+        if needs_xrust_pin and (not self.existing or self.existing['draft']):
+            self.read_xrust_source_pin()
         if self.project == 'rust-x' and not self.existing:
-            import base64
             content = gh('api', f'repos/{self.repo}/contents/Cargo.toml?ref={self.source}')
             cargo = base64.b64decode(content['content']).decode()
             workspace = cargo.split('[workspace.package]', 1)[1].split('\n[', 1)[0]
             if not re.search(r'^version = "' + re.escape(self.version) + r'"$', workspace, re.MULTILINE):
                 raise ValueError('Prepare and push the Xrust workspace version/notes before releasing')
-            tagged = subprocess.run(['gh', 'api', f'repos/{self.repo}/git/ref/tags/{self.tag}'], capture_output=True, text=True)
-            if tagged.returncode == 0 and gh('api', f'repos/{self.repo}/commits/{self.tag}')['sha'] != self.source:
-                raise ValueError('Existing Xrust tag points to a different commit')
-        if self.project == 'forkop' and not self.existing:
-            tagged = subprocess.run(['gh', 'api', f'repos/{self.repo}/git/ref/tags/{self.tag}'], capture_output=True, text=True)
-            if tagged.returncode == 0 and gh('api', f'repos/{self.repo}/commits/{self.tag}')['sha'] != self.source:
-                raise ValueError('Existing Forkop tag points to a different commit')
+        if not self.existing or self.existing['draft']:
+            self.exact_tag_exists()
         channel = ('canary' if '-canary.' in self.version else 'stable')
         pointer = BASE + ('/forkop/rust-x/latest.json' if self.project == 'rust-x' else f'/forkop/updates/{channel}.json')
         if not self.archive_only:
@@ -215,35 +258,99 @@ class Release:
                         f'grep -Fq write-channel-manifest.sh /usr/local/sbin/{publisher} && '
                         'grep -Fq xrust_version /usr/local/lib/forkop/write-release-catalog.py')
 
-    def build(self):
-        if self.existing:
-            return
-        workflow = 'build.yml' if self.project == 'forkop' else 'release.yml'
-        seen = {r['databaseId'] for r in gh('run', 'list', '-R', self.repo, '--workflow', workflow, '--limit', '100', '--json', 'databaseId')}
-        if self.project == 'rust-x':
-            # Dispatch against an existing tag to avoid tag-push + dispatch duplicates.
-            # A missing lightweight tag is created through API; its push starts one run.
-            tagged = subprocess.run(['gh', 'api', f'repos/{self.repo}/git/ref/tags/{self.tag}'], capture_output=True, text=True)
-            if tagged.returncode:
-                run('gh', 'api', f'repos/{self.repo}/git/refs', '-f', 'ref=refs/tags/' + self.tag, '-f', 'sha=' + self.source)
-                event = 'push'
-            else:
-                run('gh', 'workflow', 'run', workflow, '-R', self.repo, '--ref', 'main', '-f', 'tag=' + self.tag)
-                event = 'workflow_dispatch'
-        else:
-            run('gh', 'workflow', 'run', workflow, '-R', self.repo, '--ref', 'main', '-f', 'release_tag=' + self.tag, '-f', 'publish_release=true')
-            event = 'workflow_dispatch'
+    def read_xrust_source_pin(self):
+        contents = f'repos/{self.repo}/contents/forkop'
+        if self.existing and self.existing['draft']:
+            files = gh('api', f'{contents}?ref={self.source}')
+            if not any(item['name'] == 'xrust-pin' for item in files):
+                if self.xrust_version is None:
+                    raise ValueError('Resume this legacy Forkop draft with its exact --xrust-version')
+                return
+        info = gh('api', f'{contents}/xrust-pin?ref={self.source}')
+        pin = re.fullmatch(r'([0-9]+\.[0-9]+\.[0-9]+) ([1-9][0-9]*)\n?',
+                           base64.b64decode(info['content']).decode())
+        if pin is None or (self.xrust_version is not None and pin[1] != self.xrust_version):
+            raise ValueError('The requested Xrust release does not match forkop/xrust-pin at the build source')
+        self.xrust_version, self.xrust_revision = pin[1], int(pin[2])
+
+    def draft_has_build_assets(self, release):
+        if not release['isDraft']:
+            return True
+        uploaded = {a['name']: a for a in release['assets']
+                    if a.get('size', 0) > 0 and a.get('state', 'uploaded').lower() == 'uploaded'}
+        if self.project == 'forkop':
+            packages = load(ROOT / 'mirror/sign-forkop-release.py').PACKAGES
+            return all(f'{package}_{self.version}.{ext}' in uploaded
+                       for package in packages for ext in ('apk', 'ipk'))
+        if 'openwrt-manifest.json' not in uploaded:
+            return False
+        manifest = json.loads(run('gh', 'release', 'download', self.tag, '-R', self.repo,
+                                  '-p', 'openwrt-manifest.json', '-O', '-', capture=True))
+        if manifest.get('version') != self.version or manifest.get('binary_source_commit') != self.source:
+            raise ValueError('Xrust draft manifest does not match the release source or version')
+        assets = manifest.get('assets', [])
+        pairs = {(a['architecture'], a['format']) for a in assets}
+        architectures = {arch for arch, _ in pairs}
+        if (not {'x86_64', 'aarch64_cortex-a53'} <= architectures or len(pairs) != len(assets) or
+                pairs != {(arch, fmt) for arch in architectures for fmt in ('apk', 'ipk')}):
+            return False
+        return all(
+            a['file'] in uploaded and uploaded[a['file']]['size'] == a['size'] and
+            uploaded[a['file']].get('digest') == 'sha256:' + a['sha256'] for a in assets)
+
+    def tag_push_run(self, *, create):
+        if create:
+            self.save_build(None, pending_tag_push=True)
+            run('gh', 'api', f'repos/{self.repo}/git/refs', '-f', 'ref=refs/tags/' + self.tag, '-f', 'sha=' + self.source)
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
-            runs = gh('run', 'list', '-R', self.repo, '--workflow', workflow, '--event', event, '--limit', '30', '--json', 'databaseId,headSha,headBranch,status')
-            matches = [r for r in runs if r['databaseId'] not in seen and r['headSha'] == self.source and (event != 'push' or r['headBranch'] == self.tag)]
+            runs = gh('run', 'list', '-R', self.repo, '--workflow', self.workflow, '--event', 'push',
+                      '--commit', self.source, '--limit', '30',
+                      '--json', 'databaseId,headSha,headBranch')
+            matches = [r for r in runs if r['headSha'] == self.source and r['headBranch'] == self.tag]
             if len(matches) > 1:
-                raise RuntimeError('Multiple new builds appeared; inspect GitHub Actions before resuming')
+                raise RuntimeError('Multiple exact tag builds appeared; inspect GitHub Actions before resuming')
             if matches:
-                wait_run(self.repo, matches[0]['databaseId'], self.source, self.args.timeout)
-                return
+                return matches[0]['databaseId']
             time.sleep(5)
         raise TimeoutError('No release build appeared; inspect GitHub Actions before retrying')
+
+    def dispatch_build(self, *, pending_tag_push=False):
+        if self.exact_tag_exists():
+            if pending_tag_push:
+                return self.tag_push_run(create=False)
+            ref = self.tag
+        elif self.project == 'rust-x' or gh('api', f'repos/{self.repo}/commits/main')['sha'] != self.source:
+            # A new Xrust tag starts its only build. For an old Forkop draft,
+            # a tag also lets recovery use its exact commit after main advances.
+            return self.tag_push_run(create=True)
+        else:
+            ref = 'main'
+        inputs = ['-f', 'inputs[tag]=' + self.tag] if self.project == 'rust-x' else [
+            '-f', 'inputs[release_tag]=' + self.tag, '-F', 'inputs[publish_release]=true']
+        dispatched = gh('api', f'repos/{self.repo}/actions/workflows/{self.workflow}/dispatches',
+                        '-H', 'X-GitHub-Api-Version: ' + GITHUB_DISPATCH_API_VERSION,
+                        '-f', 'ref=' + ref, *inputs)
+        return dispatched.get('workflow_run_id')
+
+    def build(self):
+        if self.existing and (not self.existing['draft'] or self.draft_has_build_assets(self.current())):
+            return
+        saved = self.saved_build()
+        if saved and saved['run_id'] is not None:
+            run_id = saved['run_id']
+            state = gh('run', 'view', str(run_id), '-R', self.repo, '--json', 'status,headSha')
+            if state['headSha'] != self.source:
+                raise ValueError('Saved workflow run does not match the release source')
+            if state['status'] != 'completed':
+                wait_run(self.repo, run_id, self.source, self.args.timeout)
+                if self.draft_has_build_assets(self.current()):
+                    return
+        run_id = self.dispatch_build(pending_tag_push=bool(saved and saved.get('pending_tag_push')))
+        self.save_build(run_id)
+        wait_run(self.repo, run_id, self.source, self.args.timeout)
+        if not self.draft_has_build_assets(self.current()):
+            raise RuntimeError('The release draft is still missing build assets; resume using --resume')
 
     def current(self):
         return gh('release', 'view', self.tag, '-R', self.repo, '--json', 'isDraft,databaseId,assets')
@@ -332,7 +439,7 @@ class Release:
             return
         if self.project == 'forkop':
             if version_key(self.version)[0] >= 3:
-                verify_xrust_pin(self.xrust_version)
+                verify_xrust_pin(self.xrust_version, self.xrust_revision)
             self.finalize_forkop()
         else:
             run(sys.executable, XRUST_FINALIZE, '--tag', self.tag,

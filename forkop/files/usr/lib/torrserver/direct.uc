@@ -28,9 +28,8 @@ function command_output(args) {
     return status == 0 && data != null ? text(data) : "";
 }
 function read(path) { let value = fs.readfile(path); return value == null ? "" : text(value); }
-function is_torrserver_cmdline(value) {
-    value = lc(replace(text(value), /\x00/g, " "));
-    return match(value, /(^|[/ ])torrserver([^/ ]*)?( |$)/) != null;
+function is_torrserver_executable(path) {
+    return match(lc(text(path)), /\/torrserver([_.-][a-z0-9_.-]+)?( \(deleted\))?$/) != null;
 }
 function numeric_pid(path) {
     let parts = split(path, "/");
@@ -50,33 +49,44 @@ function valid_cgroup(path) {
     return path != "/services" && path != "/system.slice" && path != "/user.slice";
 }
 function dedicated_cgroup(path) {
-    let pids = split(replace(read("/sys/fs/cgroup" + path + "/cgroup.procs"), /[\r\n]+$/g, ""), /[\r\n]+/);
-    let found = 0;
-    for (let pid in pids) {
-        if (pid == "") continue;
-        found++;
-        if (!is_torrserver_cmdline(read("/proc/" + pid + "/cmdline"))) return false;
+    let pending = [ "/sys/fs/cgroup" + path ];
+    let found = false;
+    while (length(pending)) {
+        let group = pop(pending);
+        let pids = fs.readfile(group + "/cgroup.procs");
+        let entries = fs.lsdir(group);
+        if (pids == null || entries == null) return false;
+        for (let pid in split(trim(pids), /[\r\n]+/)) {
+            if (pid == "") continue;
+            if (!match(pid, /^[0-9]+$/) || !is_torrserver_executable(fs.readlink("/proc/" + pid + "/exe")))
+                return false;
+            found = true;
+        }
+        // nft's cgroup level also matches descendants of this exact group.
+        for (let entry in entries)
+            if (entry != "." && entry != ".." && fs.lstat(group + "/" + entry)?.type == "directory")
+                push(pending, group + "/" + entry);
     }
-    return found > 0;
+    return found;
 }
 function discover() {
-    for (let cmdline_path in fs.glob("/proc/[0-9]*/cmdline")) {
-        let pid = numeric_pid(cmdline_path);
-        if (pid == "" || !is_torrserver_cmdline(read(cmdline_path))) continue;
+    let found = { running: 0, available: 0, pid: "", cgroup: "" };
+    for (let executable in fs.glob("/proc/[0-9]*/exe") || []) {
+        let pid = numeric_pid(executable);
+        if (pid == "" || !is_torrserver_executable(fs.readlink(executable))) continue;
         let path = process_cgroup(pid);
         if (valid_cgroup(path) && dedicated_cgroup(path))
             return { running: 1, available: 1, pid, cgroup: path };
-        return { running: 1, available: 0, pid, cgroup: path };
+        if (!found.running)
+            found = { running: 1, available: 0, pid, cgroup: path };
     }
-    return { running: 0, available: 0, pid: "", cgroup: "" };
+    return found;
 }
 function enabled() { return trim(uci.get(CONFIG_NAME + ".settings.torrserver_direct_enabled")) == "1"; }
 function rule_output_active(output, info) {
     if (!info.available) return false;
     let path = substr(info.cgroup, 1);
-    let parts = split(path, "/");
-    let level = length(parts) > 2 ? 2 : length(parts);
-    if (level == 2) path = parts[0] + "/" + parts[1];
+    let level = length(split(path, "/"));
     return (index(output, "type route hook output priority mangle - 1") >= 0 ||
             index(output, "type route hook output priority -151") >= 0) &&
         index(output, "ip daddr " + FAKEIP_INET4_RANGE + " ") >= 0 &&
@@ -93,10 +103,7 @@ function remove_rule() { success([ "nft", "delete", "table", "inet", TABLE ]); }
 function apply_rule(info) {
     if (!info.available) return false;
     let path = substr(info.cgroup, 1);
-    let parts = split(path, "/");
-    let level = length(parts) > 2 ? 2 : length(parts);
-    if (level == 2)
-        path = parts[0] + "/" + parts[1];
+    let level = length(split(path, "/"));
     remove_rule();
     let ruleset_path = "/tmp/forkop-torrserver-direct.nft";
     let ruleset = "add table inet " + TABLE + "\n" +
@@ -129,7 +136,7 @@ function reconcile() {
 }
 function worker() {
     let last_cgroup = "";
-    while (enabled()) {
+    while (uci.reload(CONFIG_NAME) && enabled()) {
         let info = discover();
         if (info.available && (info.cgroup != last_cgroup || !active(info))) {
             if (apply_rule(info)) last_cgroup = info.cgroup;

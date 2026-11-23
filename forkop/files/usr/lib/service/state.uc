@@ -3,9 +3,11 @@
 let fs = require("fs");
 let xrust = require("xrust.binary");
 let common = require("core.common");
+let duration = require("core.duration");
 let locks = require("core.locks");
 let uci_core = require("core.uci");
 let netstat = require("core.netstat");
+let process_identity = require("core.process_identity");
 let runtime_health = require("core.runtime_health");
 let core_ip = require("core.ip");
 let rule_config = require("config.rule");
@@ -20,6 +22,7 @@ const DEFAULT_PENDING_RELOAD_FILE = getenv("FORKOP_PENDING_RELOAD_FILE") || "/va
 const DEFAULT_SERVICE_INIT = getenv("FORKOP_SERVICE_INIT") || "/etc/init.d/forkop";
 const XRUST_INIT = getenv("FORKOP_SING_BOX_INIT") || xrust.INIT;
 const SB_DNS_INBOUND_ADDRESS = getenv("SB_DNS_INBOUND_ADDRESS") || "127.0.0.42";
+const SB_TPROXY_INBOUND_ADDRESS = getenv("SB_TPROXY_INBOUND_ADDRESS") || "0.0.0.0";
 const SB_TPROXY_INBOUND_PORT = getenv("SB_TPROXY_INBOUND_PORT") || "1602";
 const SB_TPROXY_INBOUND6_ADDRESS = getenv("SB_TPROXY_INBOUND6_ADDRESS") || "::1";
 const DIAGNOSTICS_RUNTIME_UC = LIB_DIR + "/diagnostics/runtime.uc";
@@ -421,27 +424,13 @@ function hup_sing_box_runtime() {
 }
 
 function process_start_ticks(stat) {
-    stat = as_string(stat);
-    let marker = index(stat, ") ");
-    if (marker < 0)
-        return null;
-
-    let fields = split(trim(substr(stat, marker + 2)), /[ \t\r\n]+/);
-    if (length(fields) < 20)
-        return null;
-
-    let start_ticks = fields[19];
-    if (match(start_ticks, /^[0-9]+$/) == null)
-        return null;
-
-    return int(start_ticks);
+    let ticks = process_identity.parse_stat(stat)?.ticks;
+    return ticks == null ? null : int(ticks);
 }
 
 function process_start_ticks_for_pid(pid) {
-    pid = as_string(pid);
-    if (match(pid, /^[0-9]+$/) == null)
-        return null;
-    return process_start_ticks(fs.readfile("/proc/" + pid + "/stat"));
+    let ticks = process_identity.start_ticks(pid);
+    return ticks == null ? null : int(ticks);
 }
 
 function process_age_seconds_from_ticks(start_ticks, current_ticks) {
@@ -463,7 +452,7 @@ function process_age_seconds(pid) {
     if (match(pid, /^[0-9]+$/) == null)
         return null;
 
-    let start_ticks = process_start_ticks(fs.readfile("/proc/" + pid + "/stat"));
+    let start_ticks = process_start_ticks_for_pid(pid);
     if (start_ticks == null)
         return null;
 
@@ -531,6 +520,15 @@ function sing_box_owned_service_kind() {
         return "other";
     let kind = sing_box_exe_kind(fs.readlink("/proc/" + provenance.pid + "/exe"));
     return process_start_ticks_for_pid(provenance.pid) == provenance.start_ticks ? kind : "other";
+}
+
+function xrust_watchdog_runtime_kind() {
+    let kind = sing_box_owned_service_kind();
+    if (kind != "other")
+        return kind;
+    // A failed ownership check can mean a healthy managed core and a second
+    // process, or a transition snapshot that moved while we were reading it.
+    return sing_box_process_count() == 0 ? "absent" : "ambiguous";
 }
 
 function sing_box_current_owned_service_runtime() {
@@ -925,13 +923,13 @@ function forkop_runtime_network_configured(rt_table, nft_table, mark) {
         command_success_from_args([ "ucode", "-L", LIB_DIR, LIB_DIR + "/nft/apply.uc", "tproxy-route-rule-present", rt_table, mark ]);
 }
 
-function sing_box_runtime_ports_ready() {
-    return netstat.sing_box_standard_ports_listening(
-        command_output_from_args([ "netstat", "-ln" ]),
+function sing_box_runtime_ports_ready(provenance) {
+    return provenance != null && pid_has_current_sing_box_exe(provenance.pid) && netstat.xrust_standard_ports_owned(
+        command_output_from_args([ "netstat", "-lntup" ]), provenance.pid,
         SB_DNS_INBOUND_ADDRESS,
-        SB_TPROXY_INBOUND_PORT,
+        SB_TPROXY_INBOUND_PORT, SB_TPROXY_INBOUND_ADDRESS,
         core_ip.ipv6_tproxy_enabled() ? SB_TPROXY_INBOUND6_ADDRESS : ""
-    );
+    ) && process_start_ticks_for_pid(provenance.pid) == provenance.start_ticks;
 }
 
 function sing_box_clash_api_ready() {
@@ -943,8 +941,7 @@ function sing_box_clash_api_ready() {
 }
 
 function single_ready_sing_box_runtime() {
-    return sing_box_current_owned_service_runtime() &&
-        sing_box_runtime_ports_ready() && sing_box_clash_api_ready();
+    return sing_box_runtime_ports_ready(sing_box_runtime_provenance()) && sing_box_clash_api_ready();
 }
 
 function forkop_running(rt_table, nft_table, mark) {
@@ -953,8 +950,7 @@ function forkop_running(rt_table, nft_table, mark) {
 }
 
 function forkop_stably_running(rt_table, nft_table, mark, min_age) {
-    return sing_box_current_owned_service_runtime() && sing_box_service_stable(min_age) &&
-        sing_box_runtime_ports_ready() && sing_box_clash_api_ready() &&
+    return sing_box_service_stable(min_age) && single_ready_sing_box_runtime() &&
         forkop_runtime_network_configured(rt_table, nft_table, mark);
 }
 
@@ -1070,34 +1066,7 @@ function rule_has_nft_list_update_source(enabled, action, community_lists, remot
 }
 
 function duration_to_seconds_value(value) {
-    let rest = as_string(value);
-    if (rest == "")
-        return null;
-
-    let total = 0.0;
-    let multipliers = {
-        ns: 0.000000001,
-        us: 0.000001,
-        ms: 0.001,
-        s: 1,
-        m: 60,
-        h: 3600,
-        d: 86400
-    };
-
-    while (rest != "") {
-        let matched = match(rest, /^([0-9]+(\.[0-9]+)?)(ns|us|ms|s|m|h|d)/);
-        if (!matched)
-            return null;
-
-        let token = as_string(matched[0]);
-        let amount = matched[1] * 1;
-        let unit = matched[3];
-        total += amount * multipliers[unit];
-        rest = substr(rest, length(token));
-    }
-
-    return total <= 0 ? null : int(total + 0.5);
+    return duration.round_seconds(value);
 }
 
 function download_via_proxy_option_for_purpose(purpose) {
@@ -1958,6 +1927,8 @@ else if (mode == "hup-sing-box-runtime")
     hup_sing_box_runtime();
 else if (mode == "single-ready-sing-box-runtime")
     exit(single_ready_sing_box_runtime() ? 0 : 1);
+else if (mode == "xrust-runtime-ports-ready")
+    exit(sing_box_runtime_ports_ready(sing_box_runtime_provenance()) ? 0 : 1);
 else if (mode == "clear-reload-state")
     clear_reload_state(ARGV[1], ARGV[2]);
 else if (mode == "capture-reload-state")
@@ -1990,6 +1961,8 @@ else if (mode == "sing-box-current-owned-service-runtime")
     exit(sing_box_current_owned_service_runtime() ? 0 : 1);
 else if (mode == "sing-box-owned-service-kind")
     print(sing_box_owned_service_kind(), "\n");
+else if (mode == "xrust-watchdog-runtime-kind")
+    print(xrust_watchdog_runtime_kind(), "\n");
 else if (mode == "sing-box-runtime-provenance") {
     let provenance = sing_box_runtime_provenance();
     if (provenance == null || !pid_has_current_sing_box_exe(provenance.pid))

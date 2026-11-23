@@ -14,7 +14,7 @@ TORRSERVER_DIRECT_UC="$ROOT/usr/lib/forkop/torrserver/direct.uc"
 UCODE_BIN="$ROOT/usr/bin/ucode"
 LOCK="$ROOT/tmp/forkop-full-uninstall.lock"
 COMPONENT_LOCK="$ROOT/var/run/forkop/component-action.lock"
-PACKAGES="luci-i18n-forkop-ru luci-app-forkop forkop rust-x sing-box-x sing-box sing-box-tiny sing-box-extended"
+PACKAGES="luci-i18n-forkop-ru luci-app-forkop forkop"
 PHASE=preflight
 
 has_mirror() {
@@ -23,6 +23,8 @@ has_mirror() {
 
 repository_plan() {
     : > "$JOB/repositories"
+    rewrite="$ROOT/usr/share/forkop/mirror-migration.sh"
+    [ -r "$rewrite" ] || return 0
     # Only system repository files that Forkop itself backed up are eligible
     # for restoration. Never infer ownership from a URL in custom/vendor feeds.
     for file in "$ROOT/etc/opkg/distfeeds.conf" \
@@ -33,18 +35,23 @@ repository_plan() {
         if [ ! -f "$source" ] || has_mirror "$source" || ! has_mirror "$file"; then
             continue
         fi
+        FORKOP_MIRROR_BASE_URL="$MIRROR" sh "$rewrite" --print-rewrite "$source" | cmp -s "$file" - ||
+            FORKOP_MIRROR_BASE_URL=https://mirror.51343.ru sh "$rewrite" --print-rewrite "$source" | cmp -s "$file" - ||
+            continue
         printf '%s|%s\n' "$file" "$source" >> "$JOB/repositories"
     done
 }
 
 remove_owned_apk_mirror_artifacts() {
     feed="$ROOT/etc/apk/repositories.d/forkop.list"
-    if [ -f "$feed" ] && grep -Fqx \
-        -e "${MIRROR%/}/forkop/mirror/current/packages.adb" \
-        -e "${MIRROR%/}/forkop/mirror/current/aarch64_cortex-a53/packages.adb" \
-        -e "${MIRROR%/}/forkop/mirror/current/x86_64/packages.adb" "$feed"; then
-        rm -f "$feed" "$ROOT/etc/apk/keys/forkop-mirror.pem"
-    fi
+    [ -f "$feed" ] || return 0
+    case "$(cat "$feed")" in
+        "${MIRROR%/}"/forkop/mirror/current/packages.adb|\
+        "${MIRROR%/}"/forkop/mirror/current/aarch64_cortex-a53/packages.adb|\
+        "${MIRROR%/}"/forkop/mirror/current/x86_64/packages.adb)
+            rm -f "$feed" "$ROOT/etc/apk/keys/forkop-mirror.pem"
+            ;;
+    esac
 }
 
 installed() {
@@ -94,6 +101,13 @@ run() {
 
     PHASE=stop
     state running
+    if [ -x "$ROOT/etc/init.d/forkop" ]; then
+        if ! FORKOP_INTERNAL_SERVICE_STOP=1 "$ROOT/etc/init.d/forkop" stop; then
+            echo "Forkop service did not stop cleanly; removal stopped before deleting packages" >&2
+            return 1
+        fi
+        "$ROOT/etc/init.d/forkop" disable || echo "Forkop service could not be disabled" >&2
+    fi
     if [ -x "$ROOT/etc/init.d/forkop-tailscale" ]; then
         "$ROOT/etc/init.d/forkop-tailscale" stop || true
         "$ROOT/etc/init.d/forkop-tailscale" disable || true
@@ -101,10 +115,6 @@ run() {
     if [ -x "$ROOT/etc/init.d/forkop-support" ]; then
         "$ROOT/etc/init.d/forkop-support" stop || true
         "$ROOT/etc/init.d/forkop-support" disable || true
-    fi
-    if [ -x "$ROOT/etc/init.d/forkop" ]; then
-        "$ROOT/etc/init.d/forkop" stop || echo "Forkop service did not stop cleanly" >&2
-        "$ROOT/etc/init.d/forkop" disable || echo "Forkop service could not be disabled" >&2
     fi
     if [ -x "$BIN" ] && ! "$BIN" dnsmasq_restore; then
         echo "Could not restore dnsmasq; removal stopped before deleting packages" >&2
@@ -121,11 +131,6 @@ run() {
     if [ -x "$UCODE_BIN" ] && [ -f "$TORRSERVER_DIRECT_UC" ]; then
         "$UCODE_BIN" -L "$ROOT/usr/lib/forkop" "$TORRSERVER_DIRECT_UC" remove || true
     fi
-    if [ -x "$ROOT/etc/init.d/sing-box" ]; then
-        "$ROOT/etc/init.d/sing-box" stop || echo "sing-box service did not stop cleanly" >&2
-        "$ROOT/etc/init.d/sing-box" disable || echo "sing-box service could not be disabled" >&2
-    fi
-
     PHASE=repositories
     state running
     while IFS='|' read -r file source; do
@@ -167,21 +172,16 @@ run() {
             "$ROOT/usr/lib/forkop-support/tailscale.combined" "$ROOT/usr/lib/forkop-support/.forkop-lite"
         rmdir "$ROOT/usr/lib/forkop-support" 2>/dev/null || true
     fi
-    # Only known product paths are removed. Never recursively delete a path
-    # supplied by a UCI option (it might point at /etc or other system data).
-    # /tmp/xrust-rulesets holds the Rust X core's compiled rule-set cache;
-    # cores before the rename used /tmp/tachyon-rulesets.
-    for directory in /etc/forkop /etc/forkop-tailscale /etc/xrust /etc/sing-box /tmp/xrust /tmp/sing-box /usr/share/xrust /tmp/xrust-rulesets \
-        /tmp/tachyon-rulesets /usr/lib/forkop /usr/share/forkop /www/luci-static/resources/view/forkop; do
+    # Shared cores and their directories have no exclusive Forkop ownership.
+    # Remove only product paths, never a location supplied by a UCI option.
+    for directory in /etc/forkop /etc/forkop-tailscale /usr/lib/forkop \
+        /usr/share/forkop /www/luci-static/resources/view/forkop; do
         rm -rf "$ROOT$directory"
     done
     for file in /etc/config/forkop /etc/config/forkop.apk-new /etc/config/forkop.apk-old \
         /etc/config/forkop-opkg /etc/config/forkop.opkg-new /etc/config/forkop.opkg-old \
-        /etc/config/forkop.opkg-dist /etc/config/sing-box /etc/config/sing-box.apk-new \
-        /etc/config/sing-box.apk-old /etc/config/sing-box-opkg /etc/config/sing-box.opkg-new \
-        /etc/config/sing-box.opkg-old /etc/config/sing-box.opkg-dist \
-        /usr/bin/forkop /usr/bin/sing-box /usr/lib/libcronet.so \
-        /etc/init.d/forkop /etc/init.d/forkop-xrust /etc/init.d/sing-box /etc/init.d/forkop-torrserver-direct /etc/init.d/forkop-support /etc/init.d/forkop-tailscale \
+        /etc/config/forkop.opkg-dist /usr/bin/forkop \
+        /etc/init.d/forkop /etc/init.d/forkop-xrust /etc/init.d/forkop-torrserver-direct /etc/init.d/forkop-support /etc/init.d/forkop-tailscale \
         /etc/uci-defaults/50_luci-forkop \
         /usr/share/luci/menu.d/luci-app-forkop.json /usr/share/rpcd/acl.d/luci-app-forkop.json; do
         rm -f "$ROOT$file"
@@ -190,6 +190,10 @@ run() {
         "$ROOT"/tmp/luci-indexcache* "$ROOT"/tmp/luci-modulecache/*; do
         [ ! -f "$file" ] || rm -f "$file"
     done
+    if [ ! -L "$ROOT/etc/forkop-backups" ]; then
+        rm -f "$ROOT/etc/forkop-backups/configuration.tar.gz"
+        rmdir "$ROOT/etc/forkop-backups" 2>/dev/null || true
+    fi
     while IFS='|' read -r file source; do
         rm -f "${file}.pre-forkop-mirror"
     done < "$JOB/repositories"

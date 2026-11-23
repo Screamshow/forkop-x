@@ -204,7 +204,7 @@ function forkop_release_version_parts(value) {
 
     let match_parts = match(version, /^([0-9]+)[.]([0-9]+)[.]([0-9]+)(-canary[.]([0-9]+))?$/);
     return [ int(match_parts[1]), int(match_parts[2]), int(match_parts[3]),
-        match_parts[5] == null ? -1 : int(match_parts[5]) ];
+        match_parts[5] == null ? 1 : 0, int(match_parts[5] || "0") ];
 }
 
 function forkop_release_version_compare(lhs, rhs) {
@@ -213,7 +213,8 @@ function forkop_release_version_compare(lhs, rhs) {
     if (lhs_parts == null || rhs_parts == null)
         return false;
 
-    for (let i = 0; i < 3; i++) {
+    // A final release sorts after every canary of the same base version.
+    for (let i = 0; i < length(lhs_parts); i++) {
         if (lhs_parts[i] < rhs_parts[i]) {
             print("-1\n");
             return true;
@@ -222,16 +223,6 @@ function forkop_release_version_compare(lhs, rhs) {
             print("1\n");
             return true;
         }
-    }
-
-    // A stable release sorts after every canary of the same base version.
-    if (lhs_parts[3] < rhs_parts[3]) {
-        print("-1\n");
-        return true;
-    }
-    if (lhs_parts[3] > rhs_parts[3]) {
-        print("1\n");
-        return true;
     }
 
     print("0\n");

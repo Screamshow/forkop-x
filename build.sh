@@ -2,13 +2,13 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RELEASE_VERSION_FORMAT='x.y.z or x.y.z-canary.N'
 
 usage() {
   cat <<EOF
 Usage: $(basename "$0") <version> [output-directory]
 
-Build Forkop IPK and APK packages. The version must use x.y.z or x.y.z-N,
-or x.y.z-canary.N.
+Build Forkop IPK and APK packages. The version must use $RELEASE_VERSION_FORMAT.
 EOF
 }
 
@@ -16,7 +16,7 @@ validate_release_version() {
   local version="$1"
 
   if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-canary\.[0-9]+)?$ ]]; then
-    echo "Expected release version in the form x.y.z or x.y.z-canary.N" >&2
+    echo "Expected release version in the form $RELEASE_VERSION_FORMAT" >&2
     return 1
   fi
 }
@@ -240,8 +240,7 @@ build_app_root() {
   make_dir "$output_root/www"
 
   cp -a "$ROOT_DIR/luci-app-forkop/htdocs/." "$output_root/www/"
-  (cd "$ROOT_DIR/luci-app-forkop" && sha256sum -c generated/source.sha256) >/dev/null
-  cp -a "$ROOT_DIR/luci-app-forkop/generated/luci-static/." "$output_root/www/luci-static/"
+  sh "$ROOT_DIR/luci-app-forkop/stage-compact-assets.sh" "$ROOT_DIR/luci-app-forkop" "$output_root/www"
   cp -a "$ROOT_DIR/luci-app-forkop/root/." "$output_root/"
   sed -i -e "s/__COMPILED_VERSION_VARIABLE__/${RELEASE_VERSION}/g" \
     "$output_root/www/luci-static/resources/view/forkop/main.js"
@@ -297,21 +296,14 @@ installed_size_bytes() {
 }
 
 write_backend_preinst() {
-  cat <<'EOF'
-#!/bin/sh
-if [ -z "${IPKG_INSTROOT:-}" ] && [ ! -L /etc/rc.d/S98forkop-upgrade-recovery ]; then
-    banner="$(/usr/bin/xrust version 2>/dev/null)" &&
-        printf '%s\n' "$banner" | head -n 1 | grep -Eq '^xrust version [0-9]+\.[0-9]+\.[0-9]+$' || {
-        printf '%s\n' 'Forkop 3 requires native Xrust. Run the official Forkop installer to upgrade the packages together: https://mirror.51343.ru/forkop/install.sh' >&2
-        # opkg has already run the old prerm. Its abort path does not run postinst.
-        if [ "${PKG_UPGRADE:-}" = 1 ] && [ "${1:-}" = upgrade ] && [ -x /usr/bin/forkop ]; then
-            FORKOP_LIB=/usr/lib/forkop /usr/bin/forkop package_postinst ||
-                printf '%s\n' 'Could not restore the previous Forkop service. Check the Forkop log.' >&2
-        fi
-        exit 1
-    }
-fi
-EOF
+  local pin revision extra
+  read -r pin revision extra < "$ROOT_DIR/forkop/xrust-pin"
+  if [[ ! "$pin" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || ! "$revision" =~ ^[1-9][0-9]*$ || -n "$extra" ]]; then
+    echo "Invalid Forkop Xrust package pin" >&2
+    return 1
+  fi
+  sed -e "s/@XRUST_VERSION@/$pin/g" -e "s/@XRUST_REVISION@/$revision/g" \
+    -e "s/@FORKOP_VERSION@/$1/g" "$ROOT_DIR/forkop/package-preinst.sh"
 }
 
 write_backend_ipk_control() {
@@ -339,7 +331,7 @@ EOF
 /etc/config/forkop
 EOF
 
-  write_backend_preinst > "$control_dir/preinst"
+  write_backend_preinst "$RELEASE_VERSION" > "$control_dir/preinst"
 
   cat > "$control_dir/postinst" <<'EOF'
 #!/bin/sh
@@ -476,7 +468,7 @@ write_backend_apk_scripts() {
   rm -rf "$scripts_dir"
   make_dir "$scripts_dir"
 
-  write_backend_preinst > "$scripts_dir/backend-pre-install.sh"
+  write_backend_preinst "$APK_INTERNAL_VERSION" > "$scripts_dir/backend-pre-install.sh"
 
   cat > "$scripts_dir/backend-post-install.sh" <<'EOF'
 #!/usr/bin/ucode
@@ -488,13 +480,15 @@ EOF
   cat > "$scripts_dir/backend-pre-deinstall.sh" <<'EOF'
 #!/usr/bin/ucode
 
-if (getenv("IPKG_INSTROOT") == null || getenv("IPKG_INSTROOT") == "")
-	system("/usr/bin/forkop package_prerm remove >/dev/null 2>&1");
+if (getenv("IPKG_INSTROOT") == null || getenv("IPKG_INSTROOT") == "") {
+	let status = system("/usr/bin/forkop package_prerm remove");
+	exit(status > 255 ? int(status / 256) : status);
+}
 
 exit(0);
 EOF
 
-  write_backend_preinst > "$scripts_dir/backend-pre-upgrade.sh"
+  write_backend_preinst "$APK_INTERNAL_VERSION" > "$scripts_dir/backend-pre-upgrade.sh"
   cat >> "$scripts_dir/backend-pre-upgrade.sh" <<'EOF'
 [ -n "${IPKG_INSTROOT:-}" ] && exit 0
 /usr/bin/forkop package_prerm upgrade >/dev/null 2>&1
@@ -702,7 +696,7 @@ print_summary() {
   find "$output_dir" -maxdepth 1 -type f \( -name '*.ipk' -o -name '*.apk' \) | sort
 }
 
-main() {
+main() (
   local output_dir
   local ipk_archive
   local apk_archive
@@ -731,9 +725,9 @@ main() {
     echo "Another Forkop package build is already running" >&2
     exit 1
   fi
-  output_dir="$OUTPUT_DIR"
-  mkdir -p "$output_dir"
-  rm -f "$output_dir"/forkop_* "$output_dir"/luci-app-forkop_* "$output_dir"/luci-i18n-forkop-ru_*
+  mkdir -p "$OUTPUT_DIR"
+  output_dir="$(mktemp -d "$OUTPUT_DIR/.forkop-build.XXXXXX")"
+  trap 'rm -rf -- "$output_dir"' EXIT
 
   ipk_archive="$(download_sdk_archive "$IPK_SDK_URL")"
   apk_archive="$(download_sdk_archive "$APK_SDK_URL")"
@@ -829,8 +823,11 @@ main() {
   verify_apk_metadata "$apk_bin" "$output_dir/luci-app-forkop_${RELEASE_VERSION}.apk" "luci-app-forkop" "$APK_INTERNAL_VERSION"
   verify_apk_metadata "$apk_bin" "$output_dir/luci-i18n-forkop-ru_${RELEASE_VERSION}.apk" "luci-i18n-forkop-ru" "$APK_INTERNAL_VERSION"
 
+  # All six packages have passed verification. Keep artifacts of other
+  # versions, and leave the existing release untouched if building fails.
+  mv -- "$output_dir"/*.ipk "$output_dir"/*.apk "$OUTPUT_DIR/"
   cleanup_work_dir
-  print_summary "$output_dir"
-}
+  print_summary "$OUTPUT_DIR"
+)
 
 main "$@"

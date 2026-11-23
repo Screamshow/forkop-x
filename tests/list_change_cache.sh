@@ -229,4 +229,23 @@ test "$(cat "$WORK/state/list-update-last-success.timestamp")" = 1234 || fail 'f
 : >"$TEST_NETWORK_LOG"
 TEST_ACCEPT_NEW=0 updates list-update-if-due || fail 'immediate repeat did not skip the failed download'
 [ ! -s "$TEST_NETWORK_LOG" ] || fail 'the next tick retried the failed download early'
+
+printf '%s\n1\n' "$$" > "$FORKOP_LIST_UPDATE_PID_FILE"
+updates stop-list-update
+[ ! -e "$FORKOP_LIST_UPDATE_PID_FILE" ] || fail 'stale worker record remained'
+(
+  guard="$FORKOP_RUNTIME_LIST_GENERATION_DIR.guard"
+  stage="$FORKOP_RUNTIME_LIST_GENERATION_DIR.stage"
+  exec 9>>"$guard"
+  flock -x 9
+  mkdir "$stage"
+  : > "$stage/in-progress"
+  updates runtime-list-cache-active 9>&- &
+  reader=$!
+  sleep 0.2
+  [ -f "$stage/in-progress" ] || fail 'reader removed a concurrent generation stage'
+  flock -u 9
+  wait "$reader" || true
+  [ ! -e "$stage" ] || fail 'abandoned stage was not cleaned after releasing the lock'
+)
 echo 'list composition cache checks passed'

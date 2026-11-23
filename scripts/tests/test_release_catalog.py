@@ -4,10 +4,15 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('catalog', Path(__file__).parents[1] / 'write-release-catalog.py')
 catalog = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(catalog)
+
+spec = importlib.util.spec_from_file_location('backfill', Path(__file__).parents[1] / 'backfill-release-archives.py')
+backfill = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(backfill)
 
 
 class CatalogTests(unittest.TestCase):
@@ -71,6 +76,29 @@ class CatalogTests(unittest.TestCase):
             releases = catalog.build_catalog(root)['releases']
             self.assertEqual(len(releases), 1)
             self.assertEqual(len(releases[0]['assets']), 3)
+
+    def test_legacy_backfill_preserves_native_archives(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            responses = []
+            original = {}
+            for version, pin in [('2.7.6', None), ('3.0.3', '0.0.46'), ('3.0.4-canary.1', '0.0.46'), ('4.0.0', '0.0.46')]:
+                manifest = self.release(root, version, xrust_version=pin) / 'release.json'
+                release = json.loads(manifest.read_text())
+                for asset in release['assets']:
+                    asset['digest'] = 'sha256:' + asset['sha256']
+                    asset['browser_download_url'] = 'https://fixture.invalid/package'
+                responses.append(release)
+                original[version] = manifest, manifest.read_bytes()
+
+            with patch.object(backfill, 'ROOT', root), patch.object(backfill, 'fetch', side_effect=[json.dumps(responses), '[]']):
+                backfill.main()
+
+            for version, (manifest, contents) in original.items():
+                if version == '2.7.6':
+                    self.assertNotEqual(manifest.read_bytes(), contents)
+                else:
+                    self.assertEqual(manifest.read_bytes(), contents)
 
 
 if __name__ == '__main__':

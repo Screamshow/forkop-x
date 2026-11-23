@@ -1,4 +1,5 @@
 let fs = require("fs");
+let process_identity = require("core.process_identity");
 
 function as_string(value) {
     return value == null ? "" : "" + value;
@@ -8,20 +9,8 @@ function shell_quote(value) {
     return "'" + replace(as_string(value), /'/g, "'\\''") + "'";
 }
 
-function output(command) {
-    let pipe = fs.popen(command, "r");
-    if (!pipe) return "";
-    let data = pipe.read("all");
-    let status = pipe.close();
-    return status == 0 && data != null ? as_string(data) : "";
-}
-
 function start_ticks(pid) {
-    let stat = as_string(fs.readfile("/proc/" + pid + "/stat"));
-    let marker = index(stat, ") ");
-    if (marker < 0) return "";
-    let fields = split(trim(substr(stat, marker + 2)), /[ \t\r\n]+/);
-    return length(fields) >= 20 && match(fields[19], /^[0-9]+$/) != null ? fields[19] : "";
+    return process_identity.start_ticks(pid) || "";
 }
 
 function snapshot(pid, script, lib_dir) {
@@ -29,7 +18,7 @@ function snapshot(pid, script, lib_dir) {
     if (match(pid, /^[1-9][0-9]*$/) == null) return null;
     let before = start_ticks(pid);
     if (before == "") return null;
-    let exe = trim(output("readlink " + shell_quote("/proc/" + pid + "/exe")));
+    let exe = as_string(fs.readlink("/proc/" + pid + "/exe"));
     if (match(exe, /\/ucode( \(deleted\))?$/) == null) return null;
     let argv = split(as_string(fs.readfile("/proc/" + pid + "/cmdline")), "\0");
     if (length(argv) < 5 ||
@@ -94,4 +83,4 @@ function stop(path, script, lib_dir) {
     return true;
 }
 
-return { snapshot, record_started, stop };
+return { start_ticks, snapshot, record_started, stop };

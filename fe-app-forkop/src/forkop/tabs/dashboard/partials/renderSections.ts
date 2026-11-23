@@ -6,6 +6,7 @@ import {
 import { svgEl } from '../../../../helpers';
 import { prettyBytes } from '../../../../helpers/prettyBytes';
 import { Forkop } from '../../../types';
+import { isReadOnlyForkopView } from '../../../methods/shell/readForkopStatus';
 import { renderFlagEmojis } from './renderFlagEmojis';
 import { getOutboundFooterLabel } from './getOutboundFooterLabel';
 import { getDashboardLatencyClass } from '../latencyUpdate';
@@ -201,7 +202,7 @@ function renderSubscriptionUpdateAction(
   subscriptionUpdating: boolean,
   onUpdateSubscription: (section: Forkop.OutboundGroup) => void,
 ) {
-  if (!section.subscriptionSourceCount) {
+  if (!section.subscriptionSourceCount || isReadOnlyForkopView()) {
     return undefined;
   }
 
@@ -363,7 +364,9 @@ function renderDefaultState({
   }
 
   function renderOutbound(outbound: Forkop.Outbound) {
+    const readonly = isReadOnlyForkopView();
     const canTestOutbound =
+      !readonly &&
       section.withTagSelect &&
       outbound.runtimeAvailable !== false &&
       !outbound.urlTestInfo &&
@@ -383,6 +386,7 @@ function renderDefaultState({
     const selectorSwitching = Boolean(selectorSwitchingTag);
     const outboundSwitching = selectorSwitchingTag === outbound.code;
     const canChooseOutbound =
+      !readonly &&
       section.withTagSelect &&
       outbound.runtimeAvailable !== false &&
       !selectorSwitching &&
@@ -542,7 +546,7 @@ function renderDefaultState({
               type: 'button',
               class: 'btn dashboard-sections-grid-item-test-latency',
               'data-latency-section': section.sectionName,
-              disabled: latencyFetching ? true : undefined,
+              disabled: latencyFetching || isReadOnlyForkopView() || undefined,
               click: (event: MouseEvent) => {
                 event.preventDefault();
                 event.stopPropagation();

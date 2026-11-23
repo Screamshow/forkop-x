@@ -13,6 +13,7 @@ let PRIORITY_UC = "priority", DNS_FAILOVER_UC = "dns";
 let RELOAD_STATE_SNAPSHOT_FILE = "snapshot";
 let reload_core_transaction = null;
 function discard_reload_config_backup(path) {}
+function clear_guarded_reload_recovery() {}
 function finish_reload_section_cache(restore) { return true; }
 function nft_candidate_finish(commit) { push(calls, "discard-nft"); }
 function discard_singbox_config_stage(path) {}
@@ -66,6 +67,10 @@ function as_string(value) { return value == null ? "" : "" + value; }
 function finish_list_change_files() { return true; }
 function remove_file(path) { if (as_string(path) != "") fs.unlink(path); }
 function cleanup_failed_runtime() { die("recoverable candidate failure removed live runtime\n"); }
+function recover_guarded_reload() { return 0; }
+function record_guarded_reload() { return true; }
+function transition_guard_present() { return false; }
+function clear_guarded_reload_recovery() {}
 function log_message() {}
 function external_config_fingerprint() { return "config"; }
 function validate_start_config() { return 0; }

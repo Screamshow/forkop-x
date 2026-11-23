@@ -149,6 +149,7 @@ export function renderModal(
       }
 
       const normalizedText = nextText ?? '';
+      if (!force && normalizedText === rawText) return;
       rawText = normalizedText;
       updateText(getDisplayText(normalizedText));
     } catch (error) {

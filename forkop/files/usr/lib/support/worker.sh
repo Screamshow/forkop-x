@@ -14,6 +14,7 @@ daemon_pid=
 auth_pid=
 phase=stopped
 error=
+address=
 free_kib=0
 required_kib=0
 session_id=$(cat /proc/sys/kernel/random/uuid)
@@ -32,7 +33,7 @@ if [ -s "$dir/status.json" ]; then
     case "$existing_deadline" in ''|*[!0-9]*) ;; *) deadline=$existing_deadline;; esac
 fi
 state() {
-    printf '{"schema":2,"session_id":"%s","phase":"%s","deadline":%s,"error":"%s","free_kib":%s,"required_kib":%s,"recovery_attempts":%s}\n' "$session_id" "$phase" "$deadline" "$error" "$free_kib" "$required_kib" "$attempts" > "$dir/status.new"
+    printf '{"schema":2,"session_id":"%s","phase":"%s","deadline":%s,"error":"%s","free_kib":%s,"required_kib":%s,"recovery_attempts":%s,"address":"%s"}\n' "$session_id" "$phase" "$deadline" "$error" "$free_kib" "$required_kib" "$attempts" "$address" > "$dir/status.new"
     mv "$dir/status.new" "$dir/status.json"
 }
 # Stop parents before walking their children so a cancelled CLI cannot spawn
@@ -47,7 +48,7 @@ event() {
     printf '%s %s attempt=%s\n' "$(uptime_seconds)" "$1" "$attempts" >> "$dir/recovery.log"
 }
 within_session() {
-    if [ "$(uptime_seconds)" -ge "$deadline" ]; then phase=stopped; exit 0; fi
+    if [ -f "$dir/cancelled" ] || [ "$(uptime_seconds)" -ge "$deadline" ]; then phase=stopped; exit 0; fi
 }
 # Bound even a hung local API command, and check expiry while it runs.
 run_cli() {
@@ -196,11 +197,14 @@ next_netcheck=0
 # Successful up is not sufficient evidence of healthy coordination.
 next_check=0
 while [ "$(uptime_seconds)" -lt "$deadline" ]; do
+    within_session
     [ "$(wc -c < "$dir/daemon.log")" -le 262144 ] || : > "$dir/daemon.log"
     kill -0 "$daemon_pid" 2>/dev/null || { phase=failed; error='Tailscale connection process exited'; exit 1; }
     now=$(uptime_seconds)
     if [ "$now" -ge "$next_check" ]; then
         if run_cli 5 status --json && ucode "$lib/health.uc" "$dir/check.json"; then
+            address=$(jsonfilter -i "$dir/check.json" -e '@.Self.TailscaleIPs[*]' 2>/dev/null |
+                awk -F. 'NF == 4 && $0 ~ /^100\.[0-9]+\.[0-9]+\.[0-9]+$/ && $2 >= 64 && $2 <= 127 && $3 <= 255 && $4 <= 255 { print; exit }')
             if [ "$phase" != connected ]; then event control-healthy; fi
             phase=connected; error=; bad_since=0; state
         else

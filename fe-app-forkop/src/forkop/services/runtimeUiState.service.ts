@@ -1,4 +1,5 @@
 import { ForkopShellMethods } from '../methods/shell';
+import { isReadOnlyForkopView } from '../methods/shell/readForkopStatus';
 import { Forkop } from '../types';
 import { logger } from './logger.service';
 import { applyUiStateToStore } from './uiState.service';
@@ -6,11 +7,14 @@ import { applyUiStateToStore } from './uiState.service';
 const RUNTIME_UI_STATE_REFRESH_MIN_INTERVAL_MS = 500;
 const RUNTIME_UI_STATE_IDLE_POLL_INTERVAL_MS = 1000;
 const RUNTIME_UI_STATE_ACTIVE_POLL_INTERVAL_MS = 500;
+const RUNTIME_UI_HEALTH_POLL_INTERVAL_MS = 5000;
 type RuntimeUiStateListener = (uiState: Forkop.UiState) => void;
 
 let runtimeUiStateRefreshPromise: Promise<Forkop.UiState | undefined> | null =
   null;
 let lastRuntimeUiStateRefreshAt = 0;
+let lastRuntimeUiHealthRefreshAt = 0;
+let runtimeUiStateRefreshesHealth = false;
 let lastRuntimeUiState: Forkop.UiState | undefined;
 let runtimeStateResumeRefreshRegistered = false;
 let runtimeStatePollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -33,6 +37,7 @@ function hasRunningAction(uiState: Forkop.UiState) {
 }
 
 function getNextPollDelay() {
+  if (isReadOnlyForkopView()) return RUNTIME_UI_HEALTH_POLL_INTERVAL_MS;
   return runtimeStateHasRunningAction
     ? RUNTIME_UI_STATE_ACTIVE_POLL_INTERVAL_MS
     : RUNTIME_UI_STATE_IDLE_POLL_INTERVAL_MS;
@@ -49,7 +54,12 @@ function scheduleRuntimeUiStatePoll(delay = getNextPollDelay()) {
 
   runtimeStatePollTimer = window.setTimeout(() => {
     runtimeStatePollTimer = null;
-    void refreshRuntimeUiState()
+    void refreshRuntimeUiState({
+      actionsOnly:
+        !isReadOnlyForkopView() &&
+        Date.now() - lastRuntimeUiHealthRefreshAt <
+          RUNTIME_UI_HEALTH_POLL_INTERVAL_MS,
+    })
       .catch(() => undefined)
       .finally(() => {
         scheduleRuntimeUiStatePoll();
@@ -69,12 +79,19 @@ function notifyRuntimeUiStateListeners(uiState: Forkop.UiState) {
 
 export async function refreshRuntimeUiState({
   force = false,
-}: { force?: boolean } = {}): Promise<Forkop.UiState | undefined> {
+  actionsOnly = false,
+}: { force?: boolean; actionsOnly?: boolean } = {}): Promise<
+  Forkop.UiState | undefined
+> {
   if (!isDocumentVisible()) {
     return undefined;
   }
 
   if (runtimeUiStateRefreshPromise) {
+    if (force && !actionsOnly && !runtimeUiStateRefreshesHealth) {
+      await runtimeUiStateRefreshPromise;
+      return refreshRuntimeUiState({ force });
+    }
     return runtimeUiStateRefreshPromise;
   }
 
@@ -87,18 +104,24 @@ export async function refreshRuntimeUiState({
   }
 
   lastRuntimeUiStateRefreshAt = now;
-
-  const promise = ForkopShellMethods.getUiState()
-    .then((response) => {
-      if (!response.success) {
-        return undefined;
-      }
-
-      applyUiStateToStore(response.data);
-      lastRuntimeUiState = response.data;
-      runtimeStateHasRunningAction = hasRunningAction(response.data);
-      notifyRuntimeUiStateListeners(response.data);
-      return response.data;
+  const baseline = actionsOnly ? lastRuntimeUiState : undefined;
+  runtimeUiStateRefreshesHealth = !baseline;
+  if (!baseline) lastRuntimeUiHealthRefreshAt = now;
+  const state = baseline
+    ? ForkopShellMethods.getUiActionState().then((response) =>
+        response.success ? { ...baseline, actions: response.data } : undefined,
+      )
+    : ForkopShellMethods.getUiState().then((response) =>
+        response.success ? response.data : undefined,
+      );
+  const promise = state
+    .then((next) => {
+      if (!next) return undefined;
+      applyUiStateToStore(next);
+      lastRuntimeUiState = next;
+      runtimeStateHasRunningAction = hasRunningAction(next);
+      notifyRuntimeUiStateListeners(next);
+      return next;
     })
     .catch((error) => {
       logger.error('[RUNTIME_UI_STATE]', 'refresh failed', error);

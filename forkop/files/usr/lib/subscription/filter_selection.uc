@@ -59,25 +59,40 @@ function candidates(section) {
     return result;
 }
 
-function migrate_password_keys(bound_keys, candidates) {
+function password_repairs(candidates) {
+    let exact = {}, repairs = {};
+    for (let candidate in candidates) {
+        exact[candidate.key] = true;
+        if (candidate.previous_password_key) {
+            repairs[candidate.previous_password_key] ||= {};
+            repairs[candidate.previous_password_key][candidate.key] = true;
+        }
+    }
+    return { exact, repairs };
+}
+
+function apply_password_repairs(bound_keys, repairs) {
     let result = [];
     for (let key in bound_keys) {
-        let exact = false;
-        let repairs = {};
-        for (let candidate in candidates) {
-            if (candidate.key == key) {
-                exact = true;
-                break;
-            }
-            if (candidate.previous_password_key == key)
-                repairs[candidate.key] = true;
-        }
-        let choices = keys(repairs);
-        let bound = !exact && length(choices) == 1 ? choices[0] : key;
+        let choices = keys(repairs.repairs[key] || {});
+        let bound = !repairs.exact[key] && length(choices) == 1 ? choices[0] : key;
         if (index(result, bound) < 0)
             push(result, bound);
     }
     return result;
+}
+
+function migrate_password_keys(bound_keys, candidates) {
+    return apply_password_repairs(bound_keys, password_repairs(candidates));
+}
+
+function migrate_password_bindings(bindings, candidates) {
+    if (length(keys(bindings))) {
+        let repairs = password_repairs(candidates);
+        for (let name, bound in bindings)
+            bindings[name] = apply_password_repairs(bound, repairs);
+    }
+    return bindings;
 }
 
 // A provider may change an endpoint address without changing the selected node.
@@ -96,40 +111,47 @@ function address_profile(key) {
     catch (e) { return ""; }
 }
 
-function migrate_address(keys, name, previous, next) {
+function candidate_index(candidates) {
+    let by_key = {}, by_name = {};
+    for (let position, candidate in candidates) {
+        by_name[candidate.name] ||= [];
+        push(by_name[candidate.name], candidate);
+        by_key[candidate.key] ||= { position, names: {}, visible: {} };
+        let entry = by_key[candidate.key];
+        entry.names[candidate.name] = true;
+        if (!candidate.hidden) {
+            entry.first_visible ||= candidate;
+            entry.visible[candidate.name] ||= candidate;
+        }
+    }
+    return { by_key, by_name };
+}
+
+function migrate_address(bound_keys, name, previous, next) {
     // Multiple selected connections or duplicate names are ambiguous. Exact
     // identity matches always win, including a surviving node renamed elsewhere.
-    if (length(keys) != 1 || length(filter(next, c => c.key == keys[0])))
-        return keys;
-    let profile = address_profile(keys[0]);
+    if (length(bound_keys) != 1 || next.by_key[bound_keys[0]])
+        return bound_keys;
+    let profile = address_profile(bound_keys[0]);
     if (profile == "")
-        return keys;
-    let targets = filter(next, c => c.name == name);
+        return bound_keys;
+    let targets = next.by_name[name] || [];
     if (length(targets) != 1 || address_profile(targets[0].key) != profile)
-        return keys;
+        return bound_keys;
     // Do not steal a different existing connection during a rename/removal.
-    let old_present = length(filter(previous, c => c.key == keys[0])) > 0;
-    if (length(filter(previous, c => c.key == targets[0].key && (old_present || c.name != name))))
-        return keys;
+    let old_target = previous.by_key[targets[0].key];
+    if (old_target && (previous.by_key[bound_keys[0]] || !old_target.names[name] ||
+        length(keys(old_target.names)) > 1))
+        return bound_keys;
     return [ targets[0].key ];
 }
 
-function display_matches(matches, selected_name) {
-    let result = [];
-    let seen = {};
-    for (let candidate in matches) {
-        if (seen[candidate.key])
-            continue;
-        seen[candidate.key] = true;
-        let visible = filter(matches, item => item.key == candidate.key && !item.hidden);
-        let preferred = filter(visible, item => item.name == selected_name);
-        // Hidden transport dependencies remain valid identity evidence, but
-        // must never introduce their technical tags into the user's selection.
-        // Preserve the selected label when only a hidden copy survives.
-        push(result, length(preferred) ? preferred[0] : length(visible) ? visible[0] :
-            { name: selected_name, key: candidate.key });
-    }
-    return result;
+function display_matches(bound_keys, next, selected_name) {
+    let matched = filter(bound_keys, key => next.by_key[key]);
+    sort(matched, (a, b) => next.by_key[a].position - next.by_key[b].position);
+    // Preserve the selected label when only hidden transport dependencies survive.
+    return map(matched, key => next.by_key[key].visible[selected_name] ||
+        next.by_key[key].first_visible || { name: selected_name, key });
 }
 
 // Resolve against the OLD feed before considering any new names. In particular,
@@ -137,23 +159,21 @@ function display_matches(matches, selected_name) {
 function reconcile(values, saved, previous, next) {
     let records = [];
     let names = [];
+    let records_by_name = {}, saved_by_name = {};
+    let previous_index = candidate_index(previous);
+    let next_index = candidate_index(next);
+    let original = length(previous) ? previous_index : next_index;
+    let passwords = password_repairs(next);
+    for (let record in list(saved))
+        saved_by_name[record.name] = record.keys;
     for (let name in list(values)) {
-        let keys = null;
-        for (let record in list(saved))
-            if (record.name == name)
-                keys = record.keys;
-        if (keys == null) {
-            keys = [];
-            for (let candidate in length(previous) ? previous : next)
-                if (candidate.name == name && index(keys, candidate.key) < 0)
-                    push(keys, candidate.key);
-        }
-        keys = migrate_address(migrate_password_keys(keys, next), name, previous, next);
-        let matches = display_matches(filter(next, candidate => index(keys, candidate.key) >= 0), name);
+        let keys = saved_by_name[name] ?? map(original.by_name[name] || [], candidate => candidate.key);
+        keys = migrate_address(apply_password_repairs(keys, passwords), name, previous_index, next_index);
+        let matches = display_matches(keys, next_index, name);
         // Keep a tombstone if the selected connection disappears. A new owner
         // of its name must not take over an existing selection.
         let next_names = length(matches) ? map(matches, candidate => candidate.name) : [ name ];
-        let missing = filter(keys, key => !length(filter(matches, candidate => candidate.key == key)));
+        let missing = filter(keys, key => !next_index.by_key[key]);
         if (length(matches) && length(missing))
             push(next_names, name);
         if (!length(keys)) {
@@ -167,12 +187,10 @@ function reconcile(values, saved, previous, next) {
             let selected_keys = map(filter(matches, candidate => candidate.name == next_name), candidate => candidate.key);
             if (next_name == name)
                 selected_keys = [ ...selected_keys, ...missing ];
-            let record = null;
-            for (let item in records)
-                if (item.name == next_name)
-                    record = item;
+            let record = records_by_name[next_name];
             if (record == null) {
                 record = { name: next_name, keys: [] };
+                records_by_name[next_name] = record;
                 push(records, record);
                 push(names, next_name);
             }
@@ -314,5 +332,5 @@ function bound_names(saved, side, values) {
     return result;
 }
 
-return { connection, previous_password_connection, migrate_password_keys,
+return { connection, previous_password_connection, migrate_password_keys, migrate_password_bindings,
     candidates, reconcile, snapshot, finish, read, urltest_key, priority_key, bound_names };

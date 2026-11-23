@@ -50,7 +50,7 @@ let v4 = -1, v6 = -1, mark = -1;
 for (let i = 0; i < length(lines); i++) {
     if (lines[i] == "add rule inet ForkopTorrServerDirect output ip daddr 198.18.0.0/15 return") v4 = i;
     if (lines[i] == "add rule inet ForkopTorrServerDirect output ip6 daddr 2001:2::/112 return") v6 = i;
-    if (index(lines[i], "socket cgroupv2 level 2 \"services/torrserver\" meta mark set 0x08000000") >= 0) mark = i;
+    if (index(lines[i], "socket cgroupv2 level 3 \"services/torrserver/instance1\" meta mark set 0x08000000") >= 0) mark = i;
 }
 assert(v4 >= 0 && v6 >= 0, "FakeIP destinations are not excluded");
 assert(mark >= 0, "TorrServer bypass mark rule is missing");
@@ -67,7 +67,7 @@ assert(marks.is_forkop_mark("inet", table, "output", replace(rule, "0x08000000",
 assert(!marks.is_forkop_mark("ip", table, "output", rule), "other family must remain visible");
 assert(!marks.is_forkop_mark("inet", "foreign", "output", rule), "other table must remain visible");
 assert(!marks.is_forkop_mark("inet", table, "prerouting", rule), "other chain must remain visible");
-for (let foreign in [ replace(rule, "0x08000000", "0x01000000"), replace(rule, "level 2", "level 1"),
+for (let foreign in [ replace(rule, "0x08000000", "0x01000000"), replace(rule, "level 3", "level 2"),
     replace(rule, "Forkop TorrServer Direct", "Foreign"), rule + " drop" ])
     assert(!marks.is_forkop_mark("inet", table, "output", foreign), "changed rule must remain visible");
 
@@ -78,6 +78,18 @@ fs.writefile(ARGV[0] + "/listing",
     "\t\tsocket cgroupv2 level 2 \"services/torrserver\" meta mark set 0x08000000 counter packets 0 bytes 0 comment \"Forkop TorrServer Direct\"\n" +
     "\t}\n}\n");
 assert(!active(info), "old rule without FakeIP exclusions counts as active");
+
+fs.glob = () => ["/proc/10/exe", "/proc/20/exe", "/proc/30/exe"];
+fs.readlink = path => path == "/proc/10/exe" ? "/usr/bin/wget" : "/usr/bin/TorrServer-linux-arm64";
+fs.readfile = path => ({
+    "/proc/20/cgroup": "0::/unowned\n",
+    "/proc/30/cgroup": "0::/services/torrserver/instance1\n",
+    "/sys/fs/cgroup/services/torrserver/instance1/cgroup.procs": "30\n"
+})[path];
+fs.lsdir = () => [".", "..", "cgroup.procs"];
+fs.lstat = () => { return {type:"file"}; };
+let discovered = discover();
+assert(discovered.pid == "30" && discovered.available, "an unsuitable earlier PID hid the dedicated TorrServer");
 print("TorrServer Direct FakeIP checks passed\n");
 UC
 } >"$WORK/test.uc"
@@ -100,6 +112,26 @@ check_other_mark_flag 0 || fail "stock TorrServer Direct rule triggered a warnin
 sed '/meta mark set/p; s/meta mark set 0x08000000/meta mark set 0x01000000/' "$WORK/generated" >"$WORK/listing"
 check_other_mark_flag 1 || fail "another mark in the TorrServer Direct table was ignored"
 [ "$(other_mark_lines "$WORK/listing" | sed 's/^[[:space:]]*//')" = \
-  'socket cgroupv2 level 2 "services/torrserver" meta mark set 0x01000000 counter packets 0 bytes 0 comment "Forkop TorrServer Direct"' ] ||
+  'socket cgroupv2 level 3 "services/torrserver/instance1" meta mark set 0x01000000 counter packets 0 bytes 0 comment "Forkop TorrServer Direct"' ] ||
   fail "report did not isolate the foreign mark"
 printf 'TorrServer Direct diagnosis checks passed\n'
+
+{
+  cat <<'UC'
+let CONFIG_NAME = "forkop", checked = 0, sleeps = 0, removed = 0;
+let uci = { reload: function(name) { assert(name == CONFIG_NAME); checked++; return true; } };
+function enabled() { return checked == 1; }
+function discover() { return {available:1, cgroup:"/services/torrserver/instance1"}; }
+function active() { return true; }
+function apply_rule(info) { return true; }
+function system(command) { sleeps++; }
+function remove_rule() { removed++; }
+UC
+  sed -n '/^function worker(/,/^}/p' "$SOURCE"
+  cat <<'UC'
+worker();
+assert(checked == 2 && sleeps == 1 && removed == 1, "worker missed a committed UCI disable");
+print("TorrServer Direct UCI reload checks passed\n");
+UC
+} >"$WORK/worker.uc"
+ucode "$WORK/worker.uc"

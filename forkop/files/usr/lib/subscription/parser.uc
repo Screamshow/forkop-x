@@ -439,8 +439,7 @@ function canonical_runtime_value(value) {
     return value;
 }
 
-function runtime_outbounds_signature(path) {
-    let subscription = read_json_file(path);
+function runtime_outbounds_signature(subscription) {
     if (type(subscription) != "object" || type(subscription.outbounds) != "array")
         return null;
 
@@ -458,14 +457,21 @@ function runtime_outbounds_signature(path) {
     return result;
 }
 
-function runtime_outbounds_equal(left_path, right_path) {
-    let left = runtime_outbounds_signature(left_path);
-    let right = runtime_outbounds_signature(right_path);
-
-    if (left == null || right == null)
+function runtime_outbounds_values_equal(left_value, right_value) {
+    if (type(left_value?.outbounds) != "array" || type(right_value?.outbounds) != "array" ||
+        length(left_value.outbounds) != length(right_value.outbounds))
         return false;
 
-    return sprintf("%J", left) == sprintf("%J", right);
+    let left = runtime_outbounds_signature(left_value);
+    let right = runtime_outbounds_signature(right_value);
+    for (let i = 0; i < length(left); i++)
+        if (left[i] != right[i])
+            return false;
+    return true;
+}
+
+function runtime_outbounds_equal(left_path, right_path) {
+    return runtime_outbounds_values_equal(read_json_file(left_path), read_json_file(right_path));
 }
 
 function array_or_empty(value) {
@@ -629,11 +635,12 @@ function parse_url(url) {
 
     let slash_pos = index(rest, "/");
     let authority = slash_pos >= 0 ? substr(rest, 0, slash_pos) : rest;
+    let raw_userinfo = "";
     let userinfo = "";
     let hostport = authority;
     let at_pos = rindex(authority, "@");
     if (at_pos >= 0) {
-        let raw_userinfo = substr(authority, 0, at_pos);
+        raw_userinfo = substr(authority, 0, at_pos);
         userinfo = scheme == "trojan" || scheme == "hy2" || scheme == "hysteria2"
             ? core_url.decode(raw_userinfo, true) : urldecode(raw_userinfo);
         hostport = substr(authority, at_pos + 1);
@@ -642,6 +649,7 @@ function parse_url(url) {
     let host_port = parse_host_port(hostport, core_url.default_port(url));
     return {
         scheme: scheme,
+        raw_userinfo: raw_userinfo,
         userinfo: userinfo,
         host: host_port[0] || "",
         port: host_port[1],
@@ -984,17 +992,11 @@ function process_socks(raw, url) {
         return null;
 
     let username = "", password = "";
-    if (url.userinfo != "") {
-        let colon = index(url.userinfo, ":");
-        if (colon >= 0) {
-            username = urldecode(substr(url.userinfo, 0, colon));
-            password = urldecode(substr(url.userinfo, colon + 1));
-            if (username == password)
-                password = "";
-        }
-        else {
-            username = urldecode(url.userinfo);
-        }
+    if (url.raw_userinfo != "") {
+        let colon = index(url.raw_userinfo, ":");
+        username = core_url.decode(colon >= 0 ? substr(url.raw_userinfo, 0, colon) : url.raw_userinfo, true);
+        if (colon >= 0)
+            password = core_url.decode(substr(url.raw_userinfo, colon + 1), true);
     }
 
     let outbound = {
@@ -1459,6 +1461,8 @@ function clash_yaml_records(input_file) {
 
     for (let line in split(data, "\n")) {
         line = replace(line, /\r$/g, "");
+        if (match(line, /^[ \t]*#/) != null)
+            continue;
         let proxies_header = is_clash_proxies_header(line);
 
         if (in_proxies && match(line, /^[^ \t]/) && !proxies_header && !match(line, /^-[ \t]/)) {
@@ -3201,8 +3205,7 @@ function normalized_skipped_message(path) {
     return "Skipped " + skipped + " invalid or unsupported subscription links";
 }
 
-function extract_ui_metadata_file(headers_file, body_file, output_file) {
-    let tmp = temp_path("forkop-subscription-metadata");
+function extract_ui_metadata(headers_file, body_file) {
     let raw = metadata_body_store_with_base64_fallback(body_file).values;
     let headers = metadata_headers_store(headers_file).values;
     for (let key, value in headers)
@@ -3211,12 +3214,17 @@ function extract_ui_metadata_file(headers_file, body_file, output_file) {
     if (type(body) == "object" && type(body.meta) == "object")
         raw.meta = body.meta;
 
-    let result = metadata_ui_object(raw);
+    return metadata_ui_object(raw);
+}
+
+function extract_ui_metadata_file(headers_file, body_file, output_file) {
+    let result = extract_ui_metadata(headers_file, body_file);
     if (length(keys(result)) <= 1) {
         fs.unlink(output_file);
         return false;
     }
 
+    let tmp = temp_path("forkop-subscription-metadata");
     if (!common.write_private_json_file(tmp, result)) {
         fs.unlink(tmp);
         return false;
@@ -3273,7 +3281,7 @@ function normalize_content_file(input_file, output_file) {
     return data == null ? false : normalize_content_data(data, output_file, 0);
 }
 
-function normalize_content_validated(input_file, output_file) {
+function normalize_content_value(input_file, output_file) {
     let normalize_input = input_file;
     let decoded_tmp = temp_path("forkop-subscription-gzip");
     let decoded = gzip_decode_file(input_file, decoded_tmp);
@@ -3286,9 +3294,14 @@ function normalize_content_validated(input_file, output_file) {
     if (decoded)
         fs.unlink(decoded_tmp);
     if (!ok)
-        return false;
+        return null;
 
-    return validate_subscription(output_file);
+    let value = read_json_file(output_file);
+    return validate_subscription_value(value) ? value : null;
+}
+
+function normalize_content_validated(input_file, output_file) {
+    return normalize_content_value(input_file, output_file) != null;
 }
 
 function normalized_skipped_warning(path) {
@@ -3341,16 +3354,20 @@ function parse_subscription_source_entry_tsv(entry) {
 function module_exports() {
     return {
         parse_subscription_source_entry,
+        parse_share_link,
         add_certificate_pins,
         add_xray_tls_verification,
         parse_hysteria2_server_ports,
         validate_subscription,
         validate_subscription_value,
         normalize_content_validated,
+        normalize_content_value,
         normalized_skipped_message,
         try_decode_gzip_content_file,
         extract_ui_metadata_file,
+        extract_ui_metadata,
         runtime_outbounds_equal,
+        runtime_outbounds_values_equal,
         xhttp_apply_query_settings,
         repair_cached_outbounds,
         legacy_uri_password,

@@ -2,15 +2,47 @@
   "luci-app-forkop": {
     "description": "Grant UCI and RPC access to LuCI app Forkop",
     "read": {
+      "ubus": {
+        "luci-rpc": [
+          "getDHCPLeases",
+          "getHostHints"
+        ],
+        "network.interface": [
+          "dump"
+        ]
+      },
+      "uci": [
+        "forkop"
+      ]
+    },
+    "write": {
       "file": {
+        "/var/run/forkop/ui-state/*": [
+          "write",
+          "read"
+        ],
+        "/tmp/run/forkop/ui-state/*": [
+          "write",
+          "read"
+        ],
+        "/var/run/forkop/ui-state/service-actions/*": [
+          "write",
+          "read"
+        ],
+        "/tmp/run/forkop/ui-state/service-actions/*": [
+          "write",
+          "read"
+        ],
+        "/var/run/forkop/ui-state/latency-actions/*": [
+          "write",
+          "read"
+        ],
+        "/tmp/run/forkop/ui-state/latency-actions/*": [
+          "write",
+          "read"
+        ],
         "/etc/init.d/forkop": [
           "exec"
-        ],
-        "/etc/xrust/config.json": [
-          "read"
-        ],
-        "/tmp/xrust/config.json": [
-          "read"
         ],
         "/var/run/forkop/section-cache/*": [
           "read"
@@ -24,68 +56,21 @@
         "/tmp/run/forkop/component-actions/*": [
           "read"
         ],
-        "/var/run/forkop/ui-state/*": [
-          "read"
-        ],
-        "/tmp/run/forkop/ui-state/*": [
-          "read"
-        ],
-        "/var/run/forkop/ui-state/service-actions/*": [
-          "read"
-        ],
-        "/tmp/run/forkop/ui-state/service-actions/*": [
-          "read"
-        ],
-        "/var/run/forkop/ui-state/latency-actions/*": [
-          "read"
-        ],
-        "/tmp/run/forkop/ui-state/latency-actions/*": [
-          "read"
-        ],
         "/usr/bin/forkop": [
           "exec"
         ]
       },
+      "uci": [
+        "forkop"
+      ],
       "ubus": {
-        "luci-rpc": [
-          "getDHCPLeases",
-          "getHostHints"
-        ],
-        "network.interface": [
-          "dump"
-        ],
-        "service": [
-          "list"
+        "file": [
+          "exec",
+          "read",
+          "write",
+          "remove"
         ]
-      },
-      "uci": [
-        "forkop"
-      ]
-    },
-    "write": {
-      "file": {
-        "/var/run/forkop/ui-state/*": [
-          "write"
-        ],
-        "/tmp/run/forkop/ui-state/*": [
-          "write"
-        ],
-        "/var/run/forkop/ui-state/service-actions/*": [
-          "write"
-        ],
-        "/tmp/run/forkop/ui-state/service-actions/*": [
-          "write"
-        ],
-        "/var/run/forkop/ui-state/latency-actions/*": [
-          "write"
-        ],
-        "/tmp/run/forkop/ui-state/latency-actions/*": [
-          "write"
-        ]
-      },
-      "uci": [
-        "forkop"
-      ]
+      }
     }
   }
 }

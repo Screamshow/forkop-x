@@ -37,6 +37,7 @@ const RULESET_REFRESH_AFTER_LIST_FILE = getenv("FORKOP_RULESET_REFRESH_AFTER_LIS
 const POST_START_LATENCY_FILE = getenv("FORKOP_POST_START_LATENCY_FILE") || RUNTIME_STATE_DIR + "/post-start-latency.pending";
 const START_FAILURE_FILE = getenv("FORKOP_START_FAILURE_FILE") || RUNTIME_STATE_DIR + "/start.failure";
 const WATCHDOG_READY_FILE = getenv("FORKOP_WATCHDOG_READY_FILE") || RUNTIME_STATE_DIR + "/watchdog.ready";
+const TRANSITION_RECOVERY_FILE = RUNTIME_STATE_DIR + "/transition-recovery.json";
 const RUNTIME_CONFIG_ERROR_FILE = getenv("FORKOP_RUNTIME_CONFIG_ERROR_FILE") || RUNTIME_STATE_DIR + "/config-error";
 const MANAGED_UPGRADE_SING_BOX_MARKER = getenv("FORKOP_MANAGED_UPGRADE_SING_BOX_MARKER") || "/tmp/forkop-managed-upgrade-sing-box";
 const MANAGED_UPGRADE_SING_BOX_WAIT_SECONDS = int(getenv("FORKOP_MANAGED_UPGRADE_SING_BOX_WAIT_SECONDS") || "15");
@@ -89,8 +90,6 @@ const NFT_INTERFACE_SET_NAME = constant_value("NFT_INTERFACE_SET_NAME", "forkop_
 const NFT_FAKEIP_MARK = constant_value("NFT_FAKEIP_MARK", "0x04000000");
 const NFT_OUTBOUND_MARK = constant_value("NFT_OUTBOUND_MARK", "0x08000000");
 const NFT_ROUTER_MARK = constant_value("NFT_ROUTER_MARK", "0x10000000");
-// 104 belongs to the Tailscale exit-node LAN rule; see nft/apply.uc.
-const NFT_SOURCE_CHECK_PRIORITY = "103";
 
 const SB_FAKEIP_INET4_RANGE = constant_value("SB_FAKEIP_INET4_RANGE", "198.18.0.0/15");
 const SB_FAKEIP_INET6_RANGE = constant_value("SB_FAKEIP_INET6_RANGE", "2001:2::/112");
@@ -559,16 +558,11 @@ function config_commit() {
 }
 
 function mark_runtime_stopped_clean() {
-    let status = 0;
     if (!config_set(CONFIG_NAME + ".settings.shutdown_correctly", "1"))
-        status = 1;
-    else {
-        let commit_status = config_commit();
-        if (commit_status != 0)
-            status = commit_status;
-    }
-
-    module_success(STATE_UC, [ "clear-reload-state", RELOAD_STATE_FILE, RELOAD_STATE_SNAPSHOT_FILE ]);
+        return 1;
+    let status = config_commit();
+    if (status == 0)
+        module_success(STATE_UC, [ "clear-reload-state", RELOAD_STATE_FILE, RELOAD_STATE_SNAPSHOT_FILE ]);
     return status;
 }
 
@@ -731,6 +725,10 @@ function nft_populate_runtime_sets() {
         NFT_IP_PORT6_SET_NAME,
         NFT_LOCALV6_SET_NAME
     ]);
+}
+
+function applied_xrust_config_path(fallback) {
+    return split(as_string(fs.readfile(xrust.APPLIED_CONFIG_PATH_FILE) || ""), "\n")[0] || fallback;
 }
 
 function singbox_init_config() {
@@ -1123,6 +1121,9 @@ function start_impl() {
         log_message("Failed to start DNS failover runtime", "fatal");
         return status;
     }
+    module_status_with_env(RULESET_CACHE_UC, [ "prune-applied" ], {
+        FORKOP_SING_BOX_CONFIG_PATH: applied_xrust_config_path(xrust.CONFIG_PATH)
+    });
 
     if (module_success(STATE_UC, [ "has-list-update-sources" ])) {
         // Serialize the two network workers. The rule-set refresh may reload
@@ -1164,51 +1165,34 @@ function stop_main(allow_process_conflict) {
     if (!module_success(UPDATES_UC, [ "runtime-list-cache-active" ]))
         command_success_from_args([ "find", TMP_RULESET_FOLDER, "-mindepth", "1", "-maxdepth", "1", "-type", "f", "-delete" ]);
 
-    if (command_success_from_args([ "nft", "list", "table", "inet", NFT_TABLE_NAME ]))
-        command_success_from_args([ "nft", "delete", "table", "inet", NFT_TABLE_NAME ]);
+    if (command_success_from_args([ "nft", "list", "table", "inet", NFT_TABLE_NAME ]) &&
+        !command_success_from_args([ "nft", "delete", "table", "inet", NFT_TABLE_NAME ]))
+        status = 1;
 
-    if (module_success(NFT_UC, [ "tproxy-marking-rule4-present", RT_TABLE_NAME, NFT_FAKEIP_MARK ]))
-        command_success_from_args([ "ip", "-4", "rule", "del", "fwmark", NFT_FAKEIP_MARK + "/" + NFT_FAKEIP_MARK, "table", RT_TABLE_NAME, "priority", "105" ]);
-    if (module_success(NFT_UC, [ "tproxy-marking-rule6-present", RT_TABLE_NAME, NFT_FAKEIP_MARK ]))
-        command_success_from_args([ "ip", "-6", "rule", "del", "fwmark", NFT_FAKEIP_MARK + "/" + NFT_FAKEIP_MARK, "table", RT_TABLE_NAME, "priority", "105" ]);
-    if (module_success(NFT_UC, [ "tproxy-marking-rule4-present", RT_TABLE_NAME, NFT_ROUTER_MARK ]))
-        command_success_from_args([ "ip", "-4", "rule", "del", "fwmark", NFT_ROUTER_MARK + "/" + NFT_ROUTER_MARK, "table", RT_TABLE_NAME, "priority", "105" ]);
-    if (module_success(NFT_UC, [ "tproxy-marking-rule6-present", RT_TABLE_NAME, NFT_ROUTER_MARK ]))
-        command_success_from_args([ "ip", "-6", "rule", "del", "fwmark", NFT_ROUTER_MARK + "/" + NFT_ROUTER_MARK, "table", RT_TABLE_NAME, "priority", "105" ]);
-    if (module_success(NFT_UC, [ "source-check-rule4-present", NFT_FAKEIP_MARK ]))
-        command_success_from_args([ "ip", "-4", "rule", "del", "iif", "lo", "fwmark", NFT_FAKEIP_MARK + "/" + NFT_FAKEIP_MARK, "lookup", "main", "priority", NFT_SOURCE_CHECK_PRIORITY ]);
-
-    if (module_success(NFT_UC, [ "tproxy-route4-present", RT_TABLE_NAME ]))
-        command_success_from_args([ "ip", "route", "flush", "table", RT_TABLE_NAME ]);
-    if (module_success(NFT_UC, [ "tproxy-route6-present", RT_TABLE_NAME ]))
-        command_success_from_args([ "ip", "-6", "route", "flush", "table", RT_TABLE_NAME ]);
+    if (!module_success(NFT_UC, [ "remove-tproxy-routing", RT_TABLE_NAME, NFT_FAKEIP_MARK ]))
+        status = 1;
 
     let sing_box_status = module_status(STATE_UC, [
         allow_process_conflict ? "stop-all-sing-box-runtime" : "stop-managed-sing-box-runtime",
         getenv("FORKOP_SING_BOX_RELOAD_PID_TIMEOUT") || "15"
     ]);
-    if (sing_box_status != 0)
-        status = sing_box_status;
+    status = status || sing_box_status;
+    if (status == 0 && !module_success(NFT_UC, [ "restore-bridge-netfilter" ]))
+        status = 1;
 
     return status;
 }
 
 function cleanup_failed_runtime() {
-    let status = 0;
-
     log_message("Cleaning up Forkop runtime after failed start/reload", "info");
 
-    let stop_status = stop_main();
-    if (stop_status != 0)
-        status = stop_status;
-
+    let status = stop_main(false);
+    if (status == 2)
+        return status;
     let dns_status = dnsmasq_restore_fail_safe();
-    if (dns_status != 0 && status == 0)
-        status = dns_status;
-
-    let mark_status = mark_runtime_stopped_clean();
-    if (mark_status != 0 && status == 0)
-        status = mark_status;
+    status = status || dns_status;
+    if (status == 0)
+        status = mark_runtime_stopped_clean();
 
     if (status != 0)
         log_message("Failed to fully clean up Forkop runtime after start/reload failure", "warn");
@@ -1254,6 +1238,56 @@ function restore_routing() {
 
     module_success(STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
     return status;
+}
+
+function transition_guard_present() {
+    return module_success(NFT_UC, [ "transition-guard-present", NFT_TABLE_NAME ]);
+}
+
+function transition_owner_start_ticks(pid) {
+    if (match(as_string(pid), /^[1-9][0-9]*$/) == null)
+        return "";
+    let stat = as_string(fs.readfile("/proc/" + pid + "/stat"));
+    let end = rindex(stat, ") ");
+    if (end < 0)
+        return "";
+    let fields = split(substr(stat, end + 2), " ");
+    return fields[0] == "Z" ? "" : fields[19] || "";
+}
+
+function record_guarded_reload(stage_path, backup_path, cache_transaction) {
+    let pid = owner_pid();
+    let start_ticks = transition_owner_start_ticks(pid);
+    if (start_ticks == "" || reload_core_transaction == null)
+        return false;
+
+    let dns_backup = backup_path + ".dns-failover";
+    if (!reload_core_transaction.dns_snapshot_taken && fs.stat(DNS_FAILOVER_STATE_FILE) != null &&
+        !common.copy_private_file_atomic(DNS_FAILOVER_STATE_FILE, dns_backup))
+        return false;
+
+    let journal = {
+        version: 1, pid, start_ticks, stage_path, backup_path,
+        transaction: reload_core_transaction,
+        list_snapshot: list_change_rollback_dir,
+        nft_batch: nft_candidate_batch_file,
+        section_cache: cache_transaction,
+        had_section_cache: fs.stat(SECTION_CACHE_DIR) != null
+    };
+    let temporary = TRANSITION_RECOVERY_FILE + "." + pid;
+    if (common.write_private_json_file(temporary, journal) != null &&
+        fs.rename(temporary, TRANSITION_RECOVERY_FILE))
+        return true;
+    remove_file(temporary);
+    return false;
+}
+
+function clear_guarded_reload_recovery() {
+    remove_file(TRANSITION_RECOVERY_FILE);
+}
+
+function release_reload_lock() {
+    module_success(STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
 }
 
 function finish_list_change_files(restore) {
@@ -1329,6 +1363,96 @@ function restore_reload_workers(backup_path) {
         log_message("The previous Xrust runtime is active; its DNS failover worker could not be restarted", "warn");
 }
 
+function recover_interrupted_section_cache(journal) {
+    let transaction = journal.section_cache;
+    if (!transaction || fs.stat(transaction) == null)
+        return true;
+    if (index(transaction, SECTION_CACHE_DIR + ".reload.") != 0)
+        return false;
+    let previous = transaction + "/previous";
+    if (fs.stat(previous) != null) {
+        if (fs.stat(SECTION_CACHE_DIR) == null) {
+            // The publisher may have stopped between the two renames.
+            if (!fs.rename(previous, SECTION_CACHE_DIR))
+                return false;
+        }
+        else {
+            reload_core_transaction.section_cache = transaction;
+            return finish_reload_section_cache(true);
+        }
+    }
+    else if (!journal.had_section_cache && fs.stat(transaction + "/candidate") == null &&
+        fs.stat(SECTION_CACHE_DIR) != null) {
+        reload_core_transaction.section_cache = transaction;
+        return finish_reload_section_cache(true);
+    }
+    return module_success(SINGBOX_UC, [ "finish-section-cache", transaction, "commit" ]);
+}
+
+// The caller holds the reload lock, so no newer transition can change the
+// saved files or commit its own nft policy while we restore the old generation.
+function recover_guarded_reload() {
+    if (!transition_guard_present())
+        return 0;
+
+    let journal = read_json_file(TRANSITION_RECOVERY_FILE);
+    if (journal?.version == 1 && journal.start_ticks &&
+        journal.start_ticks == transition_owner_start_ticks(journal.pid))
+        return 2;
+    if (module_success(STATE_UC, [ "sing-box-process-conflict" ]))
+        return 2;
+
+    if (journal?.version == 1 && journal.transaction?.path && journal.transaction?.previous_path &&
+        journal.backup_path && fs.stat(journal.backup_path)?.type == "file") {
+        log_message("Recovering the previous Xrust configuration after an interrupted reload", "warn");
+        reload_core_transaction = { ...journal.transaction, published: true,
+            dns_snapshot_taken: true, candidate_workers_started: true, section_cache: "" };
+        nft_candidate_batch_file = journal.nft_batch || "";
+        list_change_rollback_dir = journal.list_snapshot || "";
+        stop_candidate_reload_workers();
+        nft_candidate_finish(false);
+        let cache_restored = recover_interrupted_section_cache(journal);
+        let lists_restored = finish_list_change_files(true);
+        if (cache_restored && lists_restored && restore_guarded_singbox_runtime(journal.backup_path, true)) {
+            restore_reload_workers(journal.backup_path);
+            discard_singbox_config_stage(journal.stage_path);
+            discard_reload_config_backup(journal.backup_path);
+            clear_guarded_reload_recovery();
+            reload_core_transaction = null;
+            return 0;
+        }
+        log_message("Interrupted reload rollback failed; recovery files retained at " + journal.backup_path, "error");
+    }
+    else
+        log_message("No usable rollback state for the interrupted Xrust transition", "error");
+
+    let status = cleanup_failed_runtime();
+    if (status == 0)
+        clear_guarded_reload_recovery();
+    return status == 0 ? 1 : status;
+}
+
+function watchdog_recover() {
+    if (!module_success(STATE_UC, [ "acquire-runtime-dir-lock", RELOAD_LOCK_DIR, owner_pid() ]))
+        return 2;
+
+    let status = 2;
+    if (fs.stat(WATCHDOG_READY_FILE) != null && fs.stat(RELOAD_STOPPED_FILE) == null &&
+        !module_success(UI_UC, [ "package-upgrade-transition-active" ])) {
+        if (transition_guard_present())
+            status = recover_guarded_reload();
+        else if (trim(module_output(STATE_UC, [ "xrust-watchdog-runtime-kind" ])) == "absent")
+            status = cleanup_failed_runtime();
+
+        // If DNS was still unavailable, allow the watchdog to verify again.
+        // A successful cleanup set the stopped state and removed the marker.
+        if (status != 0 && config_get(CONFIG_NAME + ".settings.shutdown_correctly", "") == "0")
+            write_file(WATCHDOG_READY_FILE, "1\n");
+    }
+    release_reload_lock();
+    return status;
+}
+
 function abort_reload(status, runtime_changed, stage_path, backup_path) {
     discard_singbox_config_stage(stage_path);
     discard_reload_config_backup(backup_path);
@@ -1363,6 +1487,7 @@ function abort_guarded_transition(status, stage_path, backup_path, guard_active)
     if (fs.stat(backup_path) != null && restore_guarded_singbox_runtime(backup_path, true)) {
         restore_reload_workers(backup_path);
         discard_reload_config_backup(backup_path);
+        clear_guarded_reload_recovery();
         log_message("Configuration apply failed; previous runtime restored", "warn");
         return abort_reload(status, false);
     }
@@ -1378,7 +1503,11 @@ function abort_guarded_transition(status, stage_path, backup_path, guard_active)
 // The cold fallback below always runs behind the fail-closed guard, also when
 // the hot attempt itself did not need one.
 function abort_hot_to_guarded(status, stage_path, backup_path) {
-    module_success(NFT_UC, [ "install-transition-guard", NFT_TABLE_NAME, NFT_FAKEIP_MARK ]);
+    if (!transition_guard_present()) {
+        if (!record_guarded_reload(stage_path, backup_path, reload_core_transaction?.section_cache || "") ||
+            !module_success(NFT_UC, [ "install-transition-guard", NFT_TABLE_NAME, NFT_FAKEIP_MARK ]))
+            log_message("Could not establish the guard for fallback rollback", "error");
+    }
     return abort_guarded_transition(status, stage_path, backup_path, true);
 }
 
@@ -1398,6 +1527,7 @@ function abort_hot_transition(status, stage_path, backup_path) {
         restore_reload_workers(backup_path);
         discard_singbox_config_stage(stage_path);
         discard_reload_config_backup(backup_path);
+        clear_guarded_reload_recovery();
         log_message("Hot reload failed; previous core configuration and nft policy restored", "warn");
         return abort_reload(status, false);
     }
@@ -1511,35 +1641,17 @@ function start() {
 function stop_impl(allow_process_conflict) {
     // Drop interception before restoring DNS so a new query cannot be sent
     // through the old proxy policy during an explicit stop.
-    let status = stop_main(allow_process_conflict);
-    if (status == 2)
-        return 2;
+    let stop_status = stop_main(allow_process_conflict);
+    if (stop_status == 2)
+        return stop_status;
 
-    if (!setting_bool("dont_touch_dhcp", false)) {
-        let dns_status = dnsmasq_restore(false);
+    let dns_status = setting_bool("dont_touch_dhcp", false) ? dnsmasq_restore_fail_safe() : dnsmasq_restore(false);
+    if (dns_status != 0) {
+        dns_status = dnsmasq_restore_fail_safe();
         if (dns_status != 0)
-            status = dns_status;
+            log_message("The previous dnsmasq configuration has not been restored", "error");
     }
-    else if (dnsmasq_has_forkop_managed_state()) {
-        let dns_status = dnsmasq_restore(true);
-        if (dns_status != 0)
-            status = dns_status;
-    }
-
-    if (!config_set(CONFIG_NAME + ".settings.shutdown_correctly", "1"))
-        status = 1;
-    else {
-        let commit_status = config_commit();
-        if (commit_status != 0)
-            status = commit_status;
-    }
-
-    module_success(STATE_UC, [ "clear-reload-state", RELOAD_STATE_FILE, RELOAD_STATE_SNAPSHOT_FILE ]);
-
-    if (status != 0)
-        dnsmasq_restore_fail_safe();
-
-    return status;
+    return stop_status || dns_status || mark_runtime_stopped_clean();
 }
 
 function stop() {
@@ -1647,10 +1759,6 @@ function reload_actions_summary(plan) {
     return actions;
 }
 
-function release_reload_lock() {
-    module_success(STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
-}
-
 function wait_dns_failover_state(candidate_state_path, attempts, required_successes) {
     let consecutive_successes = 0;
     for (let i = 0; i < attempts; i++) {
@@ -1662,10 +1770,6 @@ function wait_dns_failover_state(candidate_state_path, attempts, required_succes
             command_success_from_args([ "sleep", "1" ]);
     }
     return 1;
-}
-
-function applied_xrust_config_path(fallback) {
-    return split(as_string(fs.readfile(xrust.APPLIED_CONFIG_PATH_FILE) || ""), "\n")[0] || fallback;
 }
 
 // Returns 3 when the core requires a restart.
@@ -1786,6 +1890,9 @@ function reload_reason_for_generation(reason, pending, generation_current) {
 
 function reload(reason, cold_restart) {
     reload_core_transaction = null;
+    let recovery_status = recover_guarded_reload();
+    if (recovery_status != 0)
+        return recovery_status;
     reason = as_string(reason || "");
     // Retry a completed generation locally only while its source signature
     // matches UCI. Cancelling or replacing a failed edit needs a new generation
@@ -2048,6 +2155,7 @@ function reload(reason, cold_restart) {
     }
 
     if (needs_singbox_transition) {
+        let cache_transaction = SECTION_CACHE_DIR + ".reload." + owner_pid();
         // The guard is installed atomically in the existing table after
         // mangle marking and before TPROXY. It is the only unavoidable
         // cross-component window: protected packets are dropped, never sent
@@ -2055,8 +2163,12 @@ function reload(reason, cold_restart) {
         // with an unchanged nft policy has no such window: the same process
         // swaps its routing at once, so traffic keeps flowing.
         if (!hot_reload || nft_candidate_batch_file != "") {
-            if (!module_success(NFT_UC, [ "install-transition-guard", NFT_TABLE_NAME, NFT_FAKEIP_MARK ]))
+            if (!record_guarded_reload(staged_singbox_config, staged_singbox_backup, cache_transaction))
                 return abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, false);
+            if (!module_success(NFT_UC, [ "install-transition-guard", NFT_TABLE_NAME, NFT_FAKEIP_MARK ])) {
+                clear_guarded_reload_recovery();
+                return abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, false);
+            }
             transition_guard_active = true;
         }
         // Candidate failures above leave the old core and its workers in place.
@@ -2110,7 +2222,6 @@ function reload(reason, cold_restart) {
             log_message("Reload verification failed after Xrust was reloaded; restoring the previous coherent runtime", "fatal");
             return hot_reload ? abort_hot_transition(status, staged_singbox_config, staged_singbox_backup) : abort_guarded_transition(status, staged_singbox_config, staged_singbox_backup, transition_guard_active);
         }
-        let cache_transaction = SECTION_CACHE_DIR + ".reload." + owner_pid();
         if (!module_success(SINGBOX_UC, [ "publish-section-cache", staged_singbox_config, cache_transaction ]))
             return hot_reload ? abort_hot_transition(1, staged_singbox_config, staged_singbox_backup) : abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, transition_guard_active);
         reload_core_transaction.section_cache = cache_transaction;
@@ -2126,6 +2237,7 @@ function reload(reason, cold_restart) {
             return hot_reload ? abort_hot_transition(1, staged_singbox_config, staged_singbox_backup) : abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, transition_guard_active);
         if (transition_guard_active && !replacing_nft && !module_success(NFT_UC, [ "remove-transition-guard", NFT_TABLE_NAME, NFT_FAKEIP_MARK ]))
             return hot_reload ? abort_hot_transition(1, staged_singbox_config, staged_singbox_backup) : abort_guarded_transition(1, staged_singbox_config, staged_singbox_backup, transition_guard_active);
+        clear_guarded_reload_recovery();
         transition_guard_active = false;
         if (hot_reload) {
             let closed = module_capture(HOT_RELOAD_UC, [ "close-retired", staged_singbox_backup, sing_box_config_path ]);
@@ -2135,6 +2247,8 @@ function reload(reason, cold_restart) {
                 log_message("Closed " + trim(closed.output) + " connections of removed rule sets", "info");
         }
         finish_reload_section_cache(false);
+        if (!module_success(SINGBOX_UC, [ "commit-ruleset-stage", staged_singbox_config ]))
+            log_message("Configuration applied, but the remote rule-set schedule could not be saved", "warn");
         discard_singbox_config_stage(staged_singbox_config);
         discard_reload_config_backup(staged_singbox_backup);
         finish_list_change_files(false);
@@ -2347,17 +2461,24 @@ function package_manager_remove_if_installed(package_name) {
 function uninstall() {
     log_message("Uninstalling Forkop", "info");
 
-    if (fs.stat(SERVICE_INIT) != null) {
-        stop();
+    let service_installed = fs.stat(SERVICE_INIT) != null;
+    if (service_installed) {
+        let status = stop_impl(false);
+        if (status != 0)
+            return status;
+    }
+
+    let canonical_service = "/etc/init.d/forkop";
+    let canonical_installed = fs.stat(canonical_service) != null;
+    if (canonical_installed &&
+        !command_success_from_args([ "env", "FORKOP_INTERNAL_SERVICE_STOP=1", canonical_service, "stop" ]))
+        return 1;
+
+    if (service_installed)
         command_success_from_args([ SERVICE_INIT, "disable" ]);
-    }
-
+    if (canonical_installed && SERVICE_INIT != canonical_service)
+        command_success_from_args([ canonical_service, "disable" ]);
     dnsmasq_restore_fail_safe();
-
-    if (fs.stat("/etc/init.d/forkop") != null) {
-        command_success_from_args([ "/etc/init.d/forkop", "stop" ]);
-        command_success_from_args([ "/etc/init.d/forkop", "disable" ]);
-    }
 
     package_manager_remove_if_installed("luci-i18n-forkop-ru");
     package_manager_remove_if_installed("luci-app-forkop");
@@ -2422,6 +2543,8 @@ else if (mode == "reload-reason-fixture") {
 }
 else if (mode == "restore-routing")
     status = restore_routing();
+else if (mode == "watchdog-recover")
+    status = watchdog_recover();
 else if (mode == "dns-failover-apply")
     status = dns_failover_apply(ARGV[1] || "");
 else if (mode == "restart")

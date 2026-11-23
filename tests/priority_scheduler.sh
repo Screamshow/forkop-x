@@ -81,3 +81,40 @@ sed 's/{"levels"/{"pick_fastest":true,"levels"/' "$WORK/group.json" >"$WORK/fast
 mv "$WORK/fast.json" "$WORK/group.json"
 [ "$(choose select-fixture 0 1 | tag)" = faster ]
 printf 'Priority member order, fastest tie and level precedence checks passed\n'
+
+mkdir "$WORK/bin" "$WORK/state"
+printf '%s\n' "$WORK/applied.json" >"$WORK/state/xrust-config-path"
+printf '%s\n' '{"experimental":{"clash_api":{"external_controller":"192.0.2.9:9090"}}}' >"$WORK/applied.json"
+cat >"$WORK/bin/curl" <<'SH'
+#!/bin/sh
+printf '%s\n' "$@" >"$FORKOP_TEST_CURL_ARGS"
+if [ "$FORKOP_TEST_CURL_ANSWER" = 'error' ]; then exit 22; fi
+printf '%s\n' "$FORKOP_TEST_CURL_ANSWER"
+SH
+chmod +x "$WORK/bin/curl"
+sed '/^let mode = ARGV/,$d' "$SOURCE" >"$WORK/probe.uc"
+cat >>"$WORK/probe.uc" <<'UCODE'
+let result = clash_probe("A/B + é", { check_timeout: "1500ms", health_url: "https://health.invalid/a+b?value=2" });
+assert(result.alive == (getenv("FORKOP_TEST_CURL_ANSWER") == '{"delay":17}'), "bad probe outcome");
+if (result.alive)
+    assert(result.delay == 17, "wrong latency");
+UCODE
+cat >"$WORK/expected" <<'ARGS'
+--max-time
+4
+-G
+-fs
+192.0.2.9:9090/proxies/A%2FB%20%2B%20%C3%A9/delay
+--data-urlencode
+url=https://health.invalid/a+b?value=2
+--data-urlencode
+timeout=1500
+ARGS
+unset FORKOP_DIAGNOSTICS_UC
+for answer in '{"delay":17}' '{"delay":0}' 'error'; do
+    FORKOP_RUNTIME_STATE_DIR="$WORK/state" SB_CLASH_API_CONTROLLER_PORT=9090 \
+        FORKOP_TEST_CURL_ARGS="$WORK/actual" FORKOP_TEST_CURL_ANSWER="$answer" \
+        PATH="$WORK/bin:$PATH" ucode -L "$LIB" "$WORK/probe.uc"
+    cmp "$WORK/actual" "$WORK/expected"
+done
+printf 'Priority direct probes use the applied bind, encoded tag and bounded timeout\n'

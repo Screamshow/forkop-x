@@ -787,6 +787,11 @@ function action_state_from_dirs() {
     };
 }
 
+function ui_action_state_json() {
+    refresh_action_dirs();
+    write_json(action_state_from_dirs());
+}
+
 function acquire_dir_lock(lock_dir) {
     return locks.acquire(lock_dir, current_pid());
 }
@@ -970,8 +975,8 @@ function monitoring_runtime_config(procd_services) {
         pid = int(instance.pid);
     }
 
-    // Only the two paths exposed by the LuCI settings and its file ACL.
-    if (path != "/etc/xrust/config.json" && path != "/tmp/xrust/config.json")
+    // This path comes from the running procd instance, never from LuCI input.
+    if (!match(path, /^\/[^\r\n]+$/))
         return null;
     let stat = fs.stat(path);
     if (stat == null || stat.type != "file" || locks.held(RELOAD_LOCK_DIR))
@@ -1553,6 +1558,10 @@ else if (mode == "get-ui-capabilities")
     ui_capabilities_json();
 else if (mode == "get-ui-state")
     current_ui_state_json();
+else if (mode == "get-ui-action-state")
+    ui_action_state_json();
+else if (mode == "runtime-config-reference")
+    write_json(monitoring_runtime_config(process_memory.ubus_services(xrust.SERVICE_NAME)));
 else if (mode == "service-status-text")
     print_service_status_text(ARGV[1], ARGV[2]);
 else if (mode == "service-action-valid")

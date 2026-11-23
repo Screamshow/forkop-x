@@ -9,6 +9,7 @@ let current, candidate, running, prepare_ok, publish_ok, calls;
 let subscription_outbounds_changed=false;
 let subscription_failure_detail=null;
 const LIB_DIR="lib", PRIORITY_UC="priority", DNS_FAILOVER_UC="dns", SECTION_CACHE_DIR="section-cache";
+const SUBSCRIPTION_UPDATE_LOCK_DIR="subscriptions.lock", RELOAD_LOCK_DIR="reload.lock";
 function trim(v){return replace(v,/^[ \t\r\n]+|[ \t\r\n]+$/g,"");}
 function service_state_success(args){push(calls,join(" ",args));if(args[0]=="sing-box-current-owned-service-runtime"||args[0]=="sing-box-service-running")return running;die("unexpected service mutation\n");}
 function command_output_from_args(args){return "probe";}
@@ -21,6 +22,7 @@ function xrust_runtime_success(args){
  if(args[0]=="publish-section-cache")return publish_ok;
  if(args[0]=="discard-config-stage")return true;
  if(args[0]=="commit-config-stage")return true;
+ if(args[0]=="commit-ruleset-stage")return true;
  die("unexpected runtime mutation\n");
 }
 function option(s,k,f){return s[k]||f;}
@@ -35,11 +37,17 @@ function subscription_prepare_cache_request(a,b,c){return {ok:true,updated:1,fai
 function log_message(m,l){push(calls,"log:"+m);}
 function module_capture(args){push(calls,join(" ",args));return {status:0,output:"hot"};}
 function module_success(args){push(calls,join(" ",args));return true;}
+function subscription_cache_success(args){push(calls,"cache:"+join(" ",args));return true;}
+function acquire_runtime_lock(path,force){push(calls,"lock:"+path);return true;}
+function release_runtime_lock(path){push(calls,"unlock:"+path);}
+function subscription_record_result(ok,section){push(calls,"result:"+ok);}
+function run_pending_reload_if_requested(){push(calls,"pending reload");}
 UC
 sed -n '/^function subscription_config_value(/,/^}/p' "$ROOT/forkop/files/usr/lib/components/updates.uc"
 sed -n '/^function subscription_hot_transition(/,/^}/p' "$ROOT/forkop/files/usr/lib/components/updates.uc"
 sed -n '/^function subscription_runtime_change_check(/,/^}/p' "$ROOT/forkop/files/usr/lib/components/updates.uc"
 sed -n '/^function subscription_update_common_locked(/,/^}/p' "$ROOT/forkop/files/usr/lib/components/updates.uc"
+sed -n '/^function subscription_update_common(/,/^}/p' "$ROOT/forkop/files/usr/lib/components/updates.uc"
 cat <<'UC'
 let fixture={outbounds:[{type:"vless",tag:"p",server:"node.invalid",server_port:443},{type:"selector",tag:"section",outbounds:["p","direct"]}],route:{final:"section"},dns:{servers:[{tag:"dns",server:"1.1.1.1"}]}};
 function reset(){current=json(sprintf("%J",fixture));candidate=json(sprintf("%J",fixture));running=true;prepare_ok=true;publish_ok=true;calls=[];}
@@ -75,7 +83,33 @@ if(!subscription_update_common_locked(true,"section",0)||
     die("subscription update tried to apply an inactive config path\n");
 desired="config";
 reset();prepare_ok=false;if(subscription_update_common_locked(true,"section",0))die("failed preparation accepted\n");
+reset();
+assert(subscription_update_common(true, "section", 1) == 0, "accepted subscription update failed");
+assert(index(calls,"cache:finish-source-update commit") > index(calls,"publish-section-cache probe/candidate.json") &&
+       index(calls,"cache:finish-source-update commit") < index(calls,"unlock:reload.lock"),
+       "source cache must be published after runtime acknowledgement under lock");
+reset();prepare_ok=false;
+assert(subscription_update_common(true, "section", 1) == 1, "rejected subscription config became successful");
+assert(length(filter(calls,call => call=="cache:finish-source-update rollback"))==2 &&
+       index(calls,"cache:finish-source-update commit")<0 &&
+       index(calls,"result:false") < index(calls,"unlock:reload.lock"),
+       "source rollback must resolve before unlocking or claiming success");
 print("Subscription unchanged runtime, semantic changes, stopped service and preparation failure checks passed\n");
 UC
 } > "$WORK/check.uc"
 ucode "$WORK/check.uc"
+cat >"$WORK/compare.uc" <<'UC'
+    let compare = require("subscription.parser").runtime_outbounds_values_equal;
+    let a = { type: "vless", tag: "test", transport: { type: "xhttp", hosts: ["a", "b"] } };
+    let b = { tag: "test", transport: { hosts: ["a", "b"], type: "xhttp" }, type: "vless",
+        share_link: "vless://test", __forkop_filter_names: ["old"] };
+    let direct = { type: "direct", tag: "direct" };
+    assert(compare({outbounds:[direct, a]}, {outbounds:[b, direct]}),
+        "provider order, property order and presentation fields must not reload");
+    b.transport.hosts = ["b", "a"];
+    assert(!compare({outbounds:[direct, a]}, {outbounds:[b, direct]}), "nested order must remain significant");
+    assert(!compare({outbounds:[a, a]}, {outbounds:[a, direct]}), "duplicates must remain significant");
+    assert(!compare(null, {outbounds:[]}), "invalid inputs must compare unequal");
+    print("Subscription payload equality preserves runtime semantics\n");
+UC
+ucode -L "$ROOT/forkop/files/usr/lib" "$WORK/compare.uc"

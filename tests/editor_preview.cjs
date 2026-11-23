@@ -32,6 +32,9 @@ const context = {
   plainObject: x => x || {}, refreshDashboardFilterChoiceWidgets() {},
   currentDraftOutboundNames: () => ['Manual server'],
   normalizeDynamicListItems: values => values,
+  uniqueDynamicListItems: values => [...new Set(values)],
+  optionMapValue: () => ['Saved server'],
+  _: value => value,
   readOutboundMetadataFromSectionCache: async () => { metadataReads++; return {names:runtimeNames}; },
   fs: {
     write:async()=>{}, remove:async()=>{},
@@ -46,8 +49,13 @@ vm.createContext(context);
 vm.runInContext(code,context);
 vm.runInContext(text.match(/^function applyChildItemSettings\([\s\S]*?^}/m)[0], context);
 vm.runInContext(text.match(/^function currentOutboundNameChoices\([\s\S]*?^}/m)[0], context);
+vm.runInContext(text.match(/^function configureServerNameChoices\([\s\S]*?^}/m)[0], context);
 const deadline=setTimeout(()=>{console.error('Editor preview test timed out');process.exit(1);},10000);
 (async()=>{
+  const option = { option: 'include_outbounds' };
+  context.configureServerNameChoices(option, () => 'new', true);
+  assert.deepEqual([...option.load('id')], ['Saved server']);
+  assert.equal(pending.length, 0, 'modal options load before making a network preview');
   const first=context.loadOutboundNameChoices('new'); await new Promise(setImmediate);
   urls=['https://example.com/second'];
   const second=context.loadOutboundNameChoices('new'); await new Promise(setImmediate);

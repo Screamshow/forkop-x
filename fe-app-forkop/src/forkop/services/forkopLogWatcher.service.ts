@@ -1,6 +1,6 @@
 import { logger } from './logger.service';
 
-type LogFetcher = () => Promise<string> | string;
+type LogFetcher = () => Promise<string | undefined> | string | undefined;
 
 interface ForkopLogWatcherOptions {
   intervalMs?: number;
@@ -18,7 +18,9 @@ export class ForkopLogWatcher {
   private timer?: ReturnType<typeof setInterval>;
   private running = false;
   private paused = false;
-  private checking = false;
+  private inFlight?: Promise<string | undefined>;
+  private lastFetchAt = -Infinity;
+  private text?: string;
 
   private constructor() {
     if (typeof document !== 'undefined') {
@@ -42,6 +44,8 @@ export class ForkopLogWatcher {
     this.intervalMs = options?.intervalMs ?? 5000;
     this.maxTrackedLines = options?.maxTrackedLines ?? 500;
     this.lastLines = new Set();
+    this.text = undefined;
+    this.lastFetchAt = -Infinity;
     logger.info(
       '[ForkopLogWatcher]',
       `initialized (interval: ${this.intervalMs}ms)`,
@@ -52,50 +56,45 @@ export class ForkopLogWatcher {
     return raw.split('\n').filter(Boolean).slice(-this.maxTrackedLines);
   }
 
-  async checkOnce(): Promise<void> {
-    if (!this.fetcher) {
-      logger.warn('[ForkopLogWatcher]', 'fetcher not found');
-      return;
-    }
+  async checkOnce(minIntervalMs = 0): Promise<string | undefined> {
+    if (this.inFlight) return this.inFlight;
+    if (
+      !this.fetcher ||
+      this.paused ||
+      (typeof document !== 'undefined' && document.hidden)
+    )
+      return this.text;
 
-    if (this.paused) {
-      logger.debug('[ForkopLogWatcher]', 'skipped check — tab not visible');
-      return;
-    }
+    const now = Date.now();
+    if (now - this.lastFetchAt < minIntervalMs) return this.text;
+    this.lastFetchAt = now;
 
-    if (this.checking) {
-      logger.debug(
-        '[ForkopLogWatcher]',
-        'skipped check — previous check is running',
-      );
-      return;
-    }
+    this.inFlight = Promise.resolve()
+      .then(this.fetcher)
+      .then((raw) => {
+        if (raw === undefined) return this.text;
+        const lines = this.normalizeLines(raw);
+        this.text = lines.join('\n');
 
-    this.checking = true;
-
-    try {
-      const raw = await this.fetcher();
-      const lines = this.normalizeLines(raw);
-
-      for (const line of lines) {
-        if (this.lastLines.has(line)) {
-          continue;
+        for (const line of lines) {
+          if (this.lastLines.has(line)) continue;
+          this.lastLines.add(line);
+          this.onNewLog?.(line);
         }
-
-        this.lastLines.add(line);
-        this.onNewLog?.(line);
-      }
-
-      if (this.lastLines.size > this.maxTrackedLines) {
-        this.lastLines = new Set(
-          Array.from(this.lastLines).slice(-this.maxTrackedLines),
-        );
-      }
-    } catch (err) {
-      logger.error('[ForkopLogWatcher]', 'failed to read logs:', err);
-    } finally {
-      this.checking = false;
-    }
+        if (this.lastLines.size > this.maxTrackedLines)
+          this.lastLines = new Set(
+            [...this.lastLines].slice(-this.maxTrackedLines),
+          );
+        return this.text;
+      })
+      .catch((error) => {
+        logger.error('[ForkopLogWatcher]', 'failed to read logs:', error);
+        return this.text;
+      })
+      .finally(() => {
+        this.inFlight = undefined;
+      });
+    return this.inFlight;
   }
 
   start(): void {
@@ -106,8 +105,8 @@ export class ForkopLogWatcher {
     }
 
     this.running = true;
-    void this.checkOnce();
-    this.timer = setInterval(() => this.checkOnce(), this.intervalMs);
+    void this.readRecentLogs();
+    this.timer = setInterval(() => void this.readRecentLogs(), this.intervalMs);
     logger.info(
       '[ForkopLogWatcher]',
       `started (interval: ${this.intervalMs}ms)`,
@@ -131,12 +130,17 @@ export class ForkopLogWatcher {
     if (!this.running || !this.paused) return;
     this.paused = false;
     logger.info('[ForkopLogWatcher]', 'resumed (tab active)');
-    void this.checkOnce();
+    void this.readRecentLogs();
   }
 
   reset(): void {
     this.lastLines = new Set();
-    this.checking = false;
+    this.text = undefined;
+    this.lastFetchAt = -Infinity;
     logger.info('[ForkopLogWatcher]', 'log history reset');
+  }
+
+  readRecentLogs(): Promise<string | undefined> {
+    return this.checkOnce(1000);
   }
 }

@@ -105,7 +105,8 @@ function remove_rt_tables_entry() {
     let changed = false;
     let lines = [];
     for (let line in split(data, "\n")) {
-        if (index(line, "105 forkop") >= 0) {
+        if (match(line, /^\s*105\s+forkop\s*$/) != null ||
+            match(line, /^\s*[0-9]+\s+forkop\s+# forkop-x-tproxy\s*$/) != null) {
             changed = true;
             continue;
         }
@@ -267,7 +268,7 @@ function prerm_cleanup(action) {
             command_success_from_args([ '/etc/init.d/forkop-tailscale', 'stop' ]);
         if (path_exists('/etc/init.d/forkop-support'))
             command_success_from_args([ '/etc/init.d/forkop-support', 'stop' ]);
-        if (!command_success_from_args([ INIT_PATH, "stop" ])) {
+        if (!command_success_from_args([ "env", "FORKOP_INTERNAL_SERVICE_STOP=1", INIT_PATH, "stop" ])) {
             warn("Unable to stop Forkop before package replacement.\n");
             return false;
         }

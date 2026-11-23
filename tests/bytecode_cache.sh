@@ -236,6 +236,32 @@ with_fake_ucode="$(
 [ "$with_fake_ucode" = "$SOURCE_DIR" ] ||
   fail "a different interpreter must invalidate the cache, got '$with_fake_ucode'"
 
+# Rewriting a compiled file with the same inode, length and mtime must not
+# give this build a manifest for bytes the compiler never read.
+RACE_SOURCE="$WORK_DIR/race-source"
+RACE_CACHE="$WORK_DIR/race-cache"
+cp -R "$SOURCE_DIR" "$RACE_SOURCE"
+printf '#!/usr/bin/env ucode\nreturn { marker: "bytecode-v1" };\n' >"$RACE_SOURCE/config/domain.uc"
+cp -p "$RACE_SOURCE/config/domain.uc" "$WORK_DIR/race-timestamp"
+cat >"$WORK_DIR/race-ucode" <<'SH'
+#!/bin/sh
+"$REAL_UCODE" "$@" || exit $?
+case "$*" in
+    '-c '*'/config/domain.uc')
+        sed 's/bytecode-v1/bytecode-v2/' "$RACE_MODULE" >"$RACE_STAGE"
+        cat "$RACE_STAGE" >"$RACE_MODULE"
+        touch -r "$RACE_TIMESTAMP" "$RACE_MODULE"
+        ;;
+esac
+SH
+chmod +x "$WORK_DIR/race-ucode"
+race=$(bytecode "$RACE_SOURCE" "$RACE_CACHE" refresh FORKOP_UCODE_BIN="$WORK_DIR/race-ucode" \
+  REAL_UCODE="$(command -v ucode)" RACE_MODULE="$RACE_SOURCE/config/domain.uc" \
+  RACE_STAGE="$WORK_DIR/race-new" RACE_TIMESTAMP="$WORK_DIR/race-timestamp")
+grep -q bytecode-v2 "$RACE_SOURCE/config/domain.uc" || fail 'compiler race fixture did not replace the source'
+[ "$race" = "$RACE_SOURCE" ] && [ ! -e "$RACE_CACHE/manifest" ] ||
+  fail 'bytecode was published for a source that changed during compilation'
+
 # Revalidating costs a stat per module, so a proven manifest is trusted for a
 # few seconds. A package upgrade drops that stamp, which is the only thing
 # standing between a replaced library and a few seconds of the old one.

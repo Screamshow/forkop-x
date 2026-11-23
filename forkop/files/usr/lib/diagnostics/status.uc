@@ -2,25 +2,10 @@
 
 let fs = require("fs");
 let mark_rules = require("diagnostics.mark_rules");
+let core_url = require("core.url");
 
 function as_string(value) {
     return value == null ? "" : "" + value;
-}
-
-function url_encode(value) {
-    value = as_string(value);
-    for (let i = 0; i < length(value); i++) {
-        let c = substr(value, i, 1);
-        let code = ord(c);
-        if ((code >= 48 && code <= 57) ||
-            (code >= 65 && code <= 90) ||
-            (code >= 97 && code <= 122) ||
-            c == "-" || c == "_" || c == "." || c == "~")
-            print(c);
-        else
-            print(sprintf("%%%02X", code));
-    }
-    print("\n");
 }
 
 function read_stdin() {
@@ -1032,7 +1017,7 @@ let mode = ARGV[0];
 if (mode == "proxy-response-ip-mask")
     render_proxy_response_ip_mask();
 else if (mode == "url-encode")
-    url_encode(ARGV[1]);
+    print(core_url.encode(ARGV[1]), "\n");
 else if (mode == "stdin-json")
     stdin_json();
 else if (mode == "stdin-first-line-last-field")

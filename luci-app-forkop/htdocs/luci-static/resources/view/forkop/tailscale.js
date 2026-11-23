@@ -2,7 +2,6 @@
 "require baseclass";
 "require form";
 "require fs";
-"require poll";
 "require ui";
 "require view.forkop.main as main";
 const _ = main.translateForkop;
@@ -35,7 +34,8 @@ function createTailscaleContent(section) {
   const option = section.option(form.DummyValue, "_native_tailscale");
   option.rawhtml = true;
   option.cfgvalue = () => {
-    let busy = false, latest = {}, mounted = false;
+    let busy = false, latest = {};
+    let statusGeneration = 0;
     const key = E("input", { type: "text", autocomplete: "off", style: "width:100%;max-width:480px" });
     const state = E("strong", {}, _("Checking status…"));
     const indicator = E("span", { "aria-hidden": "true", style: "width:10px;height:10px;border-radius:50%;background:#94a3b8;flex:none" });
@@ -95,57 +95,103 @@ function createTailscaleContent(section) {
       }
       intro.style.display = keyRow.style.display = data.state === "connected" ? "none" : "";
       connect.style.display = data.state === "connected" ? "none" : "";
-      connect.disabled = busy || !data.available || data.state === "connected" || data.state === "connecting";
-      disconnect.disabled = busy || !data.available || data.state === "disconnected";
-      key.disabled = busy || !data.available || data.state === "connected";
-      ssh.disabled = busy || !data.ssh_available;
+      const readonly = main.isReadOnlyForkopView();
+      connect.disabled = readonly || busy || !data.available || data.state === "connected" || data.state === "connecting";
+      disconnect.disabled = readonly || busy || !data.available || data.state === "disconnected";
+      key.disabled = readonly || busy || !data.available || data.state === "connected";
+      ssh.disabled = readonly || busy || !data.ssh_available;
       ssh.title = data.ssh_available ? "" : _("Xrust 0.0.17 or later is required");
       ssh.checked = Boolean(data.ssh_enabled);
-      lan.disabled = busy || !data.available;
+      lan.disabled = readonly || busy || !data.available;
       lan.checked = Boolean(data.lan_enabled);
       const routes = (data.lan_routes || []).join(", ");
       lanStatus.textContent = !data.lan_enabled ? "" : data.state !== "connected" ? _("LAN: waiting for connection.") : !data.lan_ready ? _("LAN: failed to configure access.") : data.routes_approved ? _("LAN: access allowed (") + routes + ")." : _("LAN: awaiting approval (") + routes + _("). In the Tailscale admin console: this router → Edit route settings → approve the route.");
       lanStatus.style.display = lanStatus.textContent ? "" : "none";
-      exitNode.disabled = busy || !data.exit_available;
+      exitNode.disabled = readonly || busy || !data.exit_available;
       exitNode.checked = Boolean(data.exit_enabled);
       exitStatus.textContent = !data.exit_enabled ? "" : !data.exit_available ? _("Exit Node is unavailable.") : data.state !== "connected" ? _("Exit Node: waiting for connection.") : !data.exit_ready ? _("Exit Node: failed to configure access.") : !data.exit_approved ? _("Exit Node: awaiting approval. In the Tailscale admin console: this router → Edit route settings → Use as exit node.") : "";
       exitStatus.style.display = exitStatus.textContent ? "" : "none";
     }
     async function request(action, args = []) {
-      const result = await fs.exec("/usr/bin/forkop", ["tailscale_native_" + action, ...args]);
+      const result = action === "status" && main.isReadOnlyForkopView()
+        ? await main.readForkopStatus("tailscale_native_status")
+        : await fs.exec("/usr/bin/forkop", ["tailscale_native_" + action, ...args]);
       if (result.code !== 0) throw new Error(_("Tailscale action failed"));
       return JSON.parse(result.stdout);
     }
-    async function refresh() {
-      if (root.isConnected) mounted = true;
-      else if (mounted) { poll.remove(refresh); return; }
-      if (busy) return;
-      try { render(await request("status")); }
-      catch (error) { setStatus(_("Failed to retrieve status"), "error"); }
+    async function refresh(isVisible = () => true) {
+      if (busy || !root.isConnected) return;
+      const generation = ++statusGeneration;
+      const isCurrent = () => generation === statusGeneration && root.isConnected && isVisible();
+      try {
+        const data = await request("status");
+        if (isCurrent()) render(data);
+      } catch (error) {
+        if (isCurrent()) setStatus(_("Failed to retrieve status"), "error");
+      }
     }
     async function act(action, args = []) {
-      if (busy) return;
+      if (busy || main.isReadOnlyForkopView()) return;
       if (action === "connect" && !key.value.trim() && !latest.saved_identity) {
         ui.addNotification(null, E("p", {}, _("Enter a Tailscale auth key"))); return;
       }
+      statusGeneration++;
       busy = true; render(latest);
       try {
+        let data;
         if (action === "connect") {
-          await fs.write("/var/run/forkop/ui-state/tailscale-auth-input", key.value.trim(), 384);
+          const authKey = key.value.trim();
           key.value = "";
+          const response = await main.writeForkopUi("tailscale_connect", authKey);
+          if (response.code !== 0) throw new Error(_("Tailscale action failed"));
+          data = JSON.parse(response.stdout);
+        } else {
+          data = await request(action, args);
         }
-        const data = await request(action, args);
         if (data.state === "error") ui.addNotification(null, E("p", {}, nativeMessage(data.message) || _("Failed to connect")));
-        busy = false; render(data);
+        latest = data;
       } catch (error) {
-        if (action === "connect") await fs.remove("/var/run/forkop/ui-state/tailscale-auth-input").catch(() => {});
         ui.addNotification(null, E("p", {}, error.message));
-      } finally { busy = false; render(latest); }
+      } finally {
+        busy = false;
+        if (root.isConnected) render(latest);
+        await refresh();
+      }
     }
     connect.addEventListener("click", () => act("connect"));
     disconnect.addEventListener("click", () => act("disconnect"));
     ssh.addEventListener("change", () => act("ssh", [ssh.checked ? "1" : "0"]));
-    lan.addEventListener("change", () => act("lan", [lan.checked ? "1" : "0"]));
+    lan.addEventListener("change", async function () {
+      if (!lan.checked) return act("lan", ["0"]);
+      lan.checked = Boolean(latest.lan_enabled);
+      if (busy || main.isReadOnlyForkopView()) return;
+      try {
+        const preview = await request("lan", ["preview"]);
+        if (!Array.isArray(preview.lan_preview_routes) || !preview.lan_preview_id)
+          throw new Error(nativeMessage(preview.message) || _("Tailscale action failed"));
+        ui.showModal(_("Allow LAN access"), [
+          E("p", {}, _("Advertise these IPv4 networks through Tailscale?")),
+          E("ul", {}, preview.lan_preview_routes.map((route) => E("li", {}, route))),
+          E("div", { class: "right" }, [
+            E("button", {
+              type: "button",
+              class: "cbi-button cbi-button-neutral",
+              click: () => ui.hideModal(),
+            }, _("Cancel")),
+            E("button", {
+              type: "button",
+              class: "cbi-button cbi-button-apply",
+              click: () => {
+                ui.hideModal();
+                void act("lan", ["1", preview.lan_preview_id]);
+              },
+            }, _("Allow LAN access")),
+          ]),
+        ]);
+      } catch (error) {
+        ui.addNotification(null, E("p", {}, error.message));
+      }
+    });
     exitNode.addEventListener("change", () => act("exit", [exitNode.checked ? "1" : "0"]));
     const root = E("div", { class: "cbi-section fkp-tailscale" }, [
       E("style", {}, `.fkp-tailscale { min-width:0; max-width:100%; box-sizing:border-box; overflow-wrap:anywhere; } #cbi-forkop-tailscale_native > h3 { display: none; } .fkp-tailscale-peers th, .fkp-tailscale-peers td { border-bottom:1px solid rgba(148,163,184,.25) !important; } .fkp-tailscale-peers tbody tr:last-child td:last-child { border-bottom:0 !important; }
@@ -169,7 +215,7 @@ function createTailscaleContent(section) {
       E("div", { style: "margin:14px 0" }, [E("label", { style: "display:inline-flex;align-items:center;gap:8px", title: _("Allow devices on your tailnet to access the internet through this router and Forkop rules. LAN and SSH access are enabled separately.") }, [exitNode, _("Use this router as an Exit Node")]), exitStatus]),
       logPanel,
     ]);
-    poll.add(refresh, 3); refresh();
+    main.pollLuciTab(root, refresh, 3000);
     return root;
   };
 }

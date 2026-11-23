@@ -3,18 +3,22 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 LIB="$ROOT/forkop/files/usr/lib"
 fixture=${1:?Supply a real large SRS fixture}
+FORKOP_XRUST_BIN=${FORKOP_XRUST_BIN:-/usr/bin/xrust}
+export FORKOP_XRUST_BIN
 work=$(mktemp -d /tmp/forkop-binary-validation.XXXXXX)
 trap 'rm -rf "$work"' EXIT
 cat > "$work/probe.json" <<'JSON'
 {"version":3,"rules":[{"domain_suffix":["example.test"]},{"type":"logical","mode":"or","rules":[{"ip_cidr":["192.0.2.0/24"]},{"domain":["another.test"]}]}]}
 JSON
-sing-box rule-set compile "$work/probe.json" -o "$work/probe.srs"
+"$FORKOP_XRUST_BIN" rule-set compile "$work/probe.json" -o "$work/probe.srs"
 printf 'broken rule set' > "$work/bad.srs"
 head -c 64 "$fixture" > "$work/truncated.srs"
 printf 'SRS\177' > "$work/unsupported.srs"
 {
 cat <<'UCODE'
 let fs = require("fs");
+const XRUST_BINARY = getenv("FORKOP_XRUST_BIN");
+let xrust = { PATH: XRUST_BINARY };
 function as_string(v) { return v == null ? "" : "" + v; }
 function shell_quote(v) { return "'" + replace(as_string(v), /'/g, "'\\''") + "'"; }
 function trim(v) { return replace(v, /^\s+|\s+$/g, ""); }
@@ -25,9 +29,10 @@ function file_nonempty(path) { let s = fs.stat(path); return s != null && s.size
 function remove_file(path) { fs.unlink(path); }
 function valid_list_ruleset_file(path) { let v = json(fs.readfile(path)); return type(v) == "object" && type(v.rules) == "array"; }
 UCODE
-sed -n '/^function binary_validation_path(path) {/,/^}/p; /^function binary_stat_signature(path) {/,/^}/p; /^function binary_digest(path) {/,/^}/p; /^function trusted_binary_digest(path) {/,/^}/p; /^function mark_binary_valid(path) {/,/^}/p; /^function valid_binary(path) {/,/^}/p' "$LIB/xrust/ruleset_cache.uc"
+sed -n '/^function binary_validation_path(/,/^function valid_runtime_entry(/ { /^function valid_runtime_entry(/d; p; }' "$LIB/xrust/ruleset_cache.uc"
 sed -n '/^function validate_staged_list_download(path, format) {/,/^}/p' "$LIB/components/updates.uc"
 cat <<'UCODE'
+function valid_binary(path) { return validate_cache(path, "binary"); }
 for (let path in [ ARGV[0], ARGV[1] ]) {
     assert(valid_binary(path), "valid compiled rule set rejected");
     assert(valid_binary(path), "cached rule set rejected");
@@ -49,7 +54,7 @@ cp "$fixture" "$work/large.srs"
 ucode "$work/check.uc" "$work/probe.srs" "$work/large.srs" "$work/bad.srs" "$work/truncated.srs" "$work/unsupported.srs"
 
 # Exercise the complete cache publication path with a real large binary and
-# real sing-box parser; only the network download is replaced with a fixture.
+# real native Xrust parser; only the network download is replaced with a fixture.
 mkdir -p "$work/bin"
 cat > "$work/bin/curl" <<'SH'
 #!/bin/sh
@@ -92,7 +97,7 @@ echo 'Large cache publication, unchanged refresh and last-known-good preservatio
 
 # A changed valid binary may live in RAM when flash is constrained, then be
 # promoted without reparsing already validated bytes when space returns.
-sing-box rule-set compile "$work/probe.json" -o "$work/probe.srs"
+"$FORKOP_XRUST_BIN" rule-set compile "$work/probe.json" -o "$work/probe.srs"
 export RULESET_REAL_DOWNLOAD="$work/probe.srs"
 export FORKOP_PERSISTENT_LIST_CACHE_AVAILABLE_BYTES=8388608
 ucode -L "$LIB" "$LIB/xrust/ruleset_cache.uc" refresh
@@ -104,7 +109,13 @@ export FORKOP_PERSISTENT_LIST_CACHE_AVAILABLE_BYTES=33554432
 status=0
 ucode -L "$LIB" "$LIB/xrust/ruleset_cache.uc" refresh || status=$?
 [ "$status" = 1 ]
-cmp "$RULESET_REAL_DOWNLOAD" "$cache_path"
+promoted_path=$(ucode -e 'let fs=require("fs");let m=json(fs.readfile(ARGV[0]));for(let k,e in m)if(e.path)print(e.path);' "$FORKOP_RULESET_CACHE_MANIFEST")
+cmp "$RULESET_REAL_DOWNLOAD" "$promoted_path"
+[ "$old_hash" = "$(md5sum "$cache_path")" ]
+[ -e "$runtime_path" ]
+[ -f "$promoted_path.validated" ]
+printf '{"route":{"rule_set":[{"format":"binary","path":"%s"}]}}\n' "$promoted_path" > "$work/applied.json"
+FORKOP_SING_BOX_CONFIG_PATH="$work/applied.json" ucode -L "$LIB" "$LIB/xrust/ruleset_cache.uc" prune-applied
 [ ! -e "$runtime_path" ]
-[ -f "$cache_path.validated" ]
+[ ! -e "$cache_path" ]
 echo 'Changed binary, RAM-only cache and later persistent promotion passed'

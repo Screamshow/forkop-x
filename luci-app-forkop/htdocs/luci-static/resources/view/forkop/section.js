@@ -334,6 +334,7 @@ function readOutboundMetadataFromSectionCache(section_id) {
 }
 
 const editorPreviewStates = new Map();
+const outboundNameRequests = new Map();
 function subscriptionCatalogueOption(option) {
   return option !== "subscription_update_enabled" &&
     option !== "subscription_update_interval";
@@ -454,7 +455,24 @@ async function loadDraftSubscriptionChoices(section_id, sources) {
   return state.task;
 }
 
-async function loadOutboundNameChoices(section_id) {
+function loadOutboundNameChoices(section_id) {
+  const signature = subscriptionSourceSignature(draftSubscriptionSources(section_id));
+  const current = outboundNameRequests.get(section_id);
+  if (current?.signature === signature) {
+    renderEditorPreviewStatus(section_id, editorPreviewStates.get(section_id));
+    return current.task;
+  }
+
+  const request = { signature };
+  request.task = resolveOutboundNameChoices(section_id).finally(() => {
+    if (outboundNameRequests.get(section_id) === request)
+      outboundNameRequests.delete(section_id);
+  });
+  outboundNameRequests.set(section_id, request);
+  return request.task;
+}
+
+async function resolveOutboundNameChoices(section_id) {
   const sources = draftSubscriptionSources(section_id);
   const saved = savedSubscriptionSources(section_id);
   const signature = subscriptionSourceSignature(sources);
@@ -1276,7 +1294,7 @@ const ButtonAddSettingsDynamicList = SettingsDynamicList.extend({
   buttonAdd: true,
 });
 
-function configureLiveDynamicListChoices(option, getChoices) {
+function configureLiveDynamicListChoices(option, getChoices, parentSectionForItem) {
   option.renderWidget = function (section_id, _option_index, cfgvalue) {
     const values = L.toArray(cfgvalue != null ? cfgvalue : this.default);
     const choices = getChoices(section_id, values);
@@ -1332,17 +1350,19 @@ function configureLiveDynamicListChoices(option, getChoices) {
       return true;
     };
     const refreshBeforeOpening = (event) => {
-      if (event.target && event.target.closest(".add-item")) {
+      if (!this.readonly && !this.map.readonly && event.target?.closest(".add-item")) {
+        void loadOutboundNameChoices(parentSectionForItem(section_id)).catch(() => {});
         refreshChoices();
       }
     };
     node.addEventListener("mousedown", refreshBeforeOpening, true);
     node.addEventListener("focusin", refreshBeforeOpening, true);
 
-    if (!dashboardFilterChoiceRefreshers.has(section_id)) {
-      dashboardFilterChoiceRefreshers.set(section_id, new Set());
+    const parent = parentSectionForItem(section_id);
+    if (!dashboardFilterChoiceRefreshers.has(parent)) {
+      dashboardFilterChoiceRefreshers.set(parent, new Set());
     }
-    dashboardFilterChoiceRefreshers.get(section_id).add(refreshChoices);
+    dashboardFilterChoiceRefreshers.get(parent).add(refreshChoices);
 
     return node;
   };
@@ -1389,14 +1409,13 @@ function configureServerNameChoices(option, parentSectionForItem, multiple) {
     currentOutboundNameChoices(parentSectionForItem(itemId), values);
 
   option.placeholder = _("-- Select --");
-  option.load = async function (itemId) {
+  option.load = function (itemId) {
     const saved = optionMapValue(this, itemId, this.option);
-    await loadOutboundNameChoices(parentSectionForItem(itemId));
     return multiple ? uniqueDynamicListItems(saved) : normalizeOptionValues(saved);
   };
 
   if (!multiple) {
-    configureLiveDynamicListChoices(option, getChoices);
+    configureLiveDynamicListChoices(option, getChoices, parentSectionForItem);
     return;
   }
 
@@ -1451,10 +1470,16 @@ function configureServerNameChoices(option, parentSectionForItem, multiple) {
       widget.clearChoices();
       widget.addChoices(choiceKeys, nextLabels);
     };
-    node.addEventListener("click", refreshChoices, true);
-    node.addEventListener("keydown", refreshChoices, true);
-
     const sectionId = parentSectionForItem(itemId);
+    const openChoices = () => {
+      if (!node.hasAttribute("open"))
+        void loadOutboundNameChoices(sectionId).catch(() => {});
+      refreshChoices();
+    };
+    node.addEventListener("focusin", openChoices, true);
+    node.addEventListener("click", openChoices, true);
+    node.addEventListener("keydown", openChoices, true);
+    node.addEventListener("cbi-dropdown-close", refreshChoices);
     if (!dashboardFilterChoiceRefreshers.has(sectionId)) {
       dashboardFilterChoiceRefreshers.set(sectionId, new Set());
     }
@@ -1464,10 +1489,6 @@ function configureServerNameChoices(option, parentSectionForItem, multiple) {
 }
 
 function currentOutboundNameChoices(section_id, values) {
-  if (!outboundNameChoicesCache.has(section_id)) {
-    loadOutboundNameChoices(section_id);
-  }
-
   const seen = new Set();
   const result = [];
   const append = (name) => {
@@ -3577,6 +3598,42 @@ function isTunnelDnsAddress(address) {
   return Boolean(validation.parseIPv4(address) || validation.parseIPv6(address));
 }
 
+function isTunnelPrefix(value) {
+  if (typeof value !== "string") return false;
+  const match = /^([^/]+)\/(\d+)$/.exec(value);
+  return Boolean(match && isTunnelDnsAddress(match[1]) &&
+    Number(match[2]) <= (match[1].includes(":") ? 128 : 32));
+}
+
+function validateWireGuardProfile(profile) {
+  const nonempty = (value) => typeof value === "string" && value.trim() !== "";
+  const prefixes = (value) => {
+    const entries = typeof value === "string" ? [value] : value;
+    return Array.isArray(entries) && entries.length && entries.every(isTunnelPrefix)
+      ? entries
+      : null;
+  };
+  const addresses = prefixes(profile?.address);
+  if (profile?.type !== "wireguard" ||
+      (profile.system != null && profile.system !== false) ||
+      !nonempty(profile.private_key) || !addresses ||
+      !Array.isArray(profile.peers) || profile.peers.length !== 1)
+    throw new Error();
+
+  const peer = profile.peers[0];
+  const allowed = prefixes(peer?.allowed_ips);
+  if (!peer || !nonempty(peer.address) || /\s/.test(peer.address) ||
+      !Number.isInteger(peer.port) || peer.port < 1 || peer.port > 65535 ||
+      !nonempty(peer.public_key) || !allowed ||
+      (peer.pre_shared_key != null && typeof peer.pre_shared_key !== "string"))
+    throw new Error();
+
+  // Xrust accepts a single prefix as well as a list. Normalize imported
+  // profiles without dropping a valid historical single-prefix form.
+  profile.address = addresses;
+  peer.allowed_ips = allowed;
+}
+
 function parseAmneziaProfile(text) {
   const interfaceAliases = {
     headerprotectionkey: "header_protection_key",
@@ -3657,12 +3714,11 @@ function parseAmneziaProfile(text) {
 
 function parseNativeTunnelProfile(text) {
   text = `${text || ""}`.trim();
-  if (!text.startsWith("{")) return parseAmneziaProfile(text);
-  const profile = JSON.parse(text);
-  if (profile?.type === "wireguard" && !profile.system &&
-      profile.private_key && profile.address?.length && profile.peers?.length === 1)
-    return { profile };
-  throw new Error();
+  const result = text.startsWith("{")
+    ? { profile: JSON.parse(text) }
+    : parseAmneziaProfile(text);
+  validateWireGuardProfile(result.profile);
+  return result;
 }
 
 function getConfigListValues(section_id, key) {
@@ -4287,9 +4343,6 @@ function syncAnnotatedTextareaOverlay(textarea, wrapper, overlay) {
   overlay.style.textTransform = style.textTransform;
   overlay.style.boxSizing = style.boxSizing;
   overlay.style.scrollPaddingTop = style.scrollPaddingTop;
-
-  overlay.scrollTop = textarea.scrollTop;
-  overlay.scrollLeft = textarea.scrollLeft;
 }
 
 function createAnnotationKey(annotation) {
@@ -4371,8 +4424,9 @@ function attachAnnotatedTextarea(textarea, analyzer) {
   ensureAnnotatedTextareaStyles();
 
   if (textarea.__forkopAnnotatedTextareaController) {
-    textarea.__forkopAnnotatedTextareaController.analyzer = analyzer;
-    textarea.__forkopAnnotatedTextareaController.update();
+    const controller = textarea.__forkopAnnotatedTextareaController;
+    controller.analyzer = analyzer;
+    controller.update();
     return;
   }
 
@@ -4393,13 +4447,19 @@ function attachAnnotatedTextarea(textarea, analyzer) {
     textarea,
     wrapper,
     overlay,
+    syncScroll() {
+      this.overlay.scrollTop = this.textarea.scrollTop;
+      this.overlay.scrollLeft = this.textarea.scrollLeft;
+    },
     update() {
-      const analysis = this.analyzer(this.textarea.value);
-      this.overlay.innerHTML = renderAnnotatedTextareaOverlay(
-        this.textarea.value,
-        analysis.annotations,
-      );
-      syncAnnotatedTextareaOverlay(this.textarea, this.wrapper, this.overlay);
+      const value = this.textarea.value;
+      if (this.value !== value || this.lastAnalyzer !== this.analyzer) {
+        const analysis = this.analyzer(value);
+        this.overlay.innerHTML = renderAnnotatedTextareaOverlay(value, analysis.annotations);
+        this.value = value;
+        this.lastAnalyzer = this.analyzer;
+      }
+      this.syncScroll();
     },
   };
 
@@ -4408,18 +4468,23 @@ function attachAnnotatedTextarea(textarea, analyzer) {
   const updateAnnotatedTextarea = () => controller.update();
   textarea.addEventListener("input", updateAnnotatedTextarea);
   textarea.addEventListener("change", updateAnnotatedTextarea);
-  textarea.addEventListener("scroll", updateAnnotatedTextarea, {
+  textarea.addEventListener("scroll", () => controller.syncScroll(), {
     passive: true,
   });
-  textarea.addEventListener("keyup", updateAnnotatedTextarea);
+
+  const resizeOverlay = () => {
+    syncAnnotatedTextareaOverlay(textarea, wrapper, overlay);
+    controller.syncScroll();
+  };
 
   if (typeof ResizeObserver === "function") {
-    const resizeObserver = new ResizeObserver(() => controller.update());
+    const resizeObserver = new ResizeObserver(resizeOverlay);
     resizeObserver.observe(textarea);
     controller.resizeObserver = resizeObserver;
   }
 
   controller.update();
+  resizeOverlay();
 }
 
 function parseCommentAwareListTokens(value) {
@@ -5366,7 +5431,7 @@ function createSectionContent(section) {
     "selector_proxy_links",
     _("Connection URL"),
     _(
-      "vless://, vmess://, ss://, trojan://, socks4/5://, hy2/hysteria2:// links",
+      "vless://, vmess://, ss://, trojan://, hy2/hysteria2:// links",
     ),
   );
   o.depends("action", "connection");
@@ -5378,6 +5443,9 @@ function createSectionContent(section) {
       return true;
     }
 
+    if (/^socks(?:4a?|5)?:\/\//i.test(value.trim())) {
+      return _("SOCKS proxy links are unavailable with the Forkop Xrust client");
+    }
     const validation = main.validateProxyUrl(value);
     return validation.valid ? true : validation.message;
   };

@@ -168,6 +168,82 @@ function configureGridSection(sectionRef, type, title, addTitle) {
   }
 }
 
+function configuredRegexPatterns(sections) {
+  const byId = new Map(sections.map((section) => [section[".name"], section]));
+  const patterns = new Map();
+  const values = (value) => Array.isArray(value) ? value : String(value || "").split(" ");
+  const add = (section, entries) => {
+    for (const pattern of entries)
+      if (pattern) patterns.set(pattern, section.label || section.name || section[".name"]);
+  };
+  for (const section of sections) {
+    if (section.enabled === "0") continue;
+    const type = section[".type"];
+    if (type === "settings") {
+      add(section, values(section.subscription_exclude_regex));
+      continue;
+    }
+    if (type === "section") {
+      add(section, values(section.domain_regex));
+      add(section, values(section.domain).filter(value => value.startsWith("regex:"))
+        .map(value => value.slice("regex:".length)));
+      continue;
+    }
+    const owner = type === "priority_level"
+      ? byId.get(byId.get(section.group)?.section)
+      : byId.get(section.section);
+    if (!owner || owner.enabled === "0") continue;
+    if (type === "subscription_url") {
+      add(section, values(section.exclude_regex));
+    } else if (type === "urltest" || (type === "priority_level" && section.direct !== "1")) {
+      const mode = section.filter_mode || section.urltest_filter_mode ||
+        (type === "priority_level" ? "include" : "disabled");
+      if (mode === "include" || mode === "mixed")
+        add(section, values(section.include_regex ?? section.regex));
+      if (mode === "exclude" || mode === "mixed")
+        add(section, values(section.exclude_regex));
+    }
+  }
+  return [...patterns];
+}
+
+async function validateConfiguredRegexPatterns() {
+  const patterns = configuredRegexPatterns(uci.sections(UCI_PACKAGE));
+  if (!patterns.length) return;
+  let batch = [];
+  let size = 0;
+  const validate = async () => {
+    if (!batch.length) return;
+    const result = await main.writeForkopUi("validate_regex", JSON.stringify(batch.map(([pattern]) => pattern)));
+    if (result.code !== 0) throw new TypeError(result.stderr);
+    const { invalid } = JSON.parse(result.stdout);
+    if (Number.isInteger(invalid))
+      throw new TypeError(`${_("Invalid regular expression")}: ${batch[invalid]?.[1] || ""}`);
+    batch = [];
+    size = 0;
+  };
+  for (const entry of patterns) {
+    // LuCI bounds a URL-encoded form body at 100 KiB.
+    const encoded = new URLSearchParams({ value: JSON.stringify(entry[0]) });
+    const bytes = encoded.toString().length - "value=".length + 3;
+    if (bytes >= 96000) throw new TypeError(_("Invalid regular expression"));
+    if (size + bytes >= 96000) await validate();
+    batch.push(entry);
+    size += bytes;
+  }
+  await validate();
+}
+
+function configureRegexValidation(map) {
+  const save = map.save;
+  map.save = function (callback, silent) {
+    return save.call(this, async function (...args) {
+      if (callback) await callback.apply(this, args);
+      await validateConfiguredRegexPatterns();
+    }, silent);
+  };
+}
+
 const EntryPoint = {
   // LuCI dispatches Save & Apply to the view, not the form.Map.
   handleSaveApply(ev, mode) {
@@ -296,6 +372,7 @@ const EntryPoint = {
     };
     const forkopMap = new form.Map(UCI_PACKAGE, _("Forkop X Settings"), null);
     whatsapp.configureMap(forkopMap);
+    configureRegexValidation(forkopMap);
     forkopMap.tabbed = true;
 
     const rulesSection = forkopMap.section(

@@ -43,10 +43,12 @@ assert(monitoring_runtime_config(procd(ram)).revision != current.revision, "core
 lock_on_stat = true;
 assert(monitoring_runtime_config(procd(ram)) == null, "reload began while reading the file revision");
 active = lock_on_stat = false;
+let custom = "/another/config.json";
+assert(monitoring_runtime_config(procd(custom)).path == custom, "active custom path lost");
 let read_count = length(inspected);
-assert(monitoring_runtime_config(procd("/another/config.json")) == null);
-assert(length(inspected) == read_count, "read not permitted by LuCI file ACL");
+assert(monitoring_runtime_config(procd("relative/config.json")) == null);
+assert(length(inspected) == read_count, "relative path was read");
 assert(monitoring_runtime_config({}) == null);
-print("PASS: active Flash/RAM paths, atomic replacement, reload lock and ACL\n");
+print("PASS: active Flash/RAM/custom paths, atomic replacement and reload lock\n");
 UC
 } | ucode -

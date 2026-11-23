@@ -44,6 +44,7 @@ import {
 import { Forkop } from '../../types';
 import { renderFullUninstall } from './fullUninstall';
 import { renderLanguage } from './language';
+import { isReadOnlyForkopView } from '../../methods/shell/readForkopStatus';
 import { showReleaseSelector } from './releaseSelector';
 
 type UpdateStatus = StoreType['updatesChecks'][Forkop.ComponentName]['status'];
@@ -594,6 +595,7 @@ async function handleComponentAction(button: ComponentActionButton) {
 
   let jobId = '';
   let ownsJobFollow = false;
+  const running = getCachedRuntimeUiState()?.service.forkop.running;
 
   try {
     const startResponse = await ForkopShellMethods.componentActionStart(
@@ -636,6 +638,7 @@ async function handleComponentAction(button: ComponentActionButton) {
       button.component,
       button.action,
       button.version || getExpectedLatestVersionForAction(button),
+      running === undefined ? undefined : Boolean(running),
     );
 
     await completeComponentActionJob(button.key, jobId, response);
@@ -988,7 +991,9 @@ function renderComponentCard(card: ComponentCard) {
   const primaryActions: ComponentActionButton[] = [];
   const dangerActions: ComponentActionButton[] = [];
 
-  card.actions.forEach((action) => {
+  const readonly = isReadOnlyForkopView();
+  const availableActions = readonly ? [] : card.actions;
+  availableActions.forEach((action) => {
     if (action.action === 'remove') {
       dangerActions.push(action);
     } else {
@@ -1017,7 +1022,7 @@ function renderComponentCard(card: ComponentCard) {
     });
   });
 
-  if (card.component === 'forkop') {
+  if (card.component === 'forkop' && !readonly) {
     primaryButtons.push(
       renderButton({
         text: _('Choose version'),
@@ -1116,11 +1121,13 @@ function renderUpdatesComponents() {
   columns[0].push(
     renderLanguage(isAnyActionLoading() || isServiceRuntimeActionLoading()),
   );
-  columns[2].push(
-    renderFullUninstall(
-      isAnyActionLoading() || isServiceRuntimeActionLoading(),
-    ),
-  );
+  if (!isReadOnlyForkopView()) {
+    columns[2].push(
+      renderFullUninstall(
+        isAnyActionLoading() || isServiceRuntimeActionLoading(),
+      ),
+    );
+  }
 
   return preserveScrollForPage(() => {
     container.replaceChildren(

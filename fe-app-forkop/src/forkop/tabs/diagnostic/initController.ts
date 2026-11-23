@@ -29,6 +29,7 @@ import {
   renderSystemInfo,
 } from './partials';
 import { ForkopShellMethods } from '../../methods';
+import { isReadOnlyForkopView } from '../../methods/shell/readForkopStatus';
 import { fetchServicesInfo } from '../../fetchers/fetchServicesInfo';
 import { normalizeCompiledVersion } from '../../../helpers/normalizeCompiledVersion';
 import { renderModal } from '../../../partials';
@@ -582,31 +583,22 @@ async function handleViewLogs() {
   setDiagnosticActionLoading('viewLogs', true);
 
   try {
-    const viewLogs = await ForkopShellMethods.checkLogs();
+    const watcher = ForkopLogWatcher.getInstance();
+    const logs = await watcher.readRecentLogs();
 
-    if (viewLogs.success) {
-      const getLatestLogs = async () => {
-        const latestLogs = await ForkopShellMethods.checkLogs();
-
-        if (!latestLogs.success) {
-          throw latestLogs;
-        }
-
-        return (latestLogs.data as string) ?? '';
-      };
-
+    if (logs !== undefined) {
       ui.showModal(
         _('View logs'),
-        renderModal(viewLogs.data as string, 'view_logs', {
-          getText: getLatestLogs,
-          refreshMs: 250,
+        renderModal(logs, 'view_logs', {
+          getText: async () => (await watcher.readRecentLogs()) ?? logs,
+          refreshMs: 1000,
           initialAutoRefresh: true,
           showAutoRefreshToggle: true,
           startAtEnd: true,
         }),
       );
     } else {
-      logger.error('[DIAGNOSTIC]', 'handleViewLogs - e', viewLogs);
+      logger.warn('[DIAGNOSTIC]', 'handleViewLogs: logs unavailable');
     }
   } catch (e) {
     logger.error('[DIAGNOSTIC]', 'handleViewLogs - e', e);
@@ -682,6 +674,7 @@ function renderDiagnosticAvailableActionsWidget() {
   const forkopEnabled = Boolean(servicesInfoWidget.data.forkopEnabled);
   const forkopRunning = Boolean(servicesInfoWidget.data.forkopRunning);
   const stopAvailable = Boolean(servicesInfoWidget.data.stopAvailable);
+  const readonly = isReadOnlyForkopView();
   const restartBlocked = Boolean(servicesInfoWidget.data.restartBlocked);
   const serviceTransition = getServiceTransition(
     servicesInfoWidget.data.forkopStatus,
@@ -732,56 +725,58 @@ function renderDiagnosticAvailableActionsWidget() {
       restartLoading || startLoading || stopLoading || componentActionLoading,
     restart: {
       loading: restartLoading,
-      visible: shouldShowRestartAction({
-        forkopRunning,
-        stopAvailable,
-        restartBlocked,
-        restartLoading,
-        startLoading,
-        stopLoading,
-      }),
+      visible:
+        !readonly &&
+        shouldShowRestartAction({
+          forkopRunning,
+          stopAvailable,
+          restartBlocked,
+          restartLoading,
+          startLoading,
+          stopLoading,
+        }),
       onClick: handleRestart,
       disabled: serviceControlsDisabled,
     },
     start: {
       loading: startLoading,
-      visible: startVisible,
+      visible: !readonly && startVisible,
       onClick: handleStart,
       disabled: serviceControlsDisabled,
     },
     stop: {
       loading: stopLoading,
-      visible: stopVisible,
+      visible: !readonly && stopVisible,
       onClick: handleStop,
       disabled: serviceControlsDisabled,
     },
     enable: {
       loading: diagnosticsActions.enable.loading,
-      visible: !forkopEnabled,
+      visible: !readonly && !forkopEnabled,
       onClick: handleEnable,
       disabled: serviceControlsDisabled,
     },
     disable: {
       loading: diagnosticsActions.disable.loading,
-      visible: forkopEnabled,
+      visible: !readonly && forkopEnabled,
       onClick: handleDisable,
       disabled: serviceControlsDisabled,
     },
     globalCheck: {
       loading: diagnosticsActions.globalCheck.loading,
-      visible: true,
+      visible: !readonly,
       onClick: handleShowGlobalCheck,
       disabled: utilityActionsDisabled,
     },
     viewLogs: {
       loading: diagnosticsActions.viewLogs.loading,
-      visible: true,
+      visible: !readonly,
       onClick: handleViewLogs,
       disabled: viewLogsDisabled,
     },
     showXrustConfig: {
       loading: diagnosticsActions.showXrustConfig.loading,
-      visible: true,
+      visible: !readonly,
       onClick: handleShowXrustConfig,
       disabled: utilityActionsDisabled,
     },
@@ -1143,3 +1138,4 @@ export async function initController(): Promise<void> {
     }
   });
 }
+import { ForkopLogWatcher } from '../../services/forkopLogWatcher.service';

@@ -57,6 +57,7 @@ exit 0
 SH
 cat >"$root/bin/curl" <<'SH'
 #!/bin/sh
+[ "${TEST_KEY_UNAVAILABLE:-0}" = 0 ] || exit 22
 out=""
 while [ "$#" -gt 0 ]; do
   [ "$1" = -o ] && { out="$2"; shift 2; continue; }
@@ -97,6 +98,35 @@ printf 'https://downloads.openwrt.org/releases/25.12.5/packages/aarch64_cortex-a
 run_apk_migration "$apk_vanilla"
 grep -Fq 'https://mirror.51343.ru/openwrt/releases/' "$apk_vanilla/etc/apk/repositories" || fail 'vanilla Filogic/APK migration lost full mirror'
 grep -Fqx 'https://mirror.51343.ru/forkop/mirror/current/aarch64_cortex-a53/packages.adb' "$apk_vanilla/etc/apk/repositories.d/forkop.list" || fail 'full mirror APK feed missing'
+
+custom="$WORK/apk-custom"
+make_root "$custom" mediatek/filogic aarch64_cortex-a53
+printf 'https://downloads.openwrt.org/releases/25.12.5/targets/mediatek/filogic/packages.adb\n' >"$custom/etc/apk/repositories"
+printf 'https://downloads.openwrt.org/releases/25.12.5/packages/aarch64_cortex-a53/base/packages.adb\n' >"$custom/etc/apk/repositories.d/distfeeds.list"
+cat >"$custom/bin/uci" <<'SH'
+#!/bin/sh
+case "$2:$3" in
+  get:forkop.settings.mirror_base_url) echo https://mirror.example.test ;;
+  set:forkop.settings.mirror_base_url=https://mirror.example.test) : ;;
+  set:*) exit 1 ;;
+  commit:forkop) [ "${TEST_COMMIT_FAILURE:-0}" = 0 ] ;;
+esac
+SH
+cp "$custom/etc/apk/repositories" "$custom/original"
+cp "$custom/etc/apk/repositories.d/distfeeds.list" "$custom/original-distfeeds"
+if TEST_KEY_UNAVAILABLE=1 run_apk_migration "$custom"; then fail 'missing mirror key was accepted'; fi
+cmp "$custom/original" "$custom/etc/apk/repositories"
+cmp "$custom/original-distfeeds" "$custom/etc/apk/repositories.d/distfeeds.list"
+[ ! -e "$custom/etc/apk/repositories.d/forkop.list" ] || fail 'missing key published an APK repository'
+if TEST_COMMIT_FAILURE=1 run_apk_migration "$custom"; then fail 'failed UCI commit was ignored'; fi
+cmp "$custom/original" "$custom/etc/apk/repositories"
+cmp "$custom/original-distfeeds" "$custom/etc/apk/repositories.d/distfeeds.list"
+[ ! -e "$custom/etc/apk/repositories.d/forkop.list" ] || fail 'failed UCI commit left the new repository active'
+[ ! -e "$custom/etc/apk/keys/forkop-mirror.pem" ] || fail 'failed UCI commit left the new key installed'
+run_apk_migration "$custom"
+grep -Fq 'https://mirror.example.test/openwrt/releases/' "$custom/etc/apk/repositories" || fail 'configured mirror was overwritten'
+grep -Fq 'https://mirror.example.test/forkop/mirror/current/' "$custom/etc/apk/repositories.d/forkop.list" ||
+  fail 'configured mirror was not applied to the Forkop feed'
 
 freifunk="$WORK/freifunk"
 make_root "$freifunk" mediatek/filogic aarch64_cortex-a53

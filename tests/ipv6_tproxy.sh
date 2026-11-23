@@ -129,7 +129,7 @@ for mode in enabled all-disabled lo-disabled missing; do
         [ "$sb_signature" != "$enabled_sb_signature" ] || fail 'IPv6 change did not change sing-box signature'
     fi
     ucode -L "$FORKOP_LIB" "$FORKOP_LIB/xrust/generator.uc" generate-config-fixture \
-        "$WORK_DIR/fixture.json" "$WORK_DIR/$mode.json" 127.0.0.1 0 '' '' 1.12.0
+        "$WORK_DIR/fixture.json" "$WORK_DIR/$mode.json" 127.0.0.1 0 '' '' 0.0.46
     if command -v sing-box >/dev/null 2>&1; then
         sing-box check -c "$WORK_DIR/$mode.json"
     fi
@@ -142,16 +142,20 @@ done
 
 ucode -L "$FORKOP_LIB" -e '
 let n = require("core.netstat");
-let ports = "0.0.0.0:1602\n127.0.0.42:53\n";
-if (!n.sing_box_standard_ports_listening(ports, null, null, "")) exit(1);
-if (n.sing_box_standard_ports_listening(ports, null, null, "::1")) exit(1);
-if (!n.sing_box_standard_ports_listening(ports + "::1:1602\n", null, null, "::1")) exit(1);
+let ports = "tcp 0 0 127.0.0.42:53 0.0.0.0:* LISTEN 42/xrust\n" +
+    "udp 0 0 127.0.0.42:53 0.0.0.0:* 42/xrust\n" +
+    "tcp 0 0 0.0.0.0:1602 0.0.0.0:* LISTEN 42/xrust\n" +
+    "udp 0 0 0.0.0.0:1602 0.0.0.0:* 42/xrust\n";
+function ready(snapshot, v6) { return n.xrust_standard_ports_owned(snapshot, 42, "127.0.0.42", 1602, "0.0.0.0", v6); }
+if (!ready(ports, "")) exit(1);
+if (ready(ports, "::1")) exit(1);
+if (!ready(ports + "tcp6 0 0 ::1:1602 :::* LISTEN 42/xrust\nudp6 0 0 ::1:1602 :::* 42/xrust\n", "::1")) exit(1);
 '
 # Service checks must precede both port-wide and system-wide proxy sections.
 mkdir -p "$WORK_DIR/enabled-sysctl/all" "$WORK_DIR/enabled-sysctl/lo"
 printf "0\n" >"$WORK_DIR/enabled-sysctl/all/disable_ipv6"
 printf "0\n" >"$WORK_DIR/enabled-sysctl/lo/disable_ipv6"
-for version in 1.14.2-rust-x.0.0.44; do
+for version in 0.0.46; do
     for capture in ports system; do
     ucode -e '
 let fs = require("fs"), c = json(fs.readfile(ARGV[0]));

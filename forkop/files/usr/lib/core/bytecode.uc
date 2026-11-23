@@ -195,6 +195,29 @@ function source_files() {
     return result;
 }
 
+function source_file_snapshot(files) {
+    let paths = map(files, file => SOURCE_DIR + "/" + file);
+    let command = "sha256sum " + join(" ", map(paths, shell_quote));
+    let pipe = fs.popen(command + " 2>/dev/null", "r");
+    if (!pipe)
+        return null;
+    let output = pipe.read("all");
+    if (pipe.close() != 0 || output == null)
+        return null;
+    let lines = split(trim(output), "\n");
+    if (length(lines) != length(files))
+        return null;
+    let result = [];
+    for (let i = 0; i < length(files); i++) {
+        let digest = match(lines[i], /^\\?([0-9a-f]{64})[ \t]/);
+        let signature = file_signature(paths[i]);
+        if (!digest || signature == null)
+            return null;
+        push(result, [ files[i], signature, digest[1] ]);
+    }
+    return result;
+}
+
 function manifest_text(library, files, dependencies, directories) {
     let text = "version=" + MANIFEST_VERSION + "\n";
     text += "lib=" + as_string(library) + "\n";
@@ -210,12 +233,8 @@ function manifest_text(library, files, dependencies, directories) {
     for (let entry in directories)
         text += "dir=" + entry[0] + "\t" + entry[1] + "\n";
 
-    for (let relative_path in files) {
-        let signature = file_signature(SOURCE_DIR + "/" + relative_path);
-        if (signature == null)
-            return null;
-        text += "file=" + relative_path + "\t" + signature + "\n";
-    }
+    for (let entry in files)
+        text += "file=" + entry[0] + "\t" + entry[1] + "\n";
 
     return text;
 }
@@ -451,16 +470,18 @@ function build() {
     if (!acquire_build_lock())
         return library_dir();
 
-    let library = compile_library(files);
+    let snapshot = source_file_snapshot(files);
+    let library = snapshot == null ? null : compile_library(files);
 
     // The tree changed during the walk, so this file list may miss what landed late.
-    if (library != null && !directory_signatures_match(directories)) {
+    if (library != null && (!directory_signatures_match(directories) ||
+        sprintf("%J", source_file_snapshot(files)) != sprintf("%J", snapshot))) {
         remove_tree(library);
         release_build_lock();
         return SOURCE_DIR;
     }
 
-    let text = library == null ? null : manifest_text(library, files, runtime_dependencies(), directories);
+    let text = library == null ? null : manifest_text(library, snapshot, runtime_dependencies(), directories);
     let replaced = parse_manifest(fs.readfile(manifest_path())).lib;
 
     if (text == null || !enabled() || !publish_manifest(text)) {

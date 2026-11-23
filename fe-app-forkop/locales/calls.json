@@ -4649,10 +4649,17 @@
     ]
   },
   {
-    "call": "vless://, vmess://, ss://, trojan://, socks4/5://, hy2/hysteria2:// links",
-    "key": "vless://, vmess://, ss://, trojan://, socks4/5://, hy2/hysteria2:// links",
+    "call": "vless://, vmess://, ss://, trojan://, hy2/hysteria2:// links",
+    "key": "vless://, vmess://, ss://, trojan://, hy2/hysteria2:// links",
     "places": [
-      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:4888"
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:5413"
+    ]
+  },
+  {
+    "call": "SOCKS proxy links are unavailable with the Forkop Xrust client",
+    "key": "SOCKS proxy links are unavailable with the Forkop Xrust client",
+    "places": [
+      "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:5426"
     ]
   },
   {
@@ -4885,6 +4892,30 @@
     "key": "Incompatible subscription nodes were skipped",
     "places": [
       "src/forkop/tabs/dashboard/partials/renderSections.ts:581"
+    ]
+  },
+  {
+    "call": "Closed in history",
+    "key": "Closed in history",
+    "places": [
+      "src/forkop/tabs/dashboard/initController.ts:1806"
+    ]
+  },
+  {
+    "call": "Previous page",
+    "key": "Previous page",
+    "places": ["src/forkop/tabs/monitoring/initController.ts:894"]
+  },
+  {
+    "call": "Next page",
+    "key": "Next page",
+    "places": ["src/forkop/tabs/monitoring/initController.ts:899"]
+  },
+  {
+    "call": "Failed to select server",
+    "key": "Failed to select server",
+    "places": [
+      "src/forkop/tabs/dashboard/initController.ts:715"
     ]
   },
   {

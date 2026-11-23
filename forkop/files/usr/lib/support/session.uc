@@ -3,11 +3,11 @@ let fs = require('fs');
 const DIR = '/var/run/forkop/support';
 const SERVICE = '/etc/init.d/forkop-support';
 const LITE = '/usr/lib/forkop-support';
+const CANCELLED = DIR + '/cancelled';
 
 function lite_installed() {
     return fs.lstat(LITE)?.type == 'directory' && fs.stat(LITE + '/.forkop-lite')?.type == 'file' && fs.stat(LITE + '/tailscale')?.type == 'file' && fs.stat(LITE + '/tailscaled')?.type == 'file';
 }
-function cli() { return lite_installed() ? LITE + '/tailscale' : 'tailscale'; }
 
 function output(command) {
     let p = fs.popen('(' + command + ') 2>/dev/null', 'r');
@@ -41,18 +41,22 @@ function primary_running() {
     }
     return false;
 }
-function status() {
-    let state = read_json(DIR + '/status.json');
-    let running = output("ubus call service list '{\"name\":\"forkop-support\"}'");
-    let active = false;
+function session_service_running() {
+    let running = output("ubus -t 2 call service list '{\"name\":\"forkop-support\"}'");
     try {
         let service = json(running)['forkop-support'];
         for (let name, instance in service?.instances || {})
-            if (instance.running) active = true;
+            if (instance.running) return true;
     } catch (e) {}
+    return false;
+}
+function status() {
+    let state = read_json(DIR + '/status.json');
+    let active = session_service_running();
     // A completed attempt from the old package installer is not current Lite state.
     // Never discard the status of a running operation.
     if (!active && state.schema != 2) state = {};
+    let cancelled = fs.stat(CANCELLED) != null;
     let managed = packaged();
     let lite = lite_installed();
     let system_installed = output('command -v tailscale') != '';
@@ -69,15 +73,15 @@ function status() {
         version: lite ? lite_version : system_version,
         primary_running: primary_running(),
         active,
-        phase: active ? (state.phase || 'starting') : (state.phase == 'failed' ? 'failed' : 'stopped'),
+        phase: cancelled ? 'stopped' : (active ? (state.phase || 'starting') : (state.phase == 'failed' ? 'failed' : 'stopped')),
         session_id: state.session_id || '',
         recovery_attempts: int(state.recovery_attempts || 0),
         error: state.error || '',
         free_kib: int(state.free_kib || 0),
         required_kib: int(state.required_kib || 0),
         error_detail: '',
-        remaining_seconds: active ? max(0, int(state.deadline || 0) - uptime()) : 0,
-        address: ''
+        remaining_seconds: active && !cancelled ? max(0, int(state.deadline || 0) - uptime()) : 0,
+        address: active && !cancelled && state.phase == 'connected' && match(state.address || '', /^100\.[0-9]+\.[0-9]+\.[0-9]+$/) ? state.address : ''
     };
     if (result.phase == 'failed') {
         let detail = fs.open(DIR + '/auth-detail.txt', 'r');
@@ -92,10 +96,6 @@ function status() {
             result.error_detail = log.read(4096) || '';
             log.close();
         }
-    }
-    if (active && result.phase == 'connected') {
-        let address = output(cli() + ' --socket=' + DIR + '/socket ip -4');
-        if (match(address, /^100\.[0-9]+\.[0-9]+\.[0-9]+$/)) result.address = address;
     }
     return result;
 }
@@ -115,10 +115,17 @@ function request(data) {
         return current;
     }
     if (data.operation == 'stop') {
-        let current = status();
-        if (index(['installing', 'removing'], current.phase) != -1) die('Wait for the package operation to finish');
-        system(SERVICE + ' stop >/dev/null 2>&1');
+        let current = read_json(DIR + '/status.json');
+        if (index(['install', 'remove'], trim(fs.readfile(DIR + '/operation') || '')) != -1 &&
+            fs.stat(DIR + '/lock') != null)
+            die('Wait for the package operation to finish');
+        if (fs.stat(DIR) == null)
+            return status();
+        if (fs.writefile(CANCELLED, '1\n') == null)
+            die('Cannot revoke support authorization');
         fs.unlink(DIR + '/auth.key');
+        if (system('exec ' + SERVICE + ' stop >/dev/null 2>&1', 8000) != 0)
+            die('Support authorization was revoked but service stop did not complete');
         fs.rmdir(DIR + '/lock');
         if (match(current.session_id || '', /^[a-f0-9-]{36}$/))
             fs.rmdir(DIR + '/announced.' + current.session_id);
@@ -157,6 +164,7 @@ function request(data) {
         if (match(previous.session_id || '', /^[a-f0-9-]{36}$/))
             fs.rmdir(DIR + '/announced.' + previous.session_id);
         fs.writefile(DIR + '/operation', data.operation);
+        fs.unlink(CANCELLED);
         if (data.operation == 'start') {
             if (system(SERVICE + ' enable >/dev/null 2>&1') != 0) die('Cannot enable boot cleanup');
             let file = fs.open(DIR + '/auth.key', 'w', 0600);

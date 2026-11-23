@@ -29,9 +29,7 @@ PKG_LICENSE:=GPL-2.0-or-later
 LUCI_LANGUAGES:=en ru
 
 define Build/Prepare/$(PKG_NAME)
-	$(CP) $(CURDIR)/generated $(PKG_BUILD_DIR)/
-	(cd $(PKG_BUILD_DIR) && sha256sum -c generated/source.sha256)
-	$(CP) $(PKG_BUILD_DIR)/generated/luci-static/resources/view/forkop/*.js $(PKG_BUILD_DIR)/htdocs/luci-static/resources/view/forkop/
+	sh $(CURDIR)/stage-compact-assets.sh "$(CURDIR)" "$(PKG_BUILD_DIR)/htdocs"
 	sed -i -e 's/__COMPILED_VERSION_VARIABLE__/$(FORKOP_COMPILED_VERSION)/g' $(PKG_BUILD_DIR)/htdocs/luci-static/resources/view/forkop/main.js
 endef
 

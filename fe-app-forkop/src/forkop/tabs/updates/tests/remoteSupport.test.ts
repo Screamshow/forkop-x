@@ -90,6 +90,7 @@ beforeEach(() => {
     setItem: (key: string, value: string) => storage.set(key, value),
   });
   vi.stubGlobal('window', { addEventListener: vi.fn() });
+  vi.stubGlobal('document', { hidden: false, addEventListener: vi.fn() });
   vi.stubGlobal('L', { env: { token: 'fixture' }, url: () => '/fixture' });
   show = vi.fn((_title: string, node: Element) => {
     dialog = node;

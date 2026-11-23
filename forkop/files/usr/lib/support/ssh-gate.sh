@@ -4,6 +4,7 @@ set -eu
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 state=/var/run/forkop/support/status.json
+[ ! -f /var/run/forkop/support/cancelled ] || exit 1
 [ -f "$state" ] || exit 1
 [ "$(jsonfilter -i "$state" -e '@.phase')" = connected ] || exit 1
 deadline=$(jsonfilter -i "$state" -e '@.deadline')

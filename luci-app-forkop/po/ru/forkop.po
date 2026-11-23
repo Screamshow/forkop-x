@@ -1973,8 +1973,11 @@ msgstr "Посмотреть логи"
 msgid "Visible name of this section"
 msgstr "Видимое имя этой секции"
 
-msgid "vless://, vmess://, ss://, trojan://, socks4/5://, hy2/hysteria2:// links"
-msgstr "ссылки vless://, vmess://, ss://, trojan://, socks4/5://, hy2/hysteria2://"
+msgid "vless://, vmess://, ss://, trojan://, hy2/hysteria2:// links"
+msgstr "ссылки vless://, vmess://, ss://, trojan://, hy2/hysteria2://"
+
+msgid "SOCKS proxy links are unavailable with the Forkop Xrust client"
+msgstr "Клиент Xrust в Forkop не поддерживает прокси-ссылки SOCKS"
 
 msgid "Waiting for TorrServer"
 msgstr "Ожидание TorrServer"
@@ -2000,8 +2003,17 @@ msgstr "Да"
 msgid "You can select Output Network Interface, by default autodetect"
 msgstr "Вы можете выбрать выходной сетевой интерфейс, по умолчанию он определяется автоматически."
 
-msgid "Closed Connections"
-msgstr "Закрытые соединения"
+msgid "Closed in history"
+msgstr "Закрытые в истории"
+
+msgid "Failed to select server"
+msgstr "Не удалось выбрать сервер"
+
+msgid "Previous page"
+msgstr "Предыдущая страница"
+
+msgid "Next page"
+msgstr "Следующая страница"
 
 msgid "Recognized torrent connections bypass proxy and VPN."
 msgstr "Распознанные торрент-соединения идут напрямую, минуя прокси и VPN."

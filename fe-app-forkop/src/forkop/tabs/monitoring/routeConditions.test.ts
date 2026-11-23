@@ -81,7 +81,10 @@ describe('runtime route config refresh', () => {
     await loader.load({ path: flash, revision: '1' });
     await loader.load({ path: ram, revision: '1' });
     await loader.load({ path: ram, revision: '1' });
-    expect(read.mock.calls).toEqual([[flash], [ram]]);
+    expect(read.mock.calls).toEqual([
+      [flash, '1'],
+      [ram, '1'],
+    ]);
     expect(update).toHaveBeenLastCalledWith([{ domain: 'after.test' }]);
   });
 

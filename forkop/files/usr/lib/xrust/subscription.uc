@@ -4,6 +4,7 @@ let common = require("core.common");
 let subscription_share_link = require("subscription.share_link");
 let subscription_parser = require("subscription.parser");
 let source_cache = require("subscription.source_cache");
+let filter_identity = require("subscription.filter_identity");
 
 let as_string = common.as_string;
 let read_json_file = common.read_json_file;
@@ -249,49 +250,52 @@ function remember_urltest_group_config(state, tag_name, input_group) {
     state.urltestGroups[tag_name] = output_group;
 }
 
-function resolve_urltest_profile_aliases(state) {
+function resolve_urltest_profile_aliases(state, outbounds) {
     if (type(state) != "object")
         return;
 
-    let servers = object_or_empty(state.servers);
     let metadata = object_or_empty(state.outboundMetadata);
     let names = object_or_empty(metadata.names);
     let countries = object_or_empty(metadata.countries);
     let descriptions = object_or_empty(metadata.descriptions);
     let aliases = object_or_empty(metadata.aliases);
 
-    for (let _, group in object_or_empty(state.urltestGroups)) {
-        let members = {};
+    let technical_members = {};
+    for (let _, group in object_or_empty(state.urltestGroups))
         for (let member in array_or_empty(object_or_empty(group).outbounds))
-            members[as_string(member)] = true;
+            if (match(as_string(member), /^proxy(-[0-9]+)*$/) != null)
+                technical_members[member] = true;
+    if (!length(technical_members))
+        return;
 
-        for (let member in keys(members)) {
-            if (match(member, /^proxy(-[0-9]+)*$/) == null)
-                continue;
-            let server = as_string(servers[member] || "");
-            if (server == "")
-                continue;
+    let profiles = {};
+    let technical_profiles = {};
+    for (let outbound in array_or_empty(outbounds)) {
+        let candidate = as_string(outbound.tag || "");
+        if (candidate == "")
+            continue;
+        let technical = match(candidate, /^proxy(-[0-9]+)*$/) != null;
+        if (technical && !technical_members[candidate])
+            continue;
+        let identity = filter_identity.connection_key(outbound);
+        if (identity == "")
+            continue;
+        if (technical)
+            technical_profiles[candidate] = identity;
+        else
+            profiles[identity] = exists(profiles, identity) ? "" : candidate;
+    }
 
-            let profile_tag = "";
-            for (let candidate, candidate_server in servers) {
-                candidate = as_string(candidate);
-                if (candidate == member || as_string(candidate_server) != server)
-                    continue;
-                if (match(candidate, /^proxy(-[0-9]+)*$/) != null)
-                    continue;
-                profile_tag = candidate;
-                break;
-            }
-            if (profile_tag == "")
-                continue;
-
-            aliases[member] = profile_tag;
-            names[member] = as_string(names[profile_tag] || profile_tag);
-            if (countries[profile_tag] != null)
-                countries[member] = countries[profile_tag];
-            if (descriptions[profile_tag] != null)
-                descriptions[member] = descriptions[profile_tag];
-        }
+    for (let member, identity in technical_profiles) {
+        let profile_tag = profiles[identity];
+        if (!profile_tag)
+            continue;
+        aliases[member] = profile_tag;
+        names[member] = as_string(names[profile_tag] || profile_tag);
+        if (countries[profile_tag] != null)
+            countries[member] = countries[profile_tag];
+        if (descriptions[profile_tag] != null)
+            descriptions[member] = descriptions[profile_tag];
     }
 
     metadata.names = names;

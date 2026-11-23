@@ -1,8 +1,6 @@
 #!/bin/sh
 set -eu
 
-MIRROR_BASE_URL="${FORKOP_MIRROR_BASE_URL:-https://mirror.51343.ru}"
-MIRROR_BASE_URL="${MIRROR_BASE_URL%/}"
 MIGRATION_ID="mirror_51343_ru_v1"
 SETTINGS_SECTION="forkop.settings"
 MIGRATION_ROOT="${FORKOP_MIGRATION_ROOT:-}"
@@ -10,15 +8,12 @@ APK_BIN="${FORKOP_MIGRATION_APK_BIN:-apk}"
 OPKG_BIN="${FORKOP_MIGRATION_OPKG_BIN:-opkg}"
 CURL_BIN="${FORKOP_MIGRATION_CURL_BIN:-curl}"
 UCI_BIN="${FORKOP_MIGRATION_UCI_BIN:-uci}"
-
-PACKAGE_MANAGER=""
-if command -v "$APK_BIN" >/dev/null 2>&1; then
-    PACKAGE_MANAGER="apk"
-elif command -v "$OPKG_BIN" >/dev/null 2>&1; then
-    PACKAGE_MANAGER="opkg"
-else
-    exit 0
+MIRROR_BASE_URL="${FORKOP_MIRROR_BASE_URL:-}"
+if [ -z "$MIRROR_BASE_URL" ]; then
+    MIRROR_BASE_URL="$("$UCI_BIN" -q get "$SETTINGS_SECTION.mirror_base_url" 2>/dev/null || true)"
 fi
+MIRROR_BASE_URL="${MIRROR_BASE_URL:-https://mirror.51343.ru}"
+MIRROR_BASE_URL="${MIRROR_BASE_URL%/}"
 
 root_path() {
     printf '%s%s\n' "$MIGRATION_ROOT" "$1"
@@ -115,21 +110,79 @@ rewrite_repository_file() {
         echo "Forkop mirror migration could not rewrite every URL in $repository_file" >&2
         return 1
     fi
+    if cmp -s "$repository_file" "$temporary"; then
+        rm -f "$temporary"
+        return 0
+    fi
 
     backup="${repository_file}.pre-forkop-mirror"
     [ -e "$backup" ] || cp "$repository_file" "$backup"
     mv "$temporary" "$repository_file"
 }
 
+finish_repository_transaction() {
+    code=$?
+    trap - EXIT
+    restored=1
+    if [ "$code" -ne 0 ]; then
+        while IFS="$(printf '\t')" read -r index path; do
+            if [ -e "$transaction/$index" ] || [ -L "$transaction/$index" ]; then
+                cp -a "$transaction/$index" "$path.forkop-rollback" &&
+                    mv -f "$path.forkop-rollback" "$path" ||
+                    { restored=0; echo "Unable to restore repository file $path" >&2; }
+            else
+                rm -f "$path" || { restored=0; echo "Unable to remove incomplete repository file $path" >&2; }
+            fi
+        done < "$transaction/plan"
+    fi
+    if [ "$restored" = 1 ]; then
+        rm -rf "$transaction"
+    else
+        echo "Previous repository files were retained at $transaction" >&2
+    fi
+    exit "$code"
+}
+
+begin_repository_transaction() {
+    transaction="$(mktemp -d)" || return 1
+    : > "$transaction/plan"
+    trap finish_repository_transaction EXIT
+    trap 'exit 1' HUP INT TERM
+    index=0
+    for path do
+        index=$((index + 1))
+        if [ -e "$path" ] || [ -L "$path" ]; then
+            cp -a "$path" "$transaction/$index" || return 1
+        fi
+        printf '%s\t%s\n' "$index" "$path" >> "$transaction/plan"
+    done
+}
+
 case "$MIRROR_BASE_URL" in
     https://*|http://*) ;;
     *) echo "Invalid Forkop mirror URL: $MIRROR_BASE_URL" >&2; exit 1 ;;
 esac
+if [ "${1:-}" = --print-rewrite ]; then
+    rewrite_feed_urls "$2"
+    exit
+fi
+
+if command -v "$APK_BIN" >/dev/null 2>&1; then
+    PACKAGE_MANAGER="apk"
+elif command -v "$OPKG_BIN" >/dev/null 2>&1; then
+    PACKAGE_MANAGER="opkg"
+else
+    exit 0
+fi
 
 repositories="$(root_path /etc/apk/repositories)"
 repositories_dir="$(root_path /etc/apk/repositories.d)"
 keys_dir="$(root_path /etc/apk/keys)"
 opkg_distfeeds="$(root_path /etc/opkg/distfeeds.conf)"
+key_file="$keys_dir/forkop-mirror.pem"
+begin_repository_transaction "$repositories" "$repositories.pre-forkop-mirror" \
+    "$repositories_dir/distfeeds.list" "$repositories_dir/distfeeds.list.pre-forkop-mirror" \
+    "$repositories_dir/forkop.list" "$key_file" "$opkg_distfeeds" "$opkg_distfeeds.pre-forkop-mirror"
 
 if ! mirror_supported; then
     # Unsupported targets use their vendor OpenWrt feeds for all dependencies.
@@ -139,12 +192,9 @@ if ! mirror_supported; then
     restore_native_repository_file "$opkg_distfeeds"
     remove_owned_apk_mirror_artifacts
 elif [ "$PACKAGE_MANAGER" = "apk" ]; then
-    rewrite_repository_file "$repositories"
-    rewrite_repository_file "$repositories_dir/distfeeds.list"
-
     mkdir -p "$keys_dir" "$repositories_dir"
-    key_file="$keys_dir/forkop-mirror.pem"
-    if ! grep -Fq 'BEGIN PUBLIC KEY' "$key_file" 2>/dev/null; then
+    if ! grep -Fxq -- '-----BEGIN PUBLIC KEY-----' "$key_file" 2>/dev/null ||
+        ! grep -Fxq -- '-----END PUBLIC KEY-----' "$key_file" 2>/dev/null; then
         key_tmp="$key_file.new"
         if ! "$CURL_BIN" -fsSL --connect-timeout 15 --max-time 60 \
             "$MIRROR_BASE_URL/forkop/forkop-apk.pem" -o "$key_tmp"; then
@@ -152,17 +202,22 @@ elif [ "$PACKAGE_MANAGER" = "apk" ]; then
             echo "Unable to download the Forkop mirror APK key" >&2
             exit 1
         fi
-        grep -Fq 'BEGIN PUBLIC KEY' "$key_tmp" || {
+        if ! grep -Fxq -- '-----BEGIN PUBLIC KEY-----' "$key_tmp" ||
+            ! grep -Fxq -- '-----END PUBLIC KEY-----' "$key_tmp"; then
             rm -f "$key_tmp"
             echo "The downloaded Forkop mirror APK key is invalid" >&2
             exit 1
-        }
+        fi
         mv "$key_tmp" "$key_file"
         chmod 0644 "$key_file"
     fi
 
+    # Fail before altering feeds if the corresponding key is unavailable.
+    rewrite_repository_file "$repositories"
+    rewrite_repository_file "$repositories_dir/distfeeds.list"
     printf '%s\n' "$MIRROR_BASE_URL/forkop/mirror/current/$architecture/packages.adb" \
-        > "$repositories_dir/forkop.list"
+        > "$repositories_dir/forkop.list.new"
+    mv "$repositories_dir/forkop.list.new" "$repositories_dir/forkop.list"
 else
     rewrite_repository_file "$opkg_distfeeds"
 fi

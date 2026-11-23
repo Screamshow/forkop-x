@@ -16,6 +16,10 @@ fail() {
 [ "$(bash "$BUILD" --check-version 1.3.9-canary.7)" = "1.3.9-canary.7" ] ||
   fail "canary public version was rejected"
 
+help=$(bash "$BUILD" --help)
+[[ "$help" == *'x.y.z or x.y.z-canary.N'* && "$help" != *'x.y.z-N'* ]] ||
+  fail "the documented version formats disagree with the validator"
+
 for version in 1.3.9-7 1.3.9-qa.urltest 1.3.9-rc1 1.3.9-canary 1.3.9-canary.x 1.3.9- 1.3 1.3.9.1; do
   if bash "$BUILD" --check-version "$version" >"/dev/null" 2>"$WORK_DIR/error"; then
     fail "invalid version '$version' was accepted"

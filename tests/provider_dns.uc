@@ -49,19 +49,22 @@ let settings={ dns_use_provider:'1',dns_type:'doh',dns_server:['8.8.8.8'],
     bootstrap_dns_server:['1.1.1.1'],dns_detour_enabled:'1',dns_detour_section:'proxy' };
 let config=dns.config(settings);
 check(!config.unsupported && config.state.dns_type=='udp','provider UDP overrides preserved protocol');
-check(config.servers[1].server=='10.1.0.1' && config.servers[1].detour=='provider-dns-wan-wan','canonical DNS direct detour');
+check(config.servers[1].server=='10.1.0.1' && config.servers[1].detour=='provider-dns-wan-eth1-100','canonical DNS direct detour');
 check(length(config.outbounds)==2 && config.outbounds[1].routing_mark==512,'generated WAN outbounds');
 let state=dns.state_template(settings);
 state.main_index=2;
 let candidate=dns.server_config(settings,state);
-check(candidate.server=='10.2.0.1' && candidate.detour=='provider-dns-wan-wanb','DNS failover keeps correct WAN');
+check(candidate.server=='10.2.0.1' && candidate.detour=='provider-dns-wan-eth2-200','DNS failover keeps correct WAN');
 check(settings.dns_server[0]=='8.8.8.8' && settings.dns_type=='doh','manual settings preserved');
 settings.dns_use_provider='0';
 check(dns.server_config(settings).server=='8.8.8.8','manual mode restoration');
 let manual_config=dns.config(settings);
 check(sprintf('%J',manual_config.inbounds)==sprintf('%J',config.inbounds),'toggle keeps identical listeners');
 check(sprintf('%J',manual_config.sniff_inbounds)==sprintf('%J',config.sniff_inbounds),'toggle keeps DNS hijack inputs');
-check(length(manual_config.inbounds)==17,'bounded reserved health listeners');
+let overridden = !!getenv("FORKOP_DNS_HEALTH_ADDRESS");
+check(length(manual_config.inbounds)==(overridden ? 17 : 1),'bounded stable health listener layout');
+let candidate_probe = dns.health_probe("main", 2, config.state);
+check(candidate_probe.source == (overridden ? "" : "127.16.0.3"),'candidate probe follows the applied layout');
 settings.dns_server=['8.8.8.8','9.9.9.9'];
 check(sprintf('%J',dns.config(settings).inbounds)==sprintf('%J',config.inbounds),'manual DNS count keeps listeners');
 settings.dns_use_provider='1';
@@ -73,7 +76,7 @@ fs.readfile=function(path){
 };
 let degraded=dns.config(settings);
 check(degraded.state.main_servers[0]=='10.2.0.1','silent upstream failure selects healthy WAN');
-check(degraded.servers[1].detour=='provider-dns-wan-wanb' && degraded.outbounds[0].routing_mark==512,
+check(degraded.servers[1].detour=='provider-dns-wan-eth2-200' && degraded.outbounds[0].routing_mark==512,
  'silent failure uses backup mark and binding');
 check(!dns.state_matches(config.state,degraded.state),'worker detects health-state-only change');
 check(sprintf('%J',degraded.inbounds)==sprintf('%J',config.inbounds),'silent failure preserves listener layout');
@@ -97,3 +100,16 @@ check(sprintf('%J',renewed.inbounds)==sprintf('%J',restored.inbounds),'renewal p
 print('provider DNS configuration and restoration checks passed\n');
 print('carrier-up mwan3 offline/recovery configuration checks passed\n');
 print('DHCP/PPPoE DNS and device renewal checks passed\n');
+
+push(dump.interface[2]['dns-server'], '2001:db8::53');
+let selected_dual_stack = provider.select_candidates(dump, rules, [
+    { iif:'pppoe-renewed', table:'3' }, { table:'3', fwmark:'0x300', fwmask:'0x3f00' }
+], {wan:'online'});
+let dual = dns.config_from_state({ ...renewed.state, provider_routes: selected_dual_stack,
+    main_servers: map(selected_dual_stack, route => route.server),
+    bootstrap_servers: map(selected_dual_stack, route => route.server), main_index: 1, bootstrap_index: 0 });
+let v4_bind = filter(dual.outbounds, outbound => outbound.tag == dual.servers[0].detour)[0];
+let v6_bind = filter(dual.outbounds, outbound => outbound.tag == dual.servers[1].detour)[0];
+check(v4_bind.bind_interface == v6_bind.bind_interface && v4_bind.routing_mark == 256 &&
+    v6_bind.routing_mark == 768, 'address families on the same device must retain their own routing marks');
+print('provider DNS keeps separate IPv4 and IPv6 marks on one device\n');

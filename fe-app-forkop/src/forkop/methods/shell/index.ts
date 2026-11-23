@@ -2,6 +2,7 @@ import { callBaseMethod } from './callBaseMethod';
 import { ClashAPI, Forkop } from '../../types';
 import { executeShellCommand } from '../../../helpers';
 import { isTransientRpcError } from '../../helpers/isTransientRpcError';
+import { readForkopClashData } from './readForkopStatus';
 
 const SUBSCRIPTION_UPDATE_RPC_TIMEOUT_MS = 15000;
 const SUBSCRIPTION_UPDATE_POLL_INTERVAL_MS = 1500;
@@ -14,6 +15,8 @@ const COMPONENT_ACTION_RPC_TIMEOUT_MS = 15000;
 const COMPONENT_ACTION_POLL_INTERVAL_MS = 1500;
 const COMPONENT_ACTION_STATUS_REFRESH_INTERVAL_MS = 15000;
 const COMPONENT_ACTION_SELF_UPDATE_SETTLE_MS = 30000;
+const COMPONENT_ACTION_MISSING_JOB_GRACE_MS = 60000;
+const COMPONENT_ACTION_WAIT_LIMIT_MS = 15 * 60 * 1000;
 const COMPONENT_ACTION_TRANSIENT_RPC_GRACE_MS = 30000;
 const COMPONENT_ACTION_STATE_DIR = '/var/run/forkop/component-actions';
 const GET_UI_STATE_RPC_TIMEOUT_MS = 3000;
@@ -151,11 +154,7 @@ async function readForkopVersion() {
   return response.stdout.trim();
 }
 
-async function isComponentActionStillRunning(
-  jobId: string,
-  component: Forkop.ComponentName,
-  action: Forkop.ComponentAction,
-) {
+async function readComponentUiState() {
   const response = await callBaseMethod<Forkop.UiState>(
     Forkop.AvailableMethods.GET_UI_STATE,
     [],
@@ -163,16 +162,7 @@ async function isComponentActionStillRunning(
     { timeout: GET_UI_STATE_RPC_TIMEOUT_MS },
   );
 
-  return (
-    response.success &&
-    response.data.actions.component.some(
-      (state) =>
-        state.job_id === jobId &&
-        state.component === component &&
-        state.action === action &&
-        state.running === true,
-    )
-  );
+  return response.success ? response.data : undefined;
 }
 
 function componentActionFailure(
@@ -251,14 +241,8 @@ export const ForkopShellMethods = {
     callBaseMethod<Forkop.GetXrustStatus>(
       Forkop.AvailableMethods.GET_XRUST_STATUS,
     ),
-  getClashApiProxies: async () =>
-    callBaseMethod<ClashAPI.Proxies>(Forkop.AvailableMethods.CLASH_API, [
-      Forkop.AvailableClashAPIMethods.GET_PROXIES,
-    ]),
-  getClashApiConnections: async () =>
-    callBaseMethod<unknown>(Forkop.AvailableMethods.CLASH_API, [
-      Forkop.AvailableClashAPIMethods.GET_CONNECTIONS,
-    ]),
+  getClashApiProxies: () => readForkopClashData<ClashAPI.Proxies>('proxies'),
+  getClashApiConnections: () => readForkopClashData<unknown>('connections'),
   getClashApiProxyLatency: async (tag: string, timeout = '5000') =>
     callBaseMethod<Forkop.GetClashApiProxyLatency>(
       Forkop.AvailableMethods.CLASH_API,
@@ -279,11 +263,10 @@ export const ForkopShellMethods = {
       [Forkop.AvailableClashAPIMethods.GET_GROUP_LATENCY, tag, '10000'],
     ),
   setClashApiGroupProxy: async (group: string, proxy: string) =>
-    callBaseMethod<unknown>(Forkop.AvailableMethods.CLASH_API, [
-      Forkop.AvailableClashAPIMethods.SET_GROUP_PROXY,
-      group,
-      proxy,
-    ]),
+    callBaseMethod<{ success: boolean; message?: string }>(
+      Forkop.AvailableMethods.CLASH_API,
+      [Forkop.AvailableClashAPIMethods.SET_GROUP_PROXY, group, proxy],
+    ),
   closeClashApiConnection: async (connectionId: string) =>
     callBaseMethod<unknown>(Forkop.AvailableMethods.CLASH_API, [
       Forkop.AvailableClashAPIMethods.CLOSE_CONNECTION,
@@ -328,6 +311,13 @@ export const ForkopShellMethods = {
   getUiState: async () =>
     callBaseMethod<Forkop.UiState>(
       Forkop.AvailableMethods.GET_UI_STATE,
+      [],
+      '/usr/bin/forkop',
+      { timeout: GET_UI_STATE_RPC_TIMEOUT_MS },
+    ),
+  getUiActionState: () =>
+    callBaseMethod<Forkop.UiState['actions']>(
+      Forkop.AvailableMethods.GET_UI_ACTION_STATE,
       [],
       '/usr/bin/forkop',
       { timeout: GET_UI_STATE_RPC_TIMEOUT_MS },
@@ -601,19 +591,23 @@ export const ForkopShellMethods = {
     component: Forkop.ComponentName,
     action: Forkop.ComponentAction,
     expectedLatestVersion?: string,
+    expectedServiceRunning?: boolean,
   ) => {
+    const deadline = Date.now() + COMPONENT_ACTION_WAIT_LIMIT_MS;
+    let firstMissingJobAt: number | undefined;
     let selfUpdateVersionMatchedAt = 0;
     let lastStatusRefreshAt = 0;
     const transientRpc = createTransientRpcGraceTracker(
       COMPONENT_ACTION_TRANSIENT_RPC_GRACE_MS,
     );
 
-    while (true) {
+    while (Date.now() < deadline) {
       await sleep(COMPONENT_ACTION_POLL_INTERVAL_MS);
 
       const stateResponse = await readComponentActionState(jobId);
 
       if (stateResponse) {
+        firstMissingJobAt = undefined;
         if (!stateResponse.running) {
           transientRpc.reset();
           return {
@@ -644,7 +638,17 @@ export const ForkopShellMethods = {
           continue;
         }
 
-        if (await isComponentActionStillRunning(jobId, component, action)) {
+        const uiState = await readComponentUiState();
+        if (
+          uiState?.actions?.component?.some(
+            (state) =>
+              state.job_id === jobId &&
+              state.component === component &&
+              state.action === action &&
+              state.running === true,
+          )
+        ) {
+          firstMissingJobAt = undefined;
           transientRpc.reset();
           continue;
         }
@@ -655,15 +659,22 @@ export const ForkopShellMethods = {
           continue;
         }
 
-        if (component === 'forkop' && action === 'install') {
-          const installedVersion = expectedLatestVersion
-            ? await readForkopVersion()
-            : '';
+        if (
+          component === 'forkop' &&
+          action === 'install' &&
+          expectedLatestVersion
+        ) {
+          firstMissingJobAt ??= Date.now();
+          const installedVersion = await readForkopVersion();
+          const service = uiState?.service?.forkop;
+          const stableService =
+            /^(?:running|stopped) (?:&|but) (?:enabled|disabled)$/.test(
+              service?.status || '',
+            ) &&
+            (expectedServiceRunning === undefined ||
+              Boolean(service?.running) === expectedServiceRunning);
 
-          if (
-            expectedLatestVersion &&
-            installedVersion === expectedLatestVersion
-          ) {
+          if (installedVersion === expectedLatestVersion && stableService) {
             if (!selfUpdateVersionMatchedAt) {
               selfUpdateVersionMatchedAt = Date.now();
             }
@@ -686,14 +697,21 @@ export const ForkopShellMethods = {
                 },
               } as Forkop.MethodSuccessResponse<Forkop.ComponentActionResult>;
             }
+          } else {
+            selfUpdateVersionMatchedAt = 0;
           }
 
-          continue;
+          if (
+            Date.now() - firstMissingJobAt <
+            COMPONENT_ACTION_MISSING_JOB_GRACE_MS
+          )
+            continue;
         }
 
         return failure;
       }
 
+      firstMissingJobAt = undefined;
       transientRpc.reset();
       if (parsedResponse.running) {
         continue;
@@ -704,6 +722,10 @@ export const ForkopShellMethods = {
         data: parsedResponse,
       } as Forkop.MethodSuccessResponse<Forkop.ComponentActionResult>;
     }
+    return {
+      success: false,
+      error: _('Could not confirm completion'),
+    } as Forkop.MethodFailureResponse;
   },
   subscriptionUpdateStart: async (section?: string, sourceIndex?: number) => {
     const startArgs = [

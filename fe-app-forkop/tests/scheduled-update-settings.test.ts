@@ -53,3 +53,11 @@ describe('scheduled update settings', () => {
     },
   );
 });
+
+it('accepts only a complete uint32 DNS TTL', () => {
+  const ttl = intervalFields('60').get('dns_rewrite_ttl')!;
+  for (const value of ['0', '60', '4294967295'])
+    expect(ttl.validate('settings', value)).toBe(true);
+  for (const value of ['', '-1', '12.5', '14abc', '4294967296'])
+    expect(ttl.validate('settings', value)).toContain('integer');
+});

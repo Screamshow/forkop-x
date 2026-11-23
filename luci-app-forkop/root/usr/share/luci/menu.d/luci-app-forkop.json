@@ -39,6 +39,48 @@
     },
     "leaf": true
   },
+  "admin/services/forkop/ui-read": {
+    "action": {
+      "type": "function",
+      "module": "luci.controller.forkop",
+      "function": "action_ui_read",
+      "post": true
+    },
+    "auth": {
+      "methods": [
+        "cookie:sysauth_https",
+        "cookie:sysauth_http"
+      ],
+      "login": true
+    },
+    "depends": {
+      "acl": [
+        "luci-app-forkop"
+      ]
+    },
+    "leaf": true
+  },
+  "admin/services/forkop/ui-clash": {
+    "action": {
+      "type": "function",
+      "module": "luci.controller.forkop",
+      "function": "action_ui_clash",
+      "post": true
+    },
+    "auth": {
+      "methods": [
+        "cookie:sysauth_https",
+        "cookie:sysauth_http"
+      ],
+      "login": true
+    },
+    "depends": {
+      "acl": [
+        "luci-app-forkop"
+      ]
+    },
+    "leaf": true
+  },
   "admin/services/forkop/remote-support": {
     "auth": {
       "methods": [
@@ -52,6 +94,27 @@
       "module": "luci.controller.forkop",
       "function": "action_remote_support",
       "post": true
+    },
+    "depends": {
+      "acl": [
+        "luci-app-forkop"
+      ]
+    },
+    "leaf": true
+  },
+  "admin/services/forkop/ui-write": {
+    "action": {
+      "type": "function",
+      "module": "luci.controller.forkop",
+      "function": "action_ui_write",
+      "post": true
+    },
+    "auth": {
+      "methods": [
+        "cookie:sysauth_https",
+        "cookie:sysauth_http"
+      ],
+      "login": true
     },
     "depends": {
       "acl": [
