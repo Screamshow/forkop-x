@@ -88,9 +88,7 @@ function confirmRemoval() {
           }
           const status = await waitForRemovalStatus(result.status_url);
           if (status?.state === 'complete') {
-            progress.textContent = _(
-              'Forkop X has been removed. Original repositories have been restored.',
-            );
+            progress.textContent = _('Forkop X has been removed.');
             cancel.textContent = _('Open LuCI');
             cancel.disabled = false;
             cancel.onclick = () => window.location.assign('/cgi-bin/luci/');

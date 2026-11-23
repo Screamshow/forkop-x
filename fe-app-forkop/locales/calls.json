@@ -1864,10 +1864,10 @@
     ]
   },
   {
-    "call": "Forkop X has been removed. Original repositories have been restored.",
-    "key": "Forkop X has been removed. Original repositories have been restored.",
+    "call": "Forkop X has been removed.",
+    "key": "Forkop X has been removed.",
     "places": [
-      "src/forkop/tabs/updates/fullUninstall.ts:57"
+      "src/forkop/tabs/updates/fullUninstall.ts:91"
     ]
   },
   {

@@ -1180,6 +1180,7 @@ function has_local_default_route_text(route_list, family) {
 function route_table_registry(path) {
     let text = as_string(fs.readfile(path));
     let entries = split(text, "\n");
+    let main_count = length(entries);
     if (path == "/etc/iproute2/rt_tables") {
         for (let directory in [ "/etc/iproute2/rt_tables.d", "/usr/lib/iproute2/rt_tables.d" ])
             for (let file in fs.glob(directory + "/*.conf") || [])
@@ -1187,7 +1188,9 @@ function route_table_registry(path) {
     }
     let names = {};
     let ids = {};
-    for (let line in entries) {
+    let external_names = {};
+    for (let i = 0; i < length(entries); i++) {
+        let line = entries[i];
         let fields = normalized_fields(split(line, "#")[0]);
         if (length(fields) != 2 || !match(fields[0], /^[0-9]+$/))
             continue;
@@ -1197,8 +1200,10 @@ function route_table_registry(path) {
         if (!ids[id]) ids[id] = {};
         names[name][id] = true;
         ids[id][name] = true;
+        if (i >= main_count)
+            external_names[name] = true;
     }
-    return { text, names, ids };
+    return { text, names, ids, external_names };
 }
 
 function route_table_id(registry, name) {
@@ -1211,16 +1216,21 @@ function route_table_id(registry, name) {
     return id > 0 && (id < 253 || id > 255) ? ids[0] : "";
 }
 
-function kernel_route_table_ids() {
+function numeric_ip_output(args) {
     let ip = fs.stat("/usr/libexec/ip-full") != null ? "/usr/libexec/ip-full" : "ip";
+    let pipe = fs.popen(command_from_args([ ip, "-N", ...args ]) + " 2>/dev/null", "r");
+    if (!pipe)
+        return null;
+    let output = pipe.read("all");
+    return pipe.close() == 0 ? as_string(output) : null;
+}
+
+function kernel_route_table_ids() {
     let occupied = {};
     for (let family in (IPV6_TPROXY_ENABLED ? [ "-4", "-6" ] : [ "-4" ])) {
         for (let selector in [ [ "route", "show", "table", "all" ], [ "rule", "show" ] ]) {
-            let pipe = fs.popen(command_from_args([ ip, "-N", family, ...selector ]) + " 2>/dev/null", "r");
-            if (!pipe)
-                return null;
-            let output = as_string(pipe.read("all"));
-            if (pipe.close() != 0)
+            let output = numeric_ip_output([ family, ...selector ]);
+            if (output == null)
                 return null;
             for (let line in split(output, "\n")) {
                 let matched = match(line, /(^|[ \t])(table|lookup)[ \t]+([0-9]+)([ \t]|$)/);
@@ -1231,13 +1241,55 @@ function kernel_route_table_ids() {
     return occupied;
 }
 
-function ensure_rt_table_entry(path, table_name) {
+function legacy_route_alias(line, table_name) {
+    let fields = normalized_fields(line);
+    return length(fields) == 2 && fields[0] == "105" && fields[1] == table_name;
+}
+
+function legacy_shared_table(registry, table_name) {
+    let ids = keys(registry.names[table_name] || {});
+    if (length(ids) != 1 || ids[0] != "105" || length(keys(registry.ids["105"])) <= 1 ||
+        registry.external_names[table_name])
+        return false;
+    for (let line in split(registry.text, "\n"))
+        if (normalized_fields(split(line, "#")[0])[1] == table_name && !legacy_route_alias(line, table_name))
+            return false;
+    return true;
+}
+
+function remove_tproxy_marking_rules(family, rules, lookup, table, mark) {
+    let ok = true;
+    for (let value in [ mark, ROUTER_MARK ]) {
+        if (has_tproxy_marking_rule_text(rules, lookup, value) &&
+            !run_args([ "ip", family, "rule", "del", "from", "all", "fwmark", value + "/" + value,
+                "table", table, "priority", TPROXY_RULE_PRIORITY ]))
+            ok = false;
+    }
+    return ok;
+}
+
+function remove_legacy_marking_rules(mark) {
+    let ok = true;
+    for (let family in [ "-4", "-6" ]) {
+        // Numeric output still identifies the old table when ip prints the
+        // other service's alias for ID 105.
+        let rules = numeric_ip_output([ family, "rule", "list" ]);
+        if (rules == null) {
+            if (family == "-4" || IPV6_TPROXY_ENABLED)
+                ok = false;
+        }
+        else if (!remove_tproxy_marking_rules(family, rules, "105", "105", mark))
+            ok = false;
+    }
+    return ok;
+}
+
+function ensure_rt_table_entry(path, table_name, mark) {
     let registry = route_table_registry(path);
     if (route_table_id(registry, table_name) != "")
         return true;
-    // An existing ambiguous alias cannot be rewritten safely. A route with
-    // another explicit name remains untouched even if it used our old ID.
-    if (!match(table_name, /^[a-zA-Z][a-zA-Z0-9_.-]*$/) || registry.names[table_name] ||
+    let migrate = legacy_shared_table(registry, table_name);
+    if (!match(table_name, /^[a-zA-Z][a-zA-Z0-9_.-]*$/) || (registry.names[table_name] && !migrate) ||
         index([ "unspec", "default", "main", "local" ], table_name) >= 0)
         return false;
 
@@ -1250,13 +1302,17 @@ function ensure_rt_table_entry(path, table_name) {
         while (registry.ids[id] || occupied[id])
             id++;
     }
-    let data = registry.text;
+    let data = migrate
+        ? join("\n", filter(split(registry.text, "\n"), line => !legacy_route_alias(line, table_name)))
+        : registry.text;
     if (data != "" && substr(data, -1) != "\n")
         data += "\n";
     let temporary = path + ".forkop-new";
     let permissions = int(fs.stat(path)?.mode || 0) & 0777;
     let saved = common.write_private_file(temporary, data + id + " " + table_name + " # forkop-x-tproxy\n") != null &&
         fs.chmod(temporary, permissions || 0644) &&
+        as_string(fs.readfile(path)) == registry.text &&
+        (!migrate || remove_legacy_marking_rules(mark)) &&
         as_string(fs.readfile(path)) == registry.text && fs.rename(temporary, path);
     if (!saved)
         fs.unlink(temporary);
@@ -1324,7 +1380,7 @@ function ensure_tproxy_route_rule(table, mark, rt_tables_path) {
     let mask = as_string(mark) + "/" + as_string(mark);
     let router_mask = ROUTER_MARK + "/" + ROUTER_MARK;
 
-    if (!ensure_rt_table_entry(rt_tables_path, table)) {
+    if (!ensure_rt_table_entry(rt_tables_path, table, mark)) {
         log_fatal("Failed to update route table registry. Aborted.");
         return false;
     }
@@ -1402,20 +1458,21 @@ function ensure_tproxy_route_rule(table, mark, rt_tables_path) {
 }
 
 function remove_tproxy_routing(table, mark, rt_tables_path) {
-    if (route_table_id(route_table_registry(rt_tables_path || RT_TABLES_FILE), table) == "")
-        return true;
-    let ok = true;
+    let registry = route_table_registry(rt_tables_path || RT_TABLES_FILE);
+    let id = route_table_id(registry, table);
+    let rules4 = command_output_quiet_from_args([ "ip", "-4", "rule", "list" ]);
+    let ok = !has_source_check_rule_text(rules4, mark) ||
+        run_args([ "ip", "-4", "rule", "del", "from", "all", "iif", "lo", "fwmark", mark + "/" + mark,
+            "lookup", "main", "priority", SOURCE_CHECK_PRIORITY ]);
+    if (id == "") {
+        if (legacy_shared_table(registry, table))
+            return remove_legacy_marking_rules(mark) && ok;
+        return !registry.names[table] && ok;
+    }
+
     for (let family in [ "-4", "-6" ]) {
-        let rules = command_output_quiet_from_args([ "ip", family, "rule", "list" ]);
-        for (let value in [ mark, ROUTER_MARK ]) {
-            if (has_tproxy_marking_rule_text(rules, table, value) &&
-                !run_args([ "ip", family, "rule", "del", "from", "all", "fwmark", value + "/" + value,
-                    "table", table, "priority", TPROXY_RULE_PRIORITY ]))
-                ok = false;
-        }
-        if (family == "-4" && has_source_check_rule_text(rules, mark) &&
-            !run_args([ "ip", family, "rule", "del", "from", "all", "iif", "lo", "fwmark", mark + "/" + mark,
-                "lookup", "main", "priority", SOURCE_CHECK_PRIORITY ]))
+        let rules = family == "-4" ? rules4 : command_output_quiet_from_args([ "ip", family, "rule", "list" ]);
+        if (!remove_tproxy_marking_rules(family, rules, table, table, mark))
             ok = false;
 
         let route = family == "-4" ? "0.0.0.0/0" : "::/0";

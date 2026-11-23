@@ -1126,8 +1126,8 @@ msgstr ""
 msgid "Forkop will not modify your DHCP configuration"
 msgstr ""
 
-#: src/forkop/tabs/updates/fullUninstall.ts:57
-msgid "Forkop X has been removed. Original repositories have been restored."
+#: src/forkop/tabs/updates/fullUninstall.ts:91
+msgid "Forkop X has been removed."
 msgstr ""
 
 #: src/forkop/tabs/diagnostic/partials/renderAvailableActions.ts:58

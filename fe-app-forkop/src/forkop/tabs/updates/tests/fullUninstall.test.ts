@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { waitForRemovalStatus } from '../fullUninstall';
+import { executeShellCommand } from '../../../../helpers';
+import { renderButton } from '../../../../partials';
+import { renderFullUninstall, waitForRemovalStatus } from '../fullUninstall';
 
 vi.mock('../../../../helpers', () => ({ executeShellCommand: vi.fn() }));
 vi.mock('../../../../icons', () => ({ renderXIcon24: vi.fn() }));
@@ -52,4 +54,33 @@ it('retries a transient error and returns the terminal preflight failure', async
   await vi.advanceTimersByTimeAsync(3000);
   await expect(status).resolves.toEqual(failure);
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it('confirms removal without claiming the repositories were restored', async () => {
+  const clicks = new Map<string, () => void>();
+  const progress = { textContent: '' };
+  vi.mocked(renderButton).mockImplementation(({ text, onClick }) => {
+    clicks.set(text, onClick);
+    return {} as HTMLButtonElement;
+  });
+  vi.stubGlobal('E', (_tag: string, attributes: { role?: string }) =>
+    attributes.role === 'status' ? progress : {},
+  );
+  vi.stubGlobal('_', (text: string) => text);
+  vi.stubGlobal('ui', { showModal: vi.fn() });
+  vi.mocked(executeShellCommand).mockResolvedValueOnce({
+    stdout: JSON.stringify({ success: true, status_url: statusUrl }),
+    stderr: '',
+  });
+  vi.stubGlobal('fetch', async () => ({
+    ok: true,
+    json: async () => ({ state: 'complete' }),
+  }));
+
+  renderFullUninstall(false);
+  clicks.get('Remove Forkop X completely')?.();
+  clicks.get('Remove permanently')?.();
+  await vi.advanceTimersByTimeAsync(1500);
+
+  expect(progress.textContent).toBe('Forkop X has been removed.');
 });

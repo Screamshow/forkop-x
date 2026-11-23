@@ -785,8 +785,8 @@ msgstr "Служба Forkop остановлена. Запустите серв�
 msgid "Forkop will not modify your DHCP configuration"
 msgstr "Forkop не будет изменять вашу конфигурацию DHCP"
 
-msgid "Forkop X has been removed. Original repositories have been restored."
-msgstr "Forkop X удалён. Исходные репозитории восстановлены."
+msgid "Forkop X has been removed."
+msgstr "Forkop X удалён."
 
 msgid "Forkop X is applying changes. Please wait."
 msgstr "Forkop X применяет изменения. Пожалуйста, подождите."

@@ -35,7 +35,9 @@ printf '%s\n' "$*" >>"$IP_LOG"
 case "$*" in
   '-4 rule list priority '*) exit 0 ;; # OpenWrt variants silently hide matching rows.
   '-N -4 route show table all') echo '203.0.113.0/24 dev eth1 table 10001'; exit 0 ;;
-  *'route list'*) [ "${IP_PRESENT:-0}" = 1 ] && echo 'local default dev lo scope host'; exit 0 ;;
+  '-N -4 rule list'|'-N -6 rule list') [ -z "${IP_NUMERIC_RULES:-}" ] || cat "$IP_NUMERIC_RULES"; exit 0 ;;
+  *'rule del'*'table 105'*) [ "${IP_FAIL_LEGACY_DEL:-0}" = 0 ]; exit $? ;;
+  *'route list'*) [ "${IP_PRESENT:-0}" = 1 ] && [ "${IP_NEW_TABLE:-0}" = 0 ] && echo 'local default dev lo scope host'; exit 0 ;;
   *'rule list'*) [ "${IP_PRESENT:-0}" = 1 ] && cat "$IP_RULES"; exit 0 ;;
 esac
 exit 0
@@ -108,13 +110,37 @@ grep -Fxq -- '-4 route del local 0.0.0.0/0 dev lo table forkop' "$IP_LOG" || fai
 grep -Fxq -- '-6 route del local ::/0 dev lo table forkop' "$IP_LOG" || fail 'stop kept the owned IPv6 route'
 grep -Fq 'route flush' "$IP_LOG" && fail 'stop flushed all routes in the table'
 : >"$IP_LOG"
-printf '105 vendor\n105 forkop\n' >"$WORK_DIR/rt_tables"
-if ucode -L "$FORKOP_LIB" "$NFT_UC" ensure-tproxy-route-rule forkop "$FAKEIP_MARK" "$WORK_DIR/rt_tables"; then
-    fail 'ambiguous pre-existing alias was accepted'
-fi
-IP_PRESENT=1 IP_RULES="$WORK_DIR/rules" ucode -L "$FORKOP_LIB" "$NFT_UC" \
+# Releases before the allocator could append their own alias to a vendor ID.
+# ip may print either name for 105, so match the old rules by numeric ID.
+sed 's/lookup forkop/lookup vendor/g' "$WORK_DIR/rules" >"$WORK_DIR/shared-rules"
+sed -e 's/lookup forkop/lookup 105/g' -e 's/lookup vendor/lookup 105/g' "$WORK_DIR/rules" >"$WORK_DIR/numeric-rules"
+printf '105 vendor\n105 forkop\n10000 third_party\n' >"$WORK_DIR/rt_tables"
+export IP_PRESENT=1 IP_RULES="$WORK_DIR/shared-rules" IP_NUMERIC_RULES="$WORK_DIR/numeric-rules"
+ucode -L "$FORKOP_LIB" "$NFT_UC" \
   remove-tproxy-routing forkop "$FAKEIP_MARK" "$WORK_DIR/rt_tables"
-[ ! -s "$IP_LOG" ] || fail 'start or stop touched an ambiguously owned table'
+[ "$(grep -c 'rule del' "$IP_LOG")" = 5 ] || fail 'shared-table stop missed an owned rule or deleted a foreign rule'
+! grep -q 'route del\|route flush' "$IP_LOG" || fail 'stop deleted routes from a shared table'
+grep -Fxq '105 forkop' "$WORK_DIR/rt_tables" || fail 'stop lost the alias needed for migration'
+
+if IP_FAIL_LEGACY_DEL=1 ucode -L "$FORKOP_LIB" "$NFT_UC" \
+    ensure-tproxy-route-rule forkop "$FAKEIP_MARK" "$WORK_DIR/rt_tables"; then
+    fail 'migration continued despite a failed legacy rule cleanup'
+fi
+grep -Fxq '105 forkop' "$WORK_DIR/rt_tables" || fail 'failed migration lost its retry state'
+: >"$IP_LOG"
+IP_NEW_TABLE=1 ucode -L "$FORKOP_LIB" "$NFT_UC" \
+    ensure-tproxy-route-rule forkop "$FAKEIP_MARK" "$WORK_DIR/rt_tables"
+printf '105 vendor\n10000 third_party\n10002 forkop # forkop-x-tproxy\n' >"$WORK_DIR/migrated-tables"
+cmp "$WORK_DIR/migrated-tables" "$WORK_DIR/rt_tables" || fail 'migration changed a foreign alias or kept the conflict'
+[ "$(grep -c 'rule del.*table 105' "$IP_LOG")" = 4 ] || fail 'migration did not clean the two old marks in both families'
+[ "$(grep -c 'rule add.*table forkop' "$IP_LOG")" = 4 ] || fail 'migration did not create the new marking rules'
+! grep -q 'route del\|route flush' "$IP_LOG" || fail 'migration removed a route from a shared table'
+unset IP_PRESENT IP_RULES IP_NUMERIC_RULES
+
+printf '105 forkop\n305 forkop\n' >"$WORK_DIR/rt_tables"
+if ucode -L "$FORKOP_LIB" "$NFT_UC" ensure-tproxy-route-rule forkop "$FAKEIP_MARK" "$WORK_DIR/rt_tables"; then
+    fail 'an unrelated ambiguous definition was migrated'
+fi
 
 # The two marks reach the same inbound, and each path carries its own.
 BATCH="$WORK_DIR/candidate.nft"
