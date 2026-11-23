@@ -26,7 +26,7 @@ import { CustomForkopMethods, ForkopShellMethods } from '../../methods';
 import { getOutboundTagBySection } from '../../runtimeTags';
 import { logger, socket, store, StoreType } from '../../services';
 import { Forkop } from '../../types';
-import { formatRouteReason } from './routeReason';
+import { formatRouteReason, isDefaultRoute } from './routeReason';
 import { customRulesetTag, customRulesetLabel } from './rulesetLabels';
 import { getConnectionPage, reconcileRows } from './reconcileRows';
 import {
@@ -67,7 +67,8 @@ function getFullRouteRule(connection: MonitoredConnection): string {
   return expandedRouteConditions.get(rule)!;
 }
 
-type MonitoringTabId = 'active' | 'closed';
+const monitoringTabs = ['active', 'direct', 'closed'] as const;
+type MonitoringTabId = (typeof monitoringTabs)[number];
 
 type LocalDeviceChoices = Record<string, string>;
 
@@ -398,9 +399,12 @@ function sortConnections(
 
 function getConnectionsForActiveTab(): MonitoredConnection[] {
   const source =
-    activeTab === 'active'
-      ? Array.from(activeConnections.values())
-      : Array.from(closedConnections.values());
+    activeTab === 'closed'
+      ? Array.from(closedConnections.values())
+      : Array.from(activeConnections.values()).filter(
+          (connection) =>
+            isDefaultRoute(connection.rule) === (activeTab === 'direct'),
+        );
 
   return sortConnections(source, activeTab);
 }
@@ -542,14 +546,6 @@ function renderDeviceFilterOptions() {
   select.value = selectedDeviceFilter;
 }
 
-function setButtonActive(button: HTMLElement | null, active: boolean) {
-  if (!button) {
-    return;
-  }
-
-  button.classList.toggle('fkp_monitoring-page__tab--active', active);
-}
-
 function renderTabButtonContent(label: string, count: number | string) {
   return [
     E('span', { class: 'fkp_monitoring-page__tab-label' }, label),
@@ -558,12 +554,6 @@ function renderTabButtonContent(label: string, count: number | string) {
 }
 
 function renderControls() {
-  const activeButton = document.getElementById(
-    'monitoring-tab-active',
-  ) as HTMLButtonElement | null;
-  const closedButton = document.getElementById(
-    'monitoring-tab-closed',
-  ) as HTMLButtonElement | null;
   const closeAllButton = document.getElementById(
     'monitoring-close-all',
   ) as HTMLButtonElement | null;
@@ -571,25 +561,35 @@ function renderControls() {
     'monitoring-pause-toggle',
   ) as HTMLButtonElement | null;
 
-  if (activeButton) {
-    activeButton.replaceChildren(
+  let directCount = 0;
+  for (const connection of activeConnections.values()) {
+    if (isDefaultRoute(connection.rule)) directCount++;
+  }
+  const tabs = {
+    active: {
+      label: () => _('Active'),
+      count: activeConnections.size - directCount,
+    },
+    direct: { label: () => _('Direct connections'), count: directCount },
+    closed: { label: () => _('Closed'), count: closedConnections.size },
+  };
+  for (const tab of monitoringTabs) {
+    const button = document.getElementById(
+      `monitoring-tab-${tab}`,
+    ) as HTMLButtonElement | null;
+    if (!button) continue;
+    const { label, count } = tabs[tab];
+    const selected = activeTab === tab;
+    button.replaceChildren(
       ...renderTabButtonContent(
-        _('Active'),
-        failed || loading ? '—' : activeConnections.size,
+        label(),
+        tab !== 'closed' && (failed || loading) ? '—' : count,
       ),
     );
-    activeButton.disabled = serviceAvailability === 'stopped';
+    button.disabled = serviceAvailability === 'stopped';
+    button.classList.toggle('fkp_monitoring-page__tab--active', selected);
+    button.setAttribute('aria-pressed', String(selected));
   }
-
-  if (closedButton) {
-    closedButton.replaceChildren(
-      ...renderTabButtonContent(_('Closed'), closedConnections.size),
-    );
-    closedButton.disabled = serviceAvailability === 'stopped';
-  }
-
-  setButtonActive(activeButton, activeTab === 'active');
-  setButtonActive(closedButton, activeTab === 'closed');
 
   if (closeAllButton) {
     closeAllButton.replaceChildren(renderXIcon24());
@@ -713,7 +713,7 @@ function renderConnectionRow(connection: MonitoredConnection) {
   const source = getSourceCellParts(connection);
   const isClosing = closingConnectionIds.has(connection.id);
   const closeButton =
-    activeTab === 'active' && !isReadOnlyForkopView()
+    activeTab !== 'closed' && !isReadOnlyForkopView()
       ? E(
           'button',
           {
@@ -982,11 +982,12 @@ function renderConnections(options: { force?: boolean } = {}) {
 
   const connections = state ? [] : getVisibleConnections();
   if (!connections.length) {
-    const text =
-      state?.text ??
-      (activeTab === 'active'
-        ? _('No active connections')
-        : _('No closed connections'));
+    const emptyMessages = {
+      active: () => _('No active connections'),
+      direct: () => _('No direct connections'),
+      closed: () => _('No closed connections'),
+    };
+    const text = state?.text ?? emptyMessages[activeTab]();
     const key = text + (state?.className || '');
     if (tableView.stateKey !== key) {
       tableView.rows.replaceChildren(renderStateRow(text, state?.className));
@@ -1325,8 +1326,6 @@ export async function closeAllConnections() {
 }
 
 function bindControls() {
-  const activeButton = document.getElementById('monitoring-tab-active');
-  const closedButton = document.getElementById('monitoring-tab-closed');
   const select = document.getElementById(
     'monitoring-device-filter',
   ) as HTMLSelectElement | null;
@@ -1339,12 +1338,9 @@ function bindControls() {
     'monitoring-connections',
   );
 
-  if (activeButton) {
-    activeButton.onclick = () => setTab('active');
-  }
-
-  if (closedButton) {
-    closedButton.onclick = () => setTab('closed');
+  for (const tab of monitoringTabs) {
+    const button = document.getElementById(`monitoring-tab-${tab}`);
+    if (button) button.onclick = () => setTab(tab);
   }
 
   if (closeAllButton) {

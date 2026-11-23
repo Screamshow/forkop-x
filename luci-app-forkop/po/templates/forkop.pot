@@ -614,6 +614,11 @@ msgstr ""
 msgid "Direct connection"
 msgstr ""
 
+#: src/forkop/tabs/monitoring/initController.ts:573
+#: src/forkop/tabs/monitoring/render.ts:29
+msgid "Direct connections"
+msgstr ""
+
 #: src/forkop/tabs/updates/initController.ts:866
 msgid "Direct Proxy"
 msgstr ""
@@ -1756,6 +1761,10 @@ msgstr ""
 
 #: src/forkop/tabs/updates/releaseSelector.ts:65
 msgid "No compatible releases available"
+msgstr ""
+
+#: src/forkop/tabs/monitoring/initController.ts:987
+msgid "No direct connections"
 msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:262

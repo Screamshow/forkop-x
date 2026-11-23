@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatRouteReason } from './routeReason';
+import { formatRouteReason, isDefaultRoute } from './routeReason';
 
 describe('route reason', () => {
   it('explains unconditional device routes with and without exclusions', () => {
@@ -121,6 +121,17 @@ describe('route reason', () => {
   });
   it('distinguishes absent metadata from a reported default route', () => {
     expect(formatRouteReason()).toBe('Not available');
-    expect(formatRouteReason('final')).toBe('Default route');
+    for (const rule of ['final', ' Match ', 'DEFAULT']) {
+      expect(isDefaultRoute(rule)).toBe(true);
+      expect(formatRouteReason(rule)).toBe('Default route');
+    }
+    for (const rule of [
+      undefined,
+      '',
+      'domain_suffix=example.org => route(direct-out)',
+      'source_ip_cidr=192.0.2.0/24 => route(bypass-out)',
+    ]) {
+      expect(isDefaultRoute(rule)).toBe(false);
+    }
   });
 });

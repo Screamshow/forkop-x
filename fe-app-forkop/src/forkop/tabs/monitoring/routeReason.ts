@@ -21,6 +21,12 @@ function deviceRouteReason(rule: string): string | undefined {
     .join(', ');
 }
 
+export function isDefaultRoute(rule?: string): boolean {
+  return (
+    typeof rule === 'string' && /^(?:final|match|default)$/i.test(rule.trim())
+  );
+}
+
 export function formatRouteReason(
   rule = '',
   payload = '',
@@ -30,8 +36,7 @@ export function formatRouteReason(
 ): string {
   const text = rule.trim();
   if (!text) return translate('Not available');
-  if (/^(?:final|match|default)$/i.test(text))
-    return translate('Default route');
+  if (isDefaultRoute(text)) return translate('Default route');
 
   // X captures this evidence while evaluating the route, before metadata can
   // change. Prefer it to the abbreviated rule and client-side reconstruction.

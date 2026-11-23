@@ -642,20 +642,22 @@ export const styles = `
 
 @media (max-width: 520px) {
     .fkp_monitoring-page__filters {
-        grid-column: 1 / -1;
+        grid-column: 1;
+        grid-row: 2;
         grid-template-columns: minmax(0, 1fr);
     }
 
     .fkp_monitoring-page__actions {
         grid-column: 2;
-        grid-row: 1;
+        grid-row: 2;
+        align-self: end;
     }
 
     .fkp_monitoring-page__tabs {
-        grid-column: 1;
+        grid-column: 1 / -1;
         grid-row: 1;
         display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         width: 100%;
         min-width: 0;
     }

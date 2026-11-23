@@ -22,6 +22,15 @@ export function render() {
             E(
               'button',
               {
+                id: 'monitoring-tab-direct',
+                class: 'btn cbi-button fkp_monitoring-page__tab',
+                type: 'button',
+              },
+              `${_('Direct connections')} 0`,
+            ),
+            E(
+              'button',
+              {
                 id: 'monitoring-tab-closed',
                 class: 'btn cbi-button fkp_monitoring-page__tab',
                 type: 'button',
