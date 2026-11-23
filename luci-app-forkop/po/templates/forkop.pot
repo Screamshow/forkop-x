@@ -777,7 +777,7 @@ msgid "Do not test specified servers."
 msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:169
-msgid "DoH (Bootstrap DNS over UDP)"
+msgid "DoH for main DNS, UDP for Bootstrap DNS"
 msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:5472
@@ -801,7 +801,7 @@ msgid "Dont Touch My DHCP!"
 msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:170
-msgid "DoT (Bootstrap DNS over UDP)"
+msgid "DoT for main DNS, UDP for Bootstrap DNS"
 msgstr ""
 
 #: src/forkop/tabs/dashboard/initController.ts:1695
@@ -2281,7 +2281,7 @@ msgid "Select an intermediate section"
 msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:331
-msgid "Select DNS protocol for main and Bootstrap DNS"
+msgid "Select the protocol for both main and Bootstrap DNS. The compatibility option keeps Bootstrap DNS on UDP."
 msgstr ""
 
 #: ../luci-app-forkop/htdocs/luci-static/resources/view/forkop/section.js:4961

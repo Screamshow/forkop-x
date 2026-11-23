@@ -1278,8 +1278,8 @@
     ]
   },
   {
-    "call": "DoH (Bootstrap DNS over UDP)",
-    "key": "DoH (Bootstrap DNS over UDP)",
+    "call": "DoH for main DNS, UDP for Bootstrap DNS",
+    "key": "DoH for main DNS, UDP for Bootstrap DNS",
     "places": [
       "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:169"
     ]
@@ -1320,8 +1320,8 @@
     ]
   },
   {
-    "call": "DoT (Bootstrap DNS over UDP)",
-    "key": "DoT (Bootstrap DNS over UDP)",
+    "call": "DoT for main DNS, UDP for Bootstrap DNS",
+    "key": "DoT for main DNS, UDP for Bootstrap DNS",
     "places": [
       "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:170"
     ]
@@ -3811,8 +3811,8 @@
     ]
   },
   {
-    "call": "Select DNS protocol for main and Bootstrap DNS",
-    "key": "Select DNS protocol for main and Bootstrap DNS",
+    "call": "Select the protocol for both main and Bootstrap DNS. The compatibility option keeps Bootstrap DNS on UDP.",
+    "key": "Select the protocol for both main and Bootstrap DNS. The compatibility option keeps Bootstrap DNS on UDP.",
     "places": [
       "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:331"
     ]

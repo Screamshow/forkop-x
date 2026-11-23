@@ -197,8 +197,8 @@ function configureDnsProtocol(option, bootstrapOption) {
     udp: _("UDP (Unprotected DNS)"),
   };
   const legacyChoices = {
-    doh: _("DoH (Bootstrap DNS over UDP)"),
-    dot: _("DoT (Bootstrap DNS over UDP)"),
+    doh: _("DoH for main DNS, UDP for Bootstrap DNS"),
+    dot: _("DoT for main DNS, UDP for Bootstrap DNS"),
   };
   option.default = "udp";
   option.rmempty = false;
@@ -425,7 +425,7 @@ function createSettingsContent(section) {
     form.ListValue,
     "dns_type",
     _("DNS Protocol Type"),
-    _("Select DNS protocol for main and Bootstrap DNS"),
+    _("Select the protocol for both main and Bootstrap DNS. The compatibility option keeps Bootstrap DNS on UDP."),
   );
 
   const dnsOption = section.option(

@@ -542,8 +542,8 @@ msgstr "Не тестировать серверы с одним из выбра
 msgid "Do not test specified servers."
 msgstr "Не тестировать указанные серверы."
 
-msgid "DoH (Bootstrap DNS over UDP)"
-msgstr "DoH (Bootstrap DNS по UDP)"
+msgid "DoH for main DNS, UDP for Bootstrap DNS"
+msgstr "Основной DNS через DoH, Bootstrap DNS через UDP"
 
 msgid "Domain and IP lists"
 msgstr "Списки доменов и IP"
@@ -560,8 +560,8 @@ msgstr "Домены"
 msgid "Dont Touch My DHCP!"
 msgstr "Отключить управление DHCP"
 
-msgid "DoT (Bootstrap DNS over UDP)"
-msgstr "DoT (Bootstrap DNS по UDP)"
+msgid "DoT for main DNS, UDP for Bootstrap DNS"
+msgstr "Основной DNS через DoT, Bootstrap DNS через UDP"
 
 msgid "Downlink"
 msgstr "Входящий"
@@ -1592,8 +1592,8 @@ msgstr "Выберите существующий сетевой интерфе�
 msgid "Select an intermediate section"
 msgstr "Выберите промежуточную секцию"
 
-msgid "Select DNS protocol for main and Bootstrap DNS"
-msgstr "Выберите протокол для основного и Bootstrap DNS"
+msgid "Select the protocol for both main and Bootstrap DNS. The compatibility option keeps Bootstrap DNS on UDP."
+msgstr "Выберите общий протокол для основного и Bootstrap DNS. Режим совместимости сохраняет UDP для Bootstrap DNS."
 
 msgid "Select network interface for VPN connection"
 msgstr "Выберите сетевой интерфейс для VPN-подключения"
