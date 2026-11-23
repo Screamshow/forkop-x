@@ -2422,9 +2422,14 @@ function manual_restart() {
             FORKOP_LIST_UPDATE_PREPARE_ONLY: "1",
             FORKOP_MANUAL_RESTART_LOCK_HELD: "1"
         }) != 0) {
-            module_success(STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
-            log_message("Manual restart aborted: lists could not be prepared; the running runtime was preserved", "error");
-            return 1;
+            // Use the same validated generation as an ordinary start. A
+            // cache for different list settings cannot satisfy this check.
+            if (!module_success(UPDATES_UC, [ "restore-list-cache" ])) {
+                module_success(STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
+                log_message("Manual restart aborted: lists could not be refreshed and no usable list cache is available", "error");
+                return 1;
+            }
+            log_message("Lists could not be refreshed; using the validated list cache for manual restart", "warn");
         }
     }
 
@@ -2440,7 +2445,7 @@ function manual_restart() {
         return 1;
     }
 
-    log_message("Remote data preparation completed; performing manual Forkop restart", "info");
+    log_message("Performing manual Forkop restart", "info");
     let status = restart();
     module_success(STATE_UC, [ "release-runtime-dir-lock", RELOAD_LOCK_DIR ]);
     return status;

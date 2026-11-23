@@ -46,4 +46,41 @@ runtime_reload_line="$(grep -nF '[ SERVICE_INIT, "reload", "list-content" ]' <<<
 [ "$prepare_exit_line" -lt "$runtime_reload_line" ] ||
   fail "list prepare-only mode can invoke an intermediate runtime reload"
 
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+{
+  cat <<'UC'
+const AUTOMATIC_LATENCY_PENDING_FILE = "latency", RELOAD_LOCK_DIR = "lock";
+const STATE_UC = "state", UPDATES_UC = "updates", RULESET_CACHE_UC = "rulesets";
+let fs = { stat: () => null };
+let calls = [];
+function log_message() {}
+function owner_pid() { return 1; }
+function setting_bool() { return false; }
+function module_success(module, args) {
+    push(calls, args[0]);
+    return args[0] != "restore-list-cache" || ARGV[0] == "cached";
+}
+function module_status_with_env(module, args, env) {
+    push(calls, args[0]);
+    return args[0] == "list-update" && ARGV[0] != "fresh" ? 1 : 0;
+}
+function module_status(module, args) { push(calls, args[0]); return 0; }
+function restart() { push(calls, "restart"); return 0; }
+UC
+  sed -n '/^function manual_restart()/,/^}/p' "$LIFECYCLE"
+  cat <<'UC'
+let status = manual_restart();
+print(join(",", calls), ":", status, "\n");
+UC
+} > "$WORK_DIR/manual-restart.uc"
+
+prepare='acquire-runtime-dir-lock,subscription-prepare-only,has-list-update-sources,list-update'
+[ "$(ucode "$WORK_DIR/manual-restart.uc" fresh)" = "$prepare,refresh-for-restart,restart,release-runtime-dir-lock:0" ] ||
+  fail 'a successful refresh no longer restarts with fresh data'
+[ "$(ucode "$WORK_DIR/manual-restart.uc" cached)" = "$prepare,restore-list-cache,refresh-for-restart,restart,release-runtime-dir-lock:0" ] ||
+  fail 'a failed list refresh prevents restart with a validated cache'
+[ "$(ucode "$WORK_DIR/manual-restart.uc" missing)" = "$prepare,restore-list-cache,release-runtime-dir-lock:1" ] ||
+  fail 'a failed list refresh can reach restart without a validated cache'
+
 printf 'manual restart contract checks passed\n'
