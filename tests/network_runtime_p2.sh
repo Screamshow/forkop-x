@@ -32,17 +32,23 @@ FORKOP_LIB="$LIB" ucode -L "$LIB" "$LIB/service/initd.uc" trigger-plan |
 {
     cat <<'UC'
 let core_ip = require("core.ip");
+let runtime_dns = require("xrust.dns");
+const SECTION_CACHE_DIR = "/applied";
 function words(text) { return split(trim(text), /[ \t]+/); }
 function valid_ipv4(value) { return core_ip.valid_ipv4(value, false, true); }
 function as_string(value) { return "" + value; }
-let response;
+let response, last_args, applied;
+function read_json_file(path) {
+    assert(path == SECTION_CACHE_DIR + "/" + runtime_dns.APPLIED_DNS_CACHE_NAME);
+    return applied;
+}
 function command_output_from_args(args) {
-    assert(index(args, "@127.0.0.42") < 0, "system DNS probe explicitly targeted Xrust");
+    last_args = args;
     return response;
 }
 function clock(monotonic) { return monotonic ? [91, 0] : [1000000, 0]; }
 UC
-    sed -n '/^function dns_check_has_ipv4_answer(/,/^}/p; /^function dns_check_router_resolver_available(/,/^}/p' "$LIB/diagnostics/runtime.uc"
+    sed -n '/^function dns_check_bootstrap(/,/^}/p; /^function dns_check_has_ipv4_answer(/,/^}/p; /^function dns_check_router_resolver_available(/,/^}/p' "$LIB/diagnostics/runtime.uc"
     sed -n '/^function now_seconds(/,/^}/p' "$LIB/xrust/dns_failover.uc"
     cat <<'UC'
 let answer = "example.com.\t600\tIN\tA\t192.0.2.10\n";
@@ -55,8 +61,18 @@ response = header + "NOERROR, id: 1\n";
 assert(!dns_check_router_resolver_available("example.com", 2), "accepted an empty successful response");
 response += answer;
 assert(dns_check_router_resolver_available("example.com", 2), "did not recognize a successful A response");
+assert(index(last_args, "@" + runtime_dns.DNS_HEALTH_ADDRESS) < 0, "system DNS probe explicitly targeted Xrust");
+
+let active = { state: { bootstrap_index: 1 } };
+response = "192.0.2.10\n";
+assert(dns_check_bootstrap(active, "example.com", 2));
+assert(index(last_args, "-b") < 0 && last_args[index(last_args, "-p") + 1] == "" + runtime_dns.health_port("bootstrap", 1));
+applied = { health_probe_mode: "loopback-source-v1" };
+assert(dns_check_bootstrap(active, "example.com", 2));
+assert(last_args[index(last_args, "-b") + 1] == "127.32.0.2" &&
+    last_args[index(last_args, "-p") + 1] == "" + runtime_dns.health_port("active", 0));
 assert(now_seconds() == 91, "failover scheduling uses the wall clock");
-print("#21 checked system resolver responses, #22 failover uses monotonic time\n");
+print("#21 checked system and Bootstrap DNS probes, #22 failover uses monotonic time\n");
 UC
 } >"$WORK/dns.uc"
 ucode -L "$LIB" "$WORK/dns.uc"

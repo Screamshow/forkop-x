@@ -125,6 +125,11 @@ def main():
                 core.send_signal(signal.SIGHUP)
                 expected.update({"127.0.0.1": second.answer, "127.16.0.9": first.answer, "127.32.0.9": second.answer})
                 wait_answers(target, expected)
+                replacement.write_text(json.dumps(runtime_config(single, first, second, first)))
+                subprocess.run([XRUST, "check", "-c", replacement], check=True)
+                replacement.replace(path)
+                core.send_signal(signal.SIGHUP)
+                wait_answers(target, {"127.0.0.1": first.answer, "127.32.0.1": second.answer})
                 assert core.poll() is None
             except Exception:
                 log.seek(0)
@@ -134,7 +139,8 @@ def main():
                 if core.poll() is None:
                     core.terminate()
                 core.wait(timeout=10)
-    print("One health listener (2 sockets) instead of 17 (34 sockets), both candidate pools and hot SIGHUP verified")
+    print("One health listener (2 sockets) instead of 17 (34 sockets), both candidate pools, "
+          "singleton Bootstrap and hot SIGHUP verified")
 
 
 if __name__ == "__main__":

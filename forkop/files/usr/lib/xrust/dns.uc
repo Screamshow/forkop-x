@@ -276,20 +276,9 @@ function add_active_health_inbound(result) {
     push(result.sniff_inbounds, DNS_ACTIVE_HEALTH_TAG);
 }
 
-function add_health_candidate(result, kind, index_value, server) {
-    let server_tag = health_tag(kind, index_value, "server");
+function add_health_rule(result, kind, index_value, server_tag) {
     let probe = health_probe(kind, index_value, result.state);
     let inbound_tag = probe.source != "" ? DNS_ACTIVE_HEALTH_TAG : health_tag(kind, index_value, "in");
-    let dns_server = bind_provider(kind == "main"
-        ? server_from_options(server_tag, result.state.dns_type, server, result.state.dns_detour)
-        : bootstrap_server(server_tag, result.state.bootstrap_dns_type || "udp", server), result.state, index_value);
-
-    if (dns_server.unsupported) {
-        result.unsupported = dns_server.unsupported;
-        return;
-    }
-
-    push(result.servers, dns_server);
     let rule = {
         action: "route",
         inbound: inbound_tag,
@@ -305,14 +294,19 @@ function add_health_candidate(result, kind, index_value, server) {
     push(result.rules, rule);
 }
 
-function add_health_slot(result, kind, index_value) {
-    let tag = health_tag(kind, index_value, "in");
-    push(result.inbounds, { type: "direct", tag,
-        listen: DNS_HEALTH_ADDRESS, listen_port: health_port(kind, index_value) });
-    push(result.rules, { action: "route", inbound: tag,
-        server: kind == "main" ? runtime_constants.DNS_SERVER_TAG : runtime_constants.BOOTSTRAP_DNS_SERVER_TAG,
-        disable_cache: true });
-    push(result.sniff_inbounds, tag);
+function add_health_candidate(result, kind, index_value, server) {
+    let server_tag = health_tag(kind, index_value, "server");
+    let dns_server = bind_provider(kind == "main"
+        ? server_from_options(server_tag, result.state.dns_type, server, result.state.dns_detour)
+        : bootstrap_server(server_tag, result.state.bootstrap_dns_type || "udp", server), result.state, index_value);
+
+    if (dns_server.unsupported) {
+        result.unsupported = dns_server.unsupported;
+        return;
+    }
+
+    push(result.servers, dns_server);
+    add_health_rule(result, kind, index_value, server_tag);
 }
 
 const NTP_BOOTSTRAP_FALLBACK_TAG = runtime_constants.NTP_DNS_SERVER_TAG + "-bootstrap";
@@ -384,8 +378,9 @@ function config_from_state(state, ntp_required) {
         for (let i = 0; i < count; i++) {
             if (length(values) > 1 && i < length(values))
                 add_health_candidate(result, kind, i, values[i]);
-            else if (!shared_probe)
-                add_health_slot(result, kind, i);
+            else if (!shared_probe || kind == "bootstrap")
+                add_health_rule(result, kind, i, kind == "main"
+                    ? runtime_constants.DNS_SERVER_TAG : runtime_constants.BOOTSTRAP_DNS_SERVER_TAG);
         }
     }
     // The canonical probe is the fallback within the shared inbound.

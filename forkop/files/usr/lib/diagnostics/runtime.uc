@@ -837,8 +837,11 @@ function url_host(value) {
 }
 
 function dns_check_bootstrap(active, domain, timeout_seconds) {
+    let applied = read_json_file(SECTION_CACHE_DIR + "/" + runtime_dns.APPLIED_DNS_CACHE_NAME);
+    let probe = runtime_dns.health_probe("bootstrap", active.state.bootstrap_index, applied);
+    let options = probe.source == "" ? [] : [ "-b", probe.source ];
     for (let line in split(command_output_from_args([
-        "dig", "-r", "-p", as_string(runtime_dns.health_port("bootstrap", active.state.bootstrap_index)),
+        "dig", "-r", ...options, "-p", as_string(probe.port),
         "@" + runtime_dns.DNS_HEALTH_ADDRESS, domain, "A", "+short",
         "+timeout=" + as_string(timeout_seconds), "+tries=1"
     ]), "\n")) {
