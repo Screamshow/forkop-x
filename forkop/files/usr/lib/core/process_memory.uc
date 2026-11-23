@@ -103,8 +103,15 @@ function optional_services_state(services, service_name, proc_root, enabled) {
     return state || { running: 0, memory_rss_bytes: 0 };
 }
 
-function ubus_services(request) {
-    let pipe = fs.popen("ubus call service list " + request + " 2>/dev/null", "r");
+function valid_service_name(service_name) {
+    return match(service_name || "", /^[A-Za-z0-9_.-]+$/) != null;
+}
+
+function ubus_services(service_name) {
+    if (service_name != null && !valid_service_name(service_name))
+        return null;
+    let request = service_name == null ? "" : " '{\"name\":\"" + service_name + "\"}'";
+    let pipe = fs.popen("ubus call service list" + request + " 2>/dev/null", "r");
     if (!pipe)
         return null;
     let output = pipe.read("all");
@@ -114,17 +121,12 @@ function ubus_services(request) {
     try { return json(output); } catch (e) { return null; }
 }
 
-function valid_service_name(service_name) {
-    return match(service_name || "", /^[A-Za-z0-9_.-]+$/) != null;
-}
-
 // Only count live procd children whose command still matches the registered
 // instance. Never infer core identity from its process name or memory usage.
 function service_rss_bytes(service_name) {
     if (!valid_service_name(service_name))
         return null;
-    return services_rss_bytes(
-        ubus_services("'{\"name\":\"" + service_name + "\"}'"), service_name, "/proc");
+    return services_rss_bytes(ubus_services(service_name), service_name, "/proc");
 }
 
 // One unfiltered listing answers for every name at once, which is one shell and
@@ -135,7 +137,7 @@ function service_group_rss_bytes(service_names) {
     for (let service_name in service_names)
         if (!valid_service_name(service_name))
             return null;
-    return services_group_rss_bytes(ubus_services(""), service_names, "/proc");
+    return services_group_rss_bytes(ubus_services(), service_names, "/proc");
 }
 
 

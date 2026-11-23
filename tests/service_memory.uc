@@ -114,3 +114,16 @@ check(memory.optional_services_state(stopped, "optional", root, true).running, 0
 check(memory.optional_services_state({}, "optional", root, true).running, 0, "Enabled missing service remains visible");
 check(memory.optional_services_state({ optional: { instances: { main: { running: true, pid: 42 } } } }, "optional", root, false).running, 1, "Running optional module remains visible");
 print("Optional service visibility checks passed\n");
+
+let commands = [];
+fs.popen = function(command) {
+    push(commands, command);
+    return { read: () => '{"forkop-xrust":{"instances":{}}}', close: () => 0 };
+};
+check(type(memory.ubus_services()?.["forkop-xrust"]), "object", "Unfiltered service listing");
+check(type(memory.ubus_services("forkop-xrust")?.["forkop-xrust"]), "object", "Filtered service listing");
+check(memory.ubus_services("forkop xrust"), null, "Invalid service name rejected");
+check(length(commands), 2, "Only valid service listings invoke ubus");
+check(commands[0], "ubus call service list 2>/dev/null", "Unfiltered ubus command");
+check(commands[1], "ubus call service list '{\"name\":\"forkop-xrust\"}' 2>/dev/null", "Filtered request uses JSON");
+print("Service listing checks passed\n");

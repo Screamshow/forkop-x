@@ -1019,7 +1019,7 @@ function current_ui_state_json() {
 
     // One listing answers for every service below, instead of a shell and a ubus
     // round trip per name.
-    let procd_services = process_memory.ubus_services("");
+    let procd_services = process_memory.ubus_services();
 
     write_json({
         service: {
