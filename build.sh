@@ -303,6 +303,11 @@ if [ -z "${IPKG_INSTROOT:-}" ] && [ ! -L /etc/rc.d/S98forkop-upgrade-recovery ];
     banner="$(/usr/bin/xrust version 2>/dev/null)" &&
         printf '%s\n' "$banner" | head -n 1 | grep -Eq '^xrust version [0-9]+\.[0-9]+\.[0-9]+$' || {
         printf '%s\n' 'Forkop 3 requires native Xrust. Run the official Forkop installer to upgrade the packages together: https://mirror.51343.ru/forkop/install.sh' >&2
+        # opkg has already run the old prerm. Its abort path does not run postinst.
+        if [ "${PKG_UPGRADE:-}" = 1 ] && [ "${1:-}" = upgrade ] && [ -x /usr/bin/forkop ]; then
+            FORKOP_LIB=/usr/lib/forkop /usr/bin/forkop package_postinst ||
+                printf '%s\n' 'Could not restore the previous Forkop service. Check the Forkop log.' >&2
+        fi
         exit 1
     }
 fi

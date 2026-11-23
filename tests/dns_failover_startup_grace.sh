@@ -107,6 +107,34 @@ UC
 } > "$WORK/recovery-timer.uc"
 ucode "$WORK/recovery-timer.uc"
 
+{
+cat <<'UC'
+let bootstrap_endpoint = require("dns.bootstrap_endpoint");
+let common = require("core.common");
+const STATE_FILE = "state", SERVICE_BIN = "forkop";
+let logs = [];
+let written;
+function as_string(value) { return "" + value; }
+function write_state(path, value) { written = value; return true; }
+function command_status() { return 0; }
+function command_from_args(args) { return join(" ", args); }
+function remove_file() {}
+function log_message(message) { push(logs, message); }
+UC
+sed -n '/^function clone_state(/,/^}/p; /^function apply_selections(/,/^}/p' "$FORKOP_LIB/xrust/dns_failover.uc"
+cat <<'UC'
+let state = { bootstrap_dns_type: "doh", bootstrap_index: 0,
+    bootstrap_servers: ["https://1.1.1.1/primary-secret", "[2001:db8::53]:8443/backup-secret?token=private"] };
+assert(apply_selections(state, { bootstrap: { index: 1, reason: "active_dead" } }));
+assert(written.bootstrap_servers[1] == state.bootstrap_servers[1] && state.bootstrap_index == 1);
+assert(apply_selections(state, { bootstrap: { index: 0, reason: "recovery" } }));
+assert(logs[0] == "switched bootstrap DNS to priority 2 ([2001:db8::53]:8443, active_dead)");
+assert(logs[1] == "switched bootstrap DNS to priority 1 (1.1.1.1, recovery)");
+print("Bootstrap failover and recovery logs omit DoH paths\n");
+UC
+} > "$WORK/bootstrap-switch-log.uc"
+ucode -L "$FORKOP_LIB" "$WORK/bootstrap-switch-log.uc"
+
 ucode -L "$FORKOP_LIB" -e '
 let dns = require("xrust.dns");
 let applied = dns.state_template({dns_server: ["192.0.2.1", "192.0.2.2"]});

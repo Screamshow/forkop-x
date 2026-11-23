@@ -2,6 +2,7 @@
 
 let fs = require("fs");
 let xrust = require("xrust.binary");
+let clash_api_network = require("xrust.clash_api");
 let mark_rules = require("diagnostics.mark_rules");
 let common = require("core.common");
 let process_memory = require("core.process_memory");
@@ -1166,8 +1167,7 @@ function clash_json_output(args) {
 }
 
 function clash_api_url() {
-    let address = common.clash_api_listen_address(module_output(XRUST_RUNTIME_UC, [ "service-listen-address" ]));
-    return address + ":" + SB_CLASH_API_CONTROLLER_PORT;
+    return clash_api_network.local_request_address() + ":" + SB_CLASH_API_CONTROLLER_PORT;
 }
 
 function clash_urlencode(value) {

@@ -14,6 +14,7 @@ let subscription_filter_connections = {};
 let subscription_previous_password_connections = {};
 let runtime_xray_client_features = [];
 let runtime_country = require("xrust.country");
+let clash_api = require("xrust.clash_api");
 let runtime_dns = require("xrust.dns");
 let ntp = require("dns.ntp");
 let runtime_route = require("xrust.route");
@@ -462,9 +463,9 @@ function ensure_custom_ruleset(config, reference) {
     return { tag: tag_name, kind };
 }
 
-function clash_api_config(settings, service_address) {
+function clash_api_config(settings) {
     let result = {
-        external_controller: common.clash_api_listen_address(service_address) + ":9090"
+        external_controller: clash_api.listen_address() + ":9090"
     };
     if (bool_option(settings, "enable_yacd", false))
         result.external_ui = "ui";
@@ -485,7 +486,7 @@ function source_dns_inbound_matcher() {
     return [ runtime_constants.SOURCE_DNS_INBOUND_TAG ];
 }
 
-function base_config(settings, service_address, runtime_context) {
+function base_config(settings, runtime_context) {
     let log_level = option(settings, "log_level", "warn");
     let rewrite_ttl = int_option(settings, "dns_rewrite_ttl", "60");
     let cache_path = cache_identity.path(option(settings, "cache_path", "/tmp/xrust/cache.db"));
@@ -581,7 +582,7 @@ function base_config(settings, service_address, runtime_context) {
                 path: cache_path,
                 store_fakeip: true
             },
-            clash_api: clash_api_config(settings, service_address)
+            clash_api: clash_api_config(settings)
         }
     };
 }
@@ -3719,7 +3720,7 @@ function generate_config(output_path, service_address, mwan3_active, supports_xh
     let bootstrap_lists = getenv("FORKOP_LIFECYCLE_LIST_BOOTSTRAP") == "1";
     let source_aware_dns = bootstrap_lists ? [] : source_aware_dns_sources(sections);
     let dns_state = runtime_dns.runtime_state(settings);
-    let config = base_config(settings, service_address, {
+    let config = base_config(settings, {
         dns_state,
         ntp_servers: bootstrap_lists ? [] : ntp.server_names(),
         supports_bittorrent_direct: cli_bool(supports_bittorrent_direct),

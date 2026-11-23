@@ -11,6 +11,7 @@ let core_ip = require("core.ip");
 let rule_config = require("config.rule");
 let connections = require("config.connections");
 let provider_dns = require("xrust.provider_dns");
+let clash_api = require("xrust.clash_api");
 let ntp = require("dns.ntp");
 let bootstrap_endpoint = require("dns.bootstrap_endpoint");
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || "forkop";
@@ -1701,6 +1702,7 @@ function sing_box_signature_body(settings, sections, mwan3_active) {
     body = signature_add_value(body, "runtime.mwan3_active", bool_value(mwan3_active));
 
     body = signature_add_value(body, "settings.enable_yacd", bool_option_value(settings, "enable_yacd", false));
+    body = signature_add_value(body, "runtime.clash_api_address", clash_api.listen_address());
 
     body = signature_add_value(body, "settings.download_lists_via_proxy", bool_option_value(settings, "download_lists_via_proxy", false));
     body = signature_add_value(body, "settings.download_components_via_proxy", bool_option_value(settings, "download_components_via_proxy", false));

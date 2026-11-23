@@ -7,6 +7,7 @@ let netstat = require("core.netstat");
 let github_http = require("core.github_http");
 let storage_cleanup = require("components.storage_cleanup");
 let xrust = require("xrust.binary");
+let locks = require("core.locks");
 
 const LIB_DIR = getenv("FORKOP_LIB") || "/usr/lib/forkop";
 const CONFIG_NAME = getenv("FORKOP_CONFIG_NAME") || constants.FORKOP_CONFIG_NAME || "forkop";
@@ -160,13 +161,10 @@ function now_seconds() {
 }
 
 function owner_pid() {
-    let pid = trim(command_output_from_args([ "sh", "-c", "echo $PPID" ]));
-    return match(pid, /^[0-9]+$/) != null ? pid : "0";
-}
-
-function pid_running(pid) {
-    pid = as_string(pid);
-    return match(pid, /^[0-9]+$/) != null && command_success_from_args([ "kill", "-0", pid ]);
+    let stat = read_file("/proc/self/stat");
+    let separator = index(stat, " ");
+    let pid = separator > 0 ? substr(stat, 0, separator) : "";
+    return match(pid, /^[1-9][0-9]*$/) != null ? pid : "0";
 }
 
 function log_message(message, level) {
@@ -282,32 +280,14 @@ function cleanup_tmp_dir() {
 }
 
 function acquire_component_lock() {
-    ensure_dir(RUNTIME_STATE_DIR);
-    if (command_success_from_args([ "mkdir", COMPONENT_LOCK_DIR ])) {
-        write_file(COMPONENT_LOCK_DIR + "/pid", owner_pid() + "\n");
-        lock_held = true;
-        return true;
-    }
-
-    let current_owner = trim(read_file(COMPONENT_LOCK_DIR + "/pid"));
-    if (current_owner != "" && pid_running(current_owner))
-        return false;
-
-    remove_file(COMPONENT_LOCK_DIR + "/pid");
-    command_success_from_args([ "rmdir", COMPONENT_LOCK_DIR ]);
-    if (!command_success_from_args([ "mkdir", COMPONENT_LOCK_DIR ]))
-        return false;
-
-    write_file(COMPONENT_LOCK_DIR + "/pid", owner_pid() + "\n");
-    lock_held = true;
-    return true;
+    lock_held = ensure_dir(RUNTIME_STATE_DIR) && locks.acquire(COMPONENT_LOCK_DIR, owner_pid());
+    return lock_held;
 }
 
 function release_component_lock() {
     if (!lock_held)
         return;
-    remove_file(COMPONENT_LOCK_DIR + "/pid");
-    command_success_from_args([ "rmdir", COMPONENT_LOCK_DIR ]);
+    locks.release(COMPONENT_LOCK_DIR);
     lock_held = false;
 }
 

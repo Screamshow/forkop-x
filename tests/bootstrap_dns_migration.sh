@@ -7,10 +7,34 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 export FORKOP_UCI_STATE_FILE="$WORK/settings.uci" FORKOP_DNS_FAILOVER_STATE_FILE="$WORK/no-applied-state.json"
 
+mkdir "$WORK/bin"
+cat > "$WORK/bin/curl" <<'SH'
+#!/bin/sh
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -o) body=$2; shift ;;
+        --resolve) exit 1 ;;
+        https://country.example/) printf '%s\n' "$1" >> "$COUNTRY_CURL_LOG" ;;
+    esac
+    shift
+done
+printf '%s\n' '[{"ip":"1.0.0.1","country":"DE"}]' > "$body"
+printf '200'
+SH
+cat > "$WORK/bin/dig" <<'SH'
+#!/bin/sh
+printf '%s\n' "$*" >> "$COUNTRY_DIG_LOG"
+exit 1
+SH
+chmod +x "$WORK/bin/curl" "$WORK/bin/dig"
+export PATH="$WORK/bin:$PATH" FORKOP_COUNTRY_IS_URL=https://country.example/
+export COUNTRY_CURL_LOG="$WORK/curl.log" COUNTRY_DIG_LOG="$WORK/dig.log"
+
 cat > "$WORK/test.uc" <<'UC'
     let migration = require("config.migration");
     let dns = require("xrust.dns");
     let bootstrap = require("dns.bootstrap");
+    let country = require("xrust.country");
     let fs = require("fs");
 
     function model(settings) {
@@ -68,9 +92,17 @@ cat > "$WORK/test.uc" <<'UC'
     let plain = resolver(legacy);
     assert(plain.type == "udp" && plain.server == "resolver.lan" && plain.server_port == 5300);
     assert(length(saved(legacy).servers) == 0, "pre-start fallback must preserve the literal IP requirement");
+    let servers = { fixture: "1.0.0.1" };
+    assert(country.detect(servers, {}, dns.state_template(legacy)).fixture == "DE",
+        "legacy Bootstrap hostname should keep country lookup through the system resolver");
+    assert(fs.readfile(getenv("COUNTRY_DIG_LOG")) == null, "legacy hostname used as a direct Bootstrap target");
+    assert(country.detect(servers, {}, dns.state_template(fresh)).fixture == null,
+        "a configured DoH resolver failure should stop the country lookup");
     delete legacy.bootstrap_dns_legacy_type;
     assert(resolver(legacy).unsupported != null, "encrypted Bootstrap must reject a hostname dial target");
     print("Bootstrap migrations, effective transport, direct lookups and failover state verified\n");
 UC
 ucode -L "$LIB" "$WORK/test.uc"
 grep -Fq "list applied_migrations 'bootstrap_dns_protocol_v1'" "$ROOT/forkop/files/etc/config/forkop"
+[ "$(cat "$COUNTRY_CURL_LOG")" = 'https://country.example/' ]
+grep -Fq '+https=/dns-query' "$COUNTRY_DIG_LOG"

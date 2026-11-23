@@ -3,6 +3,7 @@
 let fs = require("fs");
 let common = require("core.common");
 let bootstrap_dns = require("dns.bootstrap");
+let bootstrap_endpoint = require("dns.bootstrap_endpoint");
 
 let as_string = common.as_string;
 let object_or_empty = common.object_or_empty;
@@ -154,7 +155,9 @@ function bootstrap_settings(state) {
     let active = state.bootstrap_index || 0;
     if (active > 0 && active < length(servers))
         servers = [ servers[active], ...slice(servers, 0, active), ...slice(servers, active + 1) ];
-    return { protocol: state.bootstrap_dns_type || "udp", servers };
+    let protocol = state.bootstrap_dns_type || "udp";
+    // Only literal endpoints are usable for direct Bootstrap DNS queries.
+    return { protocol, servers: filter(servers, server => bootstrap_endpoint.parse(server, protocol) != null) };
 }
 
 function resolve_service_host(host, settings) {

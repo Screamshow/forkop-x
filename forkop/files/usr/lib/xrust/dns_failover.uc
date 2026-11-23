@@ -4,6 +4,7 @@ let fs = require("fs");
 let uci_core = require("core.uci");
 let common = require("core.common");
 let core_ip = require("core.ip");
+let bootstrap_endpoint = require("dns.bootstrap_endpoint");
 let runtime_dns = require("xrust.dns");
 let provider_dns = require("xrust.provider_dns");
 let connections = require("config.connections");
@@ -247,7 +248,10 @@ function apply_selections(state, selections) {
     for (let item in changed) {
         let values = item.kind == "main" ? state.main_servers : state.bootstrap_servers;
         let selected = item.selected;
-        log_message("switched " + item.kind + " DNS to priority " + as_string(selected.index + 1) + " (" + values[selected.index] + ", " + selected.reason + ")", "info");
+        let address = values[selected.index];
+        if (item.kind == "bootstrap")
+            address = bootstrap_endpoint.parse(address, state.bootstrap_dns_type || "udp", true)?.authority || "unknown endpoint";
+        log_message("switched " + item.kind + " DNS to priority " + as_string(selected.index + 1) + " (" + address + ", " + selected.reason + ")", "info");
     }
     return true;
 }

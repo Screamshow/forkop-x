@@ -24,6 +24,9 @@ GitHub main version before creating a tag. Forkop accepts `x.y.z` and
 `x.y.z-canary.N`, and the build workflow sets its package version.
 
 Build each release description from the exact public-tag-to-candidate diff.
+Write one user-visible change per Markdown bullet on a single line. Keep the
+wording short and omit repetition, filler, and internal implementation details.
+Use section headings to group related changes.
 Compare code in both projects and check UI optimizations separately from
 core API response times. Record measured performance only for the build and
 scenario that were tested. Put the user's approved text into

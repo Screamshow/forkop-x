@@ -136,18 +136,33 @@ grep -Fq '/usr/lib/forkop/config/migration.uc migrate' "$FORKOP_MAKEFILE" ||
   work=$(mktemp -d)
   trap 'rm -rf "$work"' EXIT
   source <(sed -n '/^write_backend_preinst() {/,/^}/p' "$BUILD_SCRIPT")
-  write_backend_preinst | sed "s@/usr/bin/xrust@$work/xrust@g; s@/etc/rc.d/S98forkop-upgrade-recovery@$work/recover@g" > "$work/preinst"
+  write_backend_preinst | sed "s@/usr/bin/xrust@$work/xrust@g; s@/etc/rc.d/S98forkop-upgrade-recovery@$work/recover@g; s@/usr/bin/forkop@$work/forkop@g" > "$work/preinst"
+  cat > "$work/forkop" <<'SH'
+#!/bin/sh
+[ "$1" = package_postinst ] && [ "$FORKOP_LIB" = /usr/lib/forkop ] || exit 1
+printf '%s\n' "$1" > "$FORKOP_TEST_RESTORE_LOG"
+SH
+  chmod 700 "$work/forkop"
+  export FORKOP_TEST_RESTORE_LOG="$work/restore.log"
   if sh "$work/preinst" > "$work/log" 2>&1; then
     fail "native Forkop package must refuse uncoordinated installation on a legacy core"
   fi
   grep -Fq 'Run the official Forkop installer' "$work/log" || fail "missing installer guidance"
-  IPKG_INSTROOT="$work/offline" sh "$work/preinst"
+  [ ! -e "$work/restore.log" ] || fail "clean refusal must not invoke an installed callback"
+  IPKG_INSTROOT="$work/offline" PKG_UPGRADE=1 sh "$work/preinst" upgrade 2.7.6
   ln -s "$work/journal" "$work/recover"
-  sh "$work/preinst"
+  PKG_UPGRADE=1 sh "$work/preinst" upgrade 2.7.6
   rm "$work/recover"
+  [ ! -e "$work/restore.log" ] || fail "offline or managed upgrade must not invoke recovery"
+  if PKG_UPGRADE=1 sh "$work/preinst" upgrade 2.7.6 > "$work/log" 2>&1; then
+    fail "restoring the previous service must not allow the unsupported IPK upgrade"
+  fi
+  grep -Fxq package_postinst "$work/restore.log" || fail "IPK preinst must restore after the old prerm"
+  rm "$work/restore.log"
   printf '#!/bin/sh\nprintf "xrust version 0.0.45\\nFeatures: fixture\\n"\n' > "$work/xrust"
   chmod 700 "$work/xrust"
-  sh "$work/preinst"
+  PKG_UPGRADE=1 sh "$work/preinst" upgrade 3.0.2
+  [ ! -e "$work/restore.log" ] || fail "native upgrade must not invoke recovery"
 )
 
 if grep -Rqs 'require("uci")' "$FORKOP_LIB"; then

@@ -66,6 +66,8 @@ UPDATE_HAD_I18N=0
 REPAIR_XRUST=0
 REPAIR_XRUST_ACTIVE=0
 REPAIR_XRUST_LOCK=""
+REPAIR_XRUST_RUNTIME_LOCK=""
+REPAIR_XRUST_QUIESCED=0
 REPAIR_XRUST_PREVIOUS=""
 REPAIR_XRUST_ROLLBACK=""
 
@@ -145,17 +147,9 @@ parse_args() {
     esac
 }
 
-release_xrust_repair_lock() {
-    if [ -n "$REPAIR_XRUST_LOCK" ] &&
-        [ "$(cat "$REPAIR_XRUST_LOCK/pid" 2>/dev/null)" = "$$" ]; then
-        rm -f "$REPAIR_XRUST_LOCK/pid" && rmdir "$REPAIR_XRUST_LOCK" || return 1
-    fi
-    REPAIR_XRUST_LOCK=""
-}
-
 cleanup() {
     rollback_xrust_repair
-    release_xrust_repair_lock || warn "Could not release the Xrust repair lock"
+    release_xrust_repair_locks || warn "Could not release the Xrust repair locks"
     rollback_current_update
     rollback_fresh_pinned_install
     rollback_package_mirror
@@ -3107,32 +3101,78 @@ EOF
     [ "$installed_core" != "$core_package_version" ]
 }
 
+repair_directory_lock() {
+    local lib="${FORKOP_INSTALLER_LIB:-/usr/lib/forkop}"
+    ucode -L "$lib" -e '
+        let fs = require("fs");
+        let locks = require("core.locks");
+        let path = ARGV[1];
+        let owner = ARGV[2];
+        if (ARGV[0] == "acquire")
+            exit(locks.acquire(path, owner) ? 0 : 1);
+        if (trim(fs.readfile(path + "/pid") || "") == owner)
+            locks.release(path);
+        exit(trim(fs.readfile(path + "/pid") || "") == owner ? 1 : 0);
+    ' "$1" "$2" "$$"
+}
+
+repair_service_module() {
+    local lib="${FORKOP_INSTALLER_LIB:-/usr/lib/forkop}" module="$1"
+    shift
+    FORKOP_LIB="$lib" ucode -L "$lib" "$lib/service/$module.uc" "$@"
+}
+
 acquire_xrust_repair_lock() {
-    local lock_dir="$1" owner
-    mkdir -p "${lock_dir%/*}" || return 1
-    {
-        flock -n 9 || return 1
-        if ! mkdir "$lock_dir" 2>/dev/null; then
-            # A lock with no PID may be in the middle of acquisition.
-            IFS= read -r owner 2>/dev/null < "$lock_dir/pid" || return 1
-            case "$owner" in ''|0*|*[!0-9]*) return 1 ;; esac
-            if kill -0 "$owner" 2>/dev/null || [ "$(cat "$lock_dir/pid" 2>/dev/null)" != "$owner" ]; then
-                return 1
-            fi
-            rm -f "$lock_dir/pid" && rmdir "$lock_dir" && mkdir "$lock_dir" || return 1
-        fi
-        if ! printf '%s\n' "$$" > "$lock_dir/pid"; then
-            rmdir "$lock_dir"
-            return 1
-        fi
-    } 9> "$lock_dir.guard" || return 1
+    local lock_dir="$1"
+    mkdir -p "${lock_dir%/*}" && repair_directory_lock acquire "$lock_dir" || return 1
     REPAIR_XRUST_LOCK="$lock_dir"
+}
+
+acquire_xrust_repair_quiesce() {
+    local runtime_lock="${FORKOP_RELOAD_LOCK_DIR:-/var/run/forkop.reload.lock}"
+    repair_service_module ui begin-package-upgrade-quiesce "$$" || return 1
+    REPAIR_XRUST_QUIESCED=1
+    # The quiesce marker blocks new LuCI jobs. Direct and scheduled starts
+    # use the lifecycle lock, which also protects the rollback on failure.
+    repair_service_module ui service-action-idle &&
+        repair_directory_lock acquire "$runtime_lock" || return 1
+    REPAIR_XRUST_RUNTIME_LOCK="$runtime_lock"
+}
+
+release_xrust_repair_runtime() {
+    if [ -n "$REPAIR_XRUST_RUNTIME_LOCK" ]; then
+        repair_directory_lock release "$REPAIR_XRUST_RUNTIME_LOCK" || return 1
+        REPAIR_XRUST_RUNTIME_LOCK=""
+    fi
+}
+
+release_xrust_repair_locks() {
+    local result=0
+    release_xrust_repair_runtime || result=1
+    if [ "$REPAIR_XRUST_QUIESCED" -eq 1 ]; then
+        if repair_service_module ui clear-package-upgrade-quiesce-if-owner "$$"; then
+            REPAIR_XRUST_QUIESCED=0
+        else
+            result=1
+        fi
+    fi
+    if [ -n "$REPAIR_XRUST_LOCK" ]; then
+        if repair_directory_lock release "$REPAIR_XRUST_LOCK"; then
+            REPAIR_XRUST_LOCK=""
+        else
+            result=1
+        fi
+    fi
+    return "$result"
 }
 
 repair_xrust() {
     local repair_tag repair_format=ipk repair_arch
     local target_payload rollback_payload flash_free backup other_core
-    [ -x /etc/init.d/forkop ] && [ -s /etc/config/forkop ] ||
+    local service="${FORKOP_INSTALLER_INIT:-/etc/init.d/forkop}"
+    local config_dir="${FORKOP_INSTALLER_CONFIG_DIR:-/etc/config}"
+    local backup_dir="${FORKOP_INSTALLER_BACKUP_DIR:-/etc/forkop-backups}"
+    [ -x "$service" ] && [ -s "$config_dir/forkop" ] ||
         fail "Xrust repair requires an installed Forkop 3.x configuration"
     command_exists ucode || fail "The installed Forkop ucode runtime is missing"
     acquire_xrust_repair_lock "${UPDATES_LOCK_DIR:-${FORKOP_RUNTIME_STATE_DIR:-/var/run/forkop}/component-action.lock}" ||
@@ -3151,7 +3191,7 @@ repair_xrust() {
     if [ "$REPAIR_XRUST_PREVIOUS" = "$core_package_version" ] && pinned_xrust_binary_matches; then
         msg "Forkop $repair_tag already has Xrust $FORKOP_XRUST_VERSION"
     else
-        ! /etc/init.d/forkop status >/dev/null 2>&1 ||
+        ! "$service" status >/dev/null 2>&1 ||
             fail "Forkop is running with another Xrust version. Stop it before repairing the core."
         for other_core in sing-box sing-box-x sing-box-tiny sing-box-extended; do
             ! pkg_is_installed "$other_core" ||
@@ -3179,9 +3219,17 @@ repair_xrust() {
         flash_free="$(df -Pk /usr/bin | tail -n 1 | awk '{print $4}')"
         [ "$flash_free" -ge "$((target_payload + 256))" ] 2>/dev/null ||
             fail "Not enough flash to replace Xrust and keep rollback space"
-        mkdir -p /etc/forkop-backups &&
-            backup="$(mktemp /etc/forkop-backups/forkop-before-xrust.XXXXXX)" &&
-            cp /etc/config/forkop "$backup" || fail "Cannot save the Forkop configuration backup"
+        acquire_xrust_repair_quiesce ||
+            fail "Another Forkop service action is in progress. Retry the Xrust repair after it finishes."
+        [ "$(cat "$REPAIR_XRUST_LOCK/pid" 2>/dev/null)" = "$$" ] ||
+            fail "Another Forkop component action is in progress"
+        if "$service" status >/dev/null 2>&1 ||
+            [ "$(repair_service_module state sing-box-process-count)" != "0" ]; then
+            fail "Forkop or Xrust is running. Stop Forkop before repairing the core."
+        fi
+        mkdir -p "$backup_dir" &&
+            backup="$(mktemp "$backup_dir/forkop-before-xrust.XXXXXX")" &&
+            cp "$config_dir/forkop" "$backup" || fail "Cannot save the Forkop configuration backup"
         msg "Forkop configuration backup: $backup"
 
         REPAIR_XRUST_ACTIVE=1
@@ -3189,10 +3237,14 @@ repair_xrust() {
             [ "$(pinned_xrust_installed_version)" = "$core_package_version" ] &&
             pinned_xrust_binary_matches || fail "Installing the exact Xrust package failed"
         REPAIR_XRUST_ACTIVE=0
+        release_xrust_repair_runtime || fail "Could not release the Forkop runtime lock after Xrust repair"
         msg "Installed Xrust $FORKOP_XRUST_VERSION for Forkop $repair_tag"
     fi
 
-    if ! /etc/init.d/forkop status >/dev/null 2>&1; then
+    # An ordinary update must capture the same running state it would have
+    # seen without the repair. Explicit repair still checks service startup.
+    [ "$REPAIR_XRUST" -eq 1 ] || return 0
+    if ! "$service" status >/dev/null 2>&1; then
         install_json_ucode installer-start-forkop </dev/null &&
             install_json_ucode installer-wait-forkop-ready </dev/null ||
             fail "The pinned Xrust is installed. Forkop could not start; check the Forkop log in LuCI."
@@ -3531,7 +3583,7 @@ main() {
         check_system
         normalize_mirror_base_url
         repair_xrust
-        release_xrust_repair_lock || fail "Could not release the Xrust repair lock"
+        release_xrust_repair_locks || fail "Could not release the Xrust repair locks"
         [ "$REPAIR_XRUST" -ne 1 ] || return 0
     fi
     sync_time
