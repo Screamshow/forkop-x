@@ -550,8 +550,13 @@ function wan_up_action(runtime_running_value, service_enabled_value, retry_pendi
     return retry_start_on_wan_up_action(runtime_running_value, service_enabled_value, retry_pending_value);
 }
 
-function handle_wan_up(owner_pid) {
+function handle_wan_up(owner_pid, interface_name) {
     let settings = uci_settings();
+    interface_name = as_string(interface_name) || "wan";
+    let monitored = badwan_interface_monitored(settings, interface_name);
+    if (interface_name != "wan" && !monitored)
+        return 0;
+
     let running = runtime_is_running() ? "1" : "0";
     let enabled = service_is_enabled() ? "1" : "0";
     let restored = wan_up_restore_routing_action(running, enabled) == "restore_routing" &&
@@ -560,7 +565,7 @@ function handle_wan_up(owner_pid) {
         running,
         enabled,
         start_retry_pending(START_RETRY_FILE) ? "1" : "0",
-        badwan_interface_monitored(settings, "wan") ? "1" : "0",
+        monitored ? "1" : "0",
         restored
     );
 
@@ -844,7 +849,7 @@ function trigger_plan(settings) {
             iface = trim(iface);
             if (iface == "" || iface == "wan")
                 continue;
-            print("interface\tinterface.*.up\t", iface, "\t", SERVICE_INIT, "\treload\t\n");
+            print("interface\tinterface.*.up\t", iface, "\t", SERVICE_INIT, "\thandle_wan_up\t", iface, "\n");
         }
     }
 }
@@ -858,7 +863,7 @@ else if (mode == "status-service")
 else if (mode == "retry-start-on-wan-up")
     exit(retry_start_on_wan_up(ARGV[1]));
 else if (mode == "handle-wan-up")
-    exit(handle_wan_up(ARGV[1]));
+    exit(handle_wan_up(ARGV[1], ARGV[2]));
 else if (mode == "retry-start-on-wan-up-action")
     print(retry_start_on_wan_up_action(ARGV[1], ARGV[2], ARGV[3]), "\n");
 else if (mode == "wan-up-action")

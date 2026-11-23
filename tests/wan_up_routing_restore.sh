@@ -40,6 +40,14 @@ initd_ucode() { ucode -L "$FORKOP_LIB" "$INITD_UC" "$@"; }
 [ "$(initd_ucode wan-up-action 1 1 0 1)" = reload ] ||
   fail 'a monitored WAN under a running Forkop no longer reloads'
 
+printf '%s\n' '{"settings":{"enable_badwan_interface_monitoring":"1","badwan_monitored_interfaces":["4G_modem"],"badwan_reload_delay":"5000"}}' >"$WORK_DIR/settings.json"
+plan="$(initd_ucode trigger-plan-fixture "$WORK_DIR/settings.json")"
+grep -Fxq $'delay\t5000' <<<"$plan" || fail 'the configured monitor delay was lost'
+grep -Eq $'^interface\tinterface\\.\\*\\.up\t4G_modem\t[^\t]+\thandle_wan_up\t4G_modem$' <<<"$plan" ||
+  fail 'the monitored modem does not enter the WAN recovery handler with its actual interface name'
+grep -Eq $'^interface\tinterface\\.\\*\\.up\twan\t[^\t]+\thandle_wan_up\t$' <<<"$plan" ||
+  fail 'the default WAN can no longer retry a failed start'
+
 # The hook asks lifecycle, and only while the runtime does not look running.
 handle_body="$(sed -n '/^function handle_wan_up(/,/^}/p' "$INITD_UC")"
 grep -Fq 'wan_up_restore_routing_action(running, enabled) == "restore_routing" &&' <<<"$handle_body" ||

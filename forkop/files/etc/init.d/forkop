@@ -129,7 +129,7 @@ retry_start_on_wan_up() {
 }
 
 handle_wan_up() {
-    initd_ucode handle-wan-up "$$"
+    initd_ucode handle-wan-up "$$" "$1"
 }
 
 service_triggers() {
