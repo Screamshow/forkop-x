@@ -8,33 +8,46 @@ mirror=${mirror%/}
 case "$mode" in install|migrate) ;; *) exit 2 ;; esac
 case "$mirror" in https://*) ;; *) echo 'Missing HTTPS mirror URL' >&2; exit 2 ;; esac
 backend=/opt/zapret-manager-luci/backend.sh
+rpc=/usr/libexec/rpcd/zapret-manager
 repo=https://raw.githubusercontent.com/Screamshow/Zapret-Manager/main
 unchanged() { echo 'FORKOP_ZM_CHANGED=0'; exit 0; }
-owned() {
-    grep -Eq "https://[^[:space:]\"')]*raw[.]githubusercontent[.]com/(StressOzz|Screamshow)/Zapret-Manager/(refs/heads/)?main/(Zapret-Manager|ZapretManager_LuCI)[.]sh([[:space:]\"')]|$)" "$1"
+preserve_external() {
+    echo 'Keeping independently managed Zapret Manager'
+    unchanged
+}
+fork_panel() {
+    [ -f "$backend" ] && grep -Eq '^ZM_SCRIPT_URL="https://raw[.]githubusercontent[.]com/Screamshow/Zapret-Manager/(refs/heads/)?main/ZapretManager_LuCI[.]sh"$' "$backend"
+}
+launcher_source() {
+    grep -Eq "https://[^[:space:]\"')]*raw[.]githubusercontent[.]com/$1/Zapret-Manager/(refs/heads/)?main/(Zapret-Manager|ZapretManager_LuCI)[.]sh([[:space:]\"')]|$)" "$2"
 }
 present=0
-[ ! -e "$backend" ] || present=1
-[ ! -e /usr/libexec/rpcd/zapret-manager ] || present=1
+if [ -e "$backend" ] || [ -L "$backend" ] || [ -e "$rpc" ] || [ -L "$rpc" ]; then
+    # Only manage panels with our update source, even if the launchers were
+    # left behind by a previous installation of our fork.
+    fork_panel || preserve_external
+    present=1
+fi
 for p in /usr/bin/zms /usr/bin/zmsA /usr/bin/zmw; do
     [ ! -L "$p" ] || { echo "Symlink launcher: $p; no files changed" >&2; exit 1; }
     if [ -e "$p" ]; then
-        owned "$p" || { echo "Foreign launcher: $p; no files changed" >&2; exit 1; }
+        if launcher_source StressOzz "$p"; then preserve_external; fi
+        launcher_source Screamshow "$p" || { echo "Foreign launcher: $p; no files changed" >&2; exit 1; }
         present=1
     fi
 done
 [ "$mode" != migrate ] || [ "$present" = 1 ] || unchanged
 ready() {
-    [ -x "$backend" ] && [ -x /usr/libexec/rpcd/zapret-manager ] || return 1
+    [ -x "$backend" ] && [ -x "$rpc" ] || return 1
     grep -qx 'ZM_FLAVOR="forkop-five-section-v1"' "$backend" || return 1
-    grep -Eq '^ZM_SCRIPT_URL="https://raw.githubusercontent.com/Screamshow/Zapret-Manager/(refs/heads/)?main/ZapretManager_LuCI.sh"$' "$backend" || return 1
+    fork_panel || return 1
     for page in dashboard strategy zapret2 hosts terminal; do
         [ -s "/www/luci-static/resources/view/zapret-manager/$page.js" ] || return 1
     done
     [ -s /www/zm/app.js ] && [ -s /www/zm/app.css ] && [ -s /www/zm-webui.html ] || return 1
     [ -s /usr/share/luci/menu.d/luci-app-zapret-manager.json ] || return 1
     [ -s /usr/share/rpcd/acl.d/luci-app-zapret-manager.json ] || return 1
-    sh -n "$backend" && sh -n /usr/libexec/rpcd/zapret-manager || return 1
+    sh -n "$backend" && sh -n "$rpc" || return 1
     # Validate installed routes, not just download success or nonempty files.
     ucode -e '
 let fs=require("fs"), menu=json(fs.readfile(ARGV[0]));
@@ -112,10 +125,28 @@ if [ "$mode" = migrate ] && ready; then need_install=0; fi
 if [ "$need_install" = 1 ]; then
     get "$mirror/zapret-manager/proxy/raw.githubusercontent.com/Screamshow/Zapret-Manager/main/ZapretManager_LuCI.sh" ||
         get "$repo/ZapretManager_LuCI.sh" || { echo 'No compatible public Forkop manager installer available' >&2; exit 1; }
-    if ready; then
-        installed=$(sed -n 's/^ZM_VERSION="\([0-9.]*\)"$/\1/p' "$backend" | head -n1)
-        latest=$(sed -n 's/^# Version: \([0-9.]*\)$/\1/p' "$work/installer" | head -n1)
-        if ! ucode -e 'let a=split(ARGV[0],"."),b=split(ARGV[1],"."); for(let i=0;i<length(a)||i<length(b);i++){let x=int(a[i]||0),y=int(b[i]||0);if(x!=y)exit(x>y?0:1);}exit(1);' "$latest" "$installed"; then need_install=0; fi
+    latest=$(sed -nE 's/^# Version: ([0-9]+(\.[0-9]+)*)$/\1/p' "$work/installer" | head -n1)
+    [ -n "$latest" ] || { echo 'Cannot determine Zapret Manager installer version' >&2; exit 1; }
+    if [ -e "$backend" ]; then
+        # A repair of our own panel must also respect the installed version.
+        installed=$(sed -nE 's/^ZM_VERSION="([0-9]+(\.[0-9]+)*)"$/\1/p' "$backend" | head -n1)
+        [ -n "$installed" ] || { echo 'Cannot determine installed Zapret Manager version' >&2; exit 1; }
+        order=$(ucode -e '
+let a=split(ARGV[0],"."), b=split(ARGV[1],".");
+for (let i=0; i<length(a) || i<length(b); i++) {
+    let x=int(a[i] || 0, 10), y=int(b[i] || 0, 10);
+    if (x != y) { print(x < y ? "older" : "newer"); exit(0); }
+}
+print("equal");
+' "$latest" "$installed")
+        case "$order" in
+            older)
+                echo "Keeping installed Zapret Manager $installed (Forkop installer: $latest)"
+                unchanged ;;
+            equal) if ready; then need_install=0; fi ;;
+            newer) ;;
+            *) exit 1 ;;
+        esac
     fi
 fi
 if [ "$need_install" = 0 ] && launchers_ready; then unchanged; fi

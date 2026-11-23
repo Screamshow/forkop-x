@@ -35,12 +35,12 @@ chmod 0755 "$box/usr/bin/"*
 for svc in rpcd uhttpd cron; do printf '#!/bin/sh\nexit 0\n' > "$box/etc/init.d/$svc"; chmod 0755 "$box/etc/init.d/$svc"; done
 cat > "$box/fixture" <<'EOF'
 #!/bin/sh
-# Version: 4.71.1
+# Version: 4.71.7
 # Forkop-Manager-Contract: five-section-v1
 mkdir -p /opt/zapret-manager-luci /usr/libexec/rpcd /www/luci-static/resources/view/zapret-manager /www/zm /usr/share/luci/menu.d /usr/share/rpcd/acl.d
 cat > /opt/zapret-manager-luci/backend.sh <<'BACKEND'
 #!/bin/sh
-ZM_VERSION="4.71.1"
+ZM_VERSION="4.71.7"
 ZM_FLAVOR="forkop-five-section-v1"
 ZM_SCRIPT_URL="https://raw.githubusercontent.com/Screamshow/Zapret-Manager/main/ZapretManager_LuCI.sh"
 BACKEND
@@ -63,52 +63,101 @@ find "$box/etc" -type f -exec sha256sum {} \; | sort > "$work/settings.sha"
 # No manager: no network or installation on package upgrade.
 run normal migrate
 [ ! -e "$box/downloads" ]
-# Lower, equal and higher upstream versions must all migrate by provenance.
-for version in 4.0 4.71.1 99.0; do
-    rm -rf "$box/opt" "$box/usr/libexec" "$box/www" "$box/usr/share"
-    mkdir -p "$box/opt/zapret-manager-luci"
-    printf 'ZM_VERSION="%s"\nZM_SCRIPT_URL="https://raw.githubusercontent.com/StressOzz/Zapret-Manager/main/ZapretManager_LuCI.sh"\n' "$version" > "$box/opt/zapret-manager-luci/backend.sh"
-    for name in zms zmsA zmw; do printf '#!/bin/sh\nsh <(wget -q -O - https://raw.githubusercontent.com/StressOzz/Zapret-Manager/main/Zapret-Manager.sh)\n' > "$box/usr/bin/$name"; done
-    run fallback migrate
-    grep -q Screamshow "$box/usr/bin/zmw"
-    before=$(wc -l < "$box/downloads")
-    run normal migrate
-    [ "$before" = "$(wc -l < "$box/downloads")" ]
-    # Explicit install may check upstream but must not replace an equal build.
-    run normal install
-    [ "$before" -lt "$(wc -l < "$box/downloads")" ]
+
+assert_external_preserved() {
+    find "$box" -type f -exec sha256sum {} \; | sort > "$work/external.before"
+    for mode in migrate install; do
+        output=$(run normal "$mode")
+        if ! printf '%s\n' "$output" | grep -qx 'FORKOP_ZM_CHANGED=0'; then
+            echo "Independently managed Zapret Manager was replaced in $mode mode:" >&2
+            printf '%s\n' "$output" >&2
+            exit 1
+        fi
+        [ ! -e "$box/downloads" ]
+        find "$box" -type f -exec sha256sum {} \; | sort > "$work/external.after"
+        cmp "$work/external.before" "$work/external.after"
+    done
+}
+backend=$box/opt/zapret-manager-luci/backend.sh
+mkdir -p "${backend%/*}" "$box/usr/libexec/rpcd"
+printf '#!/bin/sh\n' > "$box/usr/libexec/rpcd/zapret-manager"
+for name in zms zmsA zmw; do
+    printf '#!/bin/sh\nsh <(wget -q -O - https://raw.githubusercontent.com/StressOzz/Zapret-Manager/main/Zapret-Manager.sh)\n' > "$box/usr/bin/$name"
 done
+# The original 5.x, older and equal upstream versions keep their own source.
+for version in 5.0.12 4.0 4.71.7; do
+    printf 'ZM_VERSION="%s"\nZM_SCRIPT_URL="https://raw.githubusercontent.com/StressOzz/Zapret-Manager/refs/heads/main/ZapretManager_LuCI.sh"\n' "$version" > "$backend"
+    assert_external_preserved
+done
+# Recognize an upstream CLI without a Web/LuCI panel.
+rm "$backend" "$box/usr/libexec/rpcd/zapret-manager"
+assert_external_preserved
+# An upstream backend takes precedence over leftover fork launchers.
+printf 'ZM_VERSION="5.0.12"\n' > "$backend"
+for name in zms zmsA zmw; do sed -i 's/StressOzz/Screamshow/g' "$box/usr/bin/$name"; done
+assert_external_preserved
+rm "$backend"
+printf '#!/bin/sh\n' > "$box/usr/libexec/rpcd/zapret-manager"
+assert_external_preserved
+
+# A fresh explicit installation still uses the fork and supports mirror fallback.
+rm "$box/usr/libexec/rpcd/zapret-manager" "$box/usr/bin/zms" "$box/usr/bin/zmsA" "$box/usr/bin/zmw"
+run fallback install
+grep -q Screamshow "$box/usr/bin/zmw"
+grep -qx 'ZM_VERSION="4.71.7"' "$backend"
+before=$(wc -l < "$box/downloads")
+run normal migrate
+[ "$before" = "$(wc -l < "$box/downloads")" ]
+output=$(run normal install)
+printf '%s\n' "$output" | grep -qx 'FORKOP_ZM_CHANGED=0'
+[ "$before" -lt "$(wc -l < "$box/downloads")" ]
+
 # A newer healthy fork with a missing launcher is repaired offline, retaining
 # both backend contents and version even when public sources are unavailable.
-sed -i 's/4.71.1/99.0/g' "$box/opt/zapret-manager-luci/backend.sh"
+sed -i 's/4\.71\.7/5.0.12/' "$backend"
 rm "$box/usr/bin/zmsA"
 before=$(wc -l < "$box/downloads")
 run downloadfail migrate
 [ "$before" = "$(wc -l < "$box/downloads")" ]
-grep -q 'ZM_VERSION="99.0"' "$box/opt/zapret-manager-luci/backend.sh"
+grep -qx 'ZM_VERSION="5.0.12"' "$backend"
 [ -x "$box/usr/bin/zmsA" ]
-# Partial panel, exact rollback of old source, launchers, modes and settings.
 snapshot_content() {
     find "$box/opt" "$box/etc" "$box/www" "$box/usr/share" "$box/usr/libexec" \
         "$box/usr/bin/zms" "$box/usr/bin/zmsA" "$box/usr/bin/zmw" \
         -type f -exec sha256sum {} \; | sort
 }
+# An incomplete fork panel must not be downgraded during repair.
+sed -i '/^ZM_FLAVOR=/d' "$backend"
+snapshot_content > "$work/content.before"
+for mode in migrate install; do
+    output=$(run normal "$mode")
+    printf '%s\n' "$output" | grep -qx 'FORKOP_ZM_CHANGED=0'
+    snapshot_content > "$work/content.after"
+    cmp "$work/content.before" "$work/content.after"
+done
+# Partial fork panel, exact rollback of files, launchers, modes and settings.
+archive_managed_paths() {
+    tar -cpf "$1" -C "$box" opt/zapret-manager-luci usr/bin/zms usr/bin/zmsA usr/bin/zmw \
+        etc/config/zapret etc/config/zapret2 etc/config/uhttpd etc/hosts etc/crontabs/root
+}
 for scenario in missingdependency downloadfail installfail rpcfail; do
-    printf 'ZM_VERSION="4.71"\nZM_SCRIPT_URL="https://raw.githubusercontent.com/StressOzz/Zapret-Manager/main/ZapretManager_LuCI.sh"\n' > "$box/opt/zapret-manager-luci/backend.sh"
-    chmod 0700 "$box/opt/zapret-manager-luci/backend.sh"
-    tar -cpf "$work/before.tar" -C "$box" opt usr/bin/zms usr/bin/zmsA usr/bin/zmw etc
+    printf 'ZM_VERSION="4.71"\nZM_SCRIPT_URL="https://raw.githubusercontent.com/Screamshow/Zapret-Manager/main/ZapretManager_LuCI.sh"\n' > "$backend"
+    chmod 0700 "$backend"
+    archive_managed_paths "$work/before.tar"
     snapshot_content > "$work/content.before"
     if [ "$scenario" = missingdependency ]; then rm "$box/usr/lib/uhttpd_ubus.so"; fi
     if run "$scenario" migrate; then echo "Unexpected success: $scenario"; exit 1; fi
-    tar -cpf "$work/after.tar" -C "$box" opt usr/bin/zms usr/bin/zmsA usr/bin/zmw etc
+    archive_managed_paths "$work/after.tar"
     tar -tvf "$work/before.tar" | sort > "$work/before.list"
     tar -tvf "$work/after.tar" | sort > "$work/after.list"
     cmp "$work/before.list" "$work/after.list"
     snapshot_content > "$work/content.after"
     cmp "$work/content.before" "$work/content.after"
-    grep -q StressOzz "$box/opt/zapret-manager-luci/backend.sh"
+    grep -qx 'ZM_VERSION="4.71"' "$backend"
     : > "$box/usr/lib/uhttpd_ubus.so"
 done
+run normal migrate
+grep -qx 'ZM_VERSION="4.71.7"' "$backend"
 echo '#!/bin/sh custom launcher' > "$box/usr/bin/zms"
 if run normal install; then echo 'Foreign launcher overwritten'; exit 1; fi
 grep -q custom "$box/usr/bin/zms"
@@ -148,5 +197,5 @@ rm -rf "$box/opt" "$box/usr/libexec/rpcd/zapret-manager"
 rm -f "$box/usr/bin/zms" "$box/usr/bin/zmsA" "$box/usr/bin/zmw"
 TEST_SCENARIO=queuebusy chroot "$box" /bin/sh /upgrade queue
 [ ! -e "$box/attempts" ]
-echo 'PASS: absent, historical versions, fallback, idempotence, download/install/RPC rollback, settings, foreign launcher'
+echo 'PASS: absent, independently managed panels and CLI, fork install/repair, downgrade prevention, fallback, idempotence, rollback'
 echo 'PASS: package migration worker waits for lock and preserves absence'

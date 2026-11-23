@@ -1035,8 +1035,8 @@ function install_zapret_manager(action) {
         action_fail(component, action, "Zapret Manager migration failed; see component log and recovery result", current_version);
     let changed = index(last_logged_output, "FORKOP_ZM_CHANGED=1") >= 0 ? 1 : 0;
     clear_version_caches();
-    action_success(component, action, "Zapret Manager backend, RPC and launchers verified",
-        current_version, zapret_manager_web_installed_version(), changed, "latest");
+    action_success(component, action, changed ? "Zapret Manager backend, RPC and launchers verified" : "Zapret Manager installation preserved",
+        current_version, zapret_manager_web_installed_version(), changed, changed ? "latest" : "installed");
 }
 
 // Remove the web version the way the script's "w" command does.
