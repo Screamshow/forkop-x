@@ -431,6 +431,9 @@ msgstr "Диагностика"
 msgid "Direct connection"
 msgstr "Прямое подключение"
 
+msgid "Direct connections"
+msgstr "Прямые"
+
 msgid "Direct Proxy"
 msgstr "Прямой прокси"
 
@@ -1225,6 +1228,9 @@ msgstr "Нет закрытых подключений"
 
 msgid "No compatible releases available"
 msgstr "Нет совместимых релизов"
+
+msgid "No direct connections"
+msgstr "Нет прямых подключений"
 
 msgid "No online WAN supplies usable DNS"
 msgstr "Нет доступного WAN с подходящими DNS"

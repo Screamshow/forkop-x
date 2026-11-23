@@ -1005,6 +1005,14 @@
     ]
   },
   {
+    "call": "Direct connections",
+    "key": "Direct connections",
+    "places": [
+      "src/forkop/tabs/monitoring/initController.ts:573",
+      "src/forkop/tabs/monitoring/render.ts:29"
+    ]
+  },
+  {
     "call": "Direct Proxy",
     "key": "Direct Proxy",
     "places": [
@@ -2934,6 +2942,13 @@
     "key": "No compatible releases available",
     "places": [
       "src/forkop/tabs/updates/releaseSelector.ts:65"
+    ]
+  },
+  {
+    "call": "No direct connections",
+    "key": "No direct connections",
+    "places": [
+      "src/forkop/tabs/monitoring/initController.ts:987"
     ]
   },
   {
