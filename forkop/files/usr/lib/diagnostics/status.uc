@@ -3,6 +3,7 @@
 let fs = require("fs");
 let mark_rules = require("diagnostics.mark_rules");
 let core_url = require("core.url");
+let core_ip = require("core.ip");
 
 function as_string(value) {
     return value == null ? "" : "" + value;
@@ -483,42 +484,23 @@ function json_error(message) {
     write_json({ error: as_string(message) });
 }
 
-function mask_ipv6_line(line) {
-    let matched = match(line, /([0-9a-fA-F]+:[0-9a-fA-F]+:[0-9a-fA-F]+):.*/);
-    return matched ? matched[1] + ":XXXX:XXXX:XXXX" : line;
-}
-
 function render_proxy_response_ip_mask() {
-    let response = read_stdin();
-    let lines = split(response, "\n");
     let ipv4_lines = [];
-    let ipv6_like = false;
-
-    for (let line in lines) {
-        let matched = match(line, /^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)$/);
-        if (matched)
-            push(ipv4_lines, "X.X.X." + matched[4]);
-
-        if (match(line, /^[0-9a-fA-F:]*::[0-9a-fA-F:]*$/) || match(line, /^[0-9a-fA-F:]+$/))
-            ipv6_like = true;
-    }
-
-    if (length(ipv4_lines) > 0) {
-        for (let line in ipv4_lines)
-            print_line(line);
-        return;
-    }
-
-    if (ipv6_like) {
-        for (let i = 0; i < length(lines); i++) {
-            if (i == length(lines) - 1 && lines[i] == "")
-                continue;
-            print_line(mask_ipv6_line(lines[i]));
+    let ipv6_lines = [];
+    for (let raw in split(read_stdin(), "\n")) {
+        let line = trim(raw);
+        if (core_ip.valid_ipv4(line, false, true))
+            push(ipv4_lines, "X.X.X." + split(line, ".")[3]);
+        else {
+            let bytes = iptoarr(line);
+            if (length(bytes) == 16)
+                push(ipv6_lines, sprintf("%x:%x:%x:XXXX:XXXX:XXXX",
+                    bytes[0] * 256 + bytes[1], bytes[2] * 256 + bytes[3], bytes[4] * 256 + bytes[5]));
         }
-        return;
     }
-
-    exit(1);
+    let lines = length(ipv4_lines) ? ipv4_lines : ipv6_lines;
+    if (!length(lines)) exit(1);
+    for (let line in lines) print_line(line);
 }
 
 function service_list_instance_running(name) {
@@ -809,6 +791,8 @@ function file_first_line(path, fallback) {
 }
 
 let masked_sing_box_keys = {
+    url: true,
+    health_url: true,
     auth_key: true,
     control_url: true,
     exit_node: true,

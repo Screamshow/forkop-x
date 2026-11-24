@@ -121,3 +121,39 @@ print("Subscription readiness and rollback fault checks passed\n");
 UC
 } > "$WORK/subscription.uc"
 ucode -L "$FORKOP_LIB" "$WORK/subscription.uc"
+
+{
+cat <<'UC'
+let DIAGNOSTICS_UC="diagnostics", puts=[], reads=0, fail=true, offline=false;
+function log_message(message,level) {}
+function clash_api_json(action) {
+    reads++;
+    if (offline) return null;
+    return {proxies:{group:{type:"Selector",now:"new",all:["old","new"]}}};
+}
+function module_success(module,args) {push(puts,args[3]); return !fail && length(puts)>1;}
+UC
+sed -n '/^function as_string(/,/^}/p; /^function object_or_empty(/,/^}/p; /^function array_or_empty(/,/^}/p; /^function string_array_contains(/,/^}/p; /^function selector_restore_pairs(/,/^}/p; /^function restore_selector_state(/,/^}/p' "$FORKOP_LIB/service/lifecycle.uc"
+cat <<'UC'
+assert(restore_selector_state({group:"old"}) == 1 && length(puts)==2 && reads==2, "permanent PUT failure");
+puts=[]; reads=0; fail=false;
+assert(restore_selector_state({group:"old"}) == 0 && length(puts)==2 && reads==2, "retry PUT failure");
+puts=[]; reads=0; offline=true;
+assert(restore_selector_state({group:"old"}) == 1 && !length(puts) && reads==2, "unavailable selector API");
+assert(restore_selector_state({})==0 && reads==2, "empty snapshot should need no API");
+UC
+} > "$WORK/selectors.uc"
+ucode "$WORK/selectors.uc"
+
+mkdir -p "$WORK/bin"
+cat > "$WORK/bin/curl" <<'SH'
+#!/bin/sh
+printf '%s\n' "$@" > "$SELECTOR_CURL_ARGS"
+printf '\n204'
+SH
+chmod +x "$WORK/bin/curl"
+FORKOP_LIB="$FORKOP_LIB" FORKOP_UCI_STATE_FILE="$WORK/uci" PATH="$WORK/bin:$PATH" \
+ SELECTOR_CURL_ARGS="$WORK/curl.args" ucode -L "$FORKOP_LIB" "$FORKOP_LIB/diagnostics/runtime.uc" \
+ clash-api set_group_proxy group old > "$WORK/put.result"
+awk 'prev == "--max-time" && $0 + 0 > 0 { bounded=1 } { prev=$0 } END { exit !bounded }' "$WORK/curl.args"
+printf 'Selector recovery retries and bounded PUT checks passed\n'

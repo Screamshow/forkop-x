@@ -2,7 +2,7 @@ const UI_ACTION_NOTIFICATION_STORAGE_KEY =
   'forkop:owned-ui-action-notifications:v1';
 const MAX_STORED_UI_ACTION_NOTIFICATIONS = 100;
 
-export type UiActionNotificationKind = 'component' | 'subscription';
+export type UiActionNotificationKind = 'component' | 'subscription' | 'latency';
 
 interface StoredUiActionNotification {
   kind: UiActionNotificationKind;
@@ -37,7 +37,9 @@ function isStoredNotification(
   const candidate = value as Partial<StoredUiActionNotification>;
 
   return (
-    (candidate.kind === 'component' || candidate.kind === 'subscription') &&
+    (candidate.kind === 'component' ||
+      candidate.kind === 'subscription' ||
+      candidate.kind === 'latency') &&
     typeof candidate.jobId === 'string' &&
     typeof candidate.notified === 'boolean' &&
     typeof candidate.updatedAt === 'number'

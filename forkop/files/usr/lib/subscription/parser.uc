@@ -386,14 +386,17 @@ function reality_public_key_valid(value) {
     return match(as_string(value), /^[A-Za-z0-9_-]{43}$/) != null;
 }
 
+function subscription_reality_valid(outbound) {
+    let reality = outbound?.tls?.reality;
+    return type(reality) != "object" || reality.enabled === false || reality_public_key_valid(reality.public_key);
+}
+
 function validate_subscription_value(value) {
     if (type(value) != "object" || type(value.outbounds) != "array" || length(value.outbounds) == 0)
         return false;
 
     for (let outbound in value.outbounds) {
-        let tls = type(outbound) == "object" && type(outbound.tls) == "object" ? outbound.tls : {};
-        let reality = tls.reality;
-        if (type(reality) == "object" && reality.enabled !== false && !reality_public_key_valid(reality.public_key))
+        if (!subscription_reality_valid(outbound))
             return false;
     }
 
@@ -3281,6 +3284,68 @@ function normalize_content_file(input_file, output_file) {
     return data == null ? false : normalize_content_data(data, output_file, 0);
 }
 
+function discard_invalid_reality_outbounds(outbounds) {
+    let available = {}, detours = {}, groups = {}, members = [];
+    let removed = {}, queue = [];
+    for (let i = 0; i < length(outbounds); i++) {
+        let outbound = outbounds[i], tag = sing_box_outbound_tag(outbound);
+        if (tag != "")
+            available[tag] = (available[tag] || 0) + 1;
+        if (!subscription_reality_valid(outbound))
+            push(queue, i);
+        if (outbound.detour) {
+            detours[outbound.detour] ||= [];
+            push(detours[outbound.detour], i);
+        }
+        if ((outbound.type == "selector" || outbound.type == "urltest") && type(outbound.outbounds) == "array") {
+            members[i] = length(outbound.outbounds);
+            for (let member in outbound.outbounds) {
+                groups[member] ||= [];
+                push(groups[member], i);
+            }
+        }
+    }
+
+    // Losing a mandatory detour invalidates its dependent. A selector or
+    // URLTest survives until its last member disappears.
+    for (let j = 0; j < length(queue); j++) {
+        let i = queue[j];
+        if (removed[i]) continue;
+        removed[i] = true;
+        let tag = sing_box_outbound_tag(outbounds[i]);
+        if (tag == "" || --available[tag] > 0) continue;
+        for (let dependent in detours[tag] || [])
+            push(queue, dependent);
+        for (let group in groups[tag] || [])
+            if (--members[group] == 0)
+                push(queue, group);
+    }
+
+    let result = [];
+    for (let i = 0; i < length(outbounds); i++) {
+        if (removed[i]) continue;
+        let outbound = outbounds[i];
+        if (members[i] != null && members[i] != length(outbound.outbounds)) {
+            outbound.outbounds = filter(outbound.outbounds, tag => available[tag] !== 0);
+            if (available[outbound.default] === 0)
+                delete outbound.default;
+        }
+        push(result, outbound);
+    }
+    // A broken visible chain may leave a valid, hidden relay behind. Keep
+    // it only if another surviving entry still uses it.
+    let hidden = {};
+    for (let outbound in result)
+        if (outbound.__forkop_hidden && outbound.tag)
+            hidden[outbound.tag] = true;
+    if (length(hidden)) {
+        let catalog = { outbounds: result };
+        require("xrust.outbound_reachability").prune(catalog, hidden);
+        return catalog.outbounds;
+    }
+    return result;
+}
+
 function normalize_content_value(input_file, output_file) {
     let normalize_input = input_file;
     let decoded_tmp = temp_path("forkop-subscription-gzip");
@@ -3297,7 +3362,16 @@ function normalize_content_value(input_file, output_file) {
         return null;
 
     let value = read_json_file(output_file);
-    return validate_subscription_value(value) ? value : null;
+    if (validate_subscription_value(value)) return value;
+    if (type(value?.outbounds) != "array") return null;
+    let valid = discard_invalid_reality_outbounds(value.outbounds);
+    if (!length(valid)) {
+        fs.unlink(output_file);
+        return null;
+    }
+    value.skipped = int(value.skipped || 0) + length(value.outbounds) - length(valid);
+    value.outbounds = valid;
+    return write_json_file(output_file, value) ? value : null;
 }
 
 function normalize_content_validated(input_file, output_file) {

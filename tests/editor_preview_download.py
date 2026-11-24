@@ -169,6 +169,13 @@ with tempfile.TemporaryDirectory(prefix="forkop-preview-test-") as temp:
         preview_root = work / "ui-state"
         preview_root.mkdir()
         preview_id = "editor-integration-test"
+        (preview_root / (preview_id + ".json")).write_text(json.dumps({"sources": [{}] * 17}))
+        before = len(requests)
+        limited = subprocess.run(["ucode", "-L", str(lib), str(LIB / "subscription/editor.uc"),
+                                  "preview", preview_id], env=dict(env, FORKOP_EDITOR_STATE_DIR=str(preview_root)),
+                                 capture_output=True, text=True, check=True, timeout=10)
+        assert json.loads(limited.stdout)["reason"] == "preview_source_limit"
+        assert json.loads(limited.stdout)["limit"] == 16 and len(requests) == before
         (preview_root / (preview_id + ".json")).write_text(json.dumps({"section": "draft", "sources": [{
             "url": "http://preview.invalid/fallback-invalid?token=secret", "download_via_proxy_enabled": "1",
             "download_via_proxy_section": "proxy"}]}))
@@ -283,13 +290,21 @@ with tempfile.TemporaryDirectory(prefix="forkop-preview-test-") as temp:
             state.write_text(common_uci + "forkop.feed=subscription_url\nforkop.feed.section=rule\n"
                              f"forkop.feed.url={base}/fallback-runtime\n")
             before = len(requests)
-            result = update_runtime()
+            batch = work / "private-batch"
+            batch.mkdir(mode=0o700)
+            cache_command("prefetch-direct", "1", "rule", "1", str(batch))
+            assert_fallback_attempts(requests[before:], "/fallback-runtime")
+            fetched = len(requests)
+            result = cache_command("update-request", "1", "rule", "1", "0", str(batch))
+            assert len(requests) == fetched, "locked update downloaded the direct response a second time"
             assert result == "1\t0\t0\t0", (result, requests[before:])
             assert_fallback_attempts(requests[before:], "/fallback-runtime")
             persistent = work / "persistent" / "rule-subscription-1.json"
             runtime = work / "xrust" / "subscriptions" / "rule-subscription-1.json"
             cached = persistent.read_bytes()
             assert runtime.read_bytes() == cached
+            assert cache_command("update-request", "1", "rule", "1", "0", str(batch)) == "0\t0\t0\t1"
+            assert runtime.read_bytes() == cached and len(requests) == fetched, "stale prefetch replaced newer cache"
             profile = json.loads(cached)["__forkop_source_cache"]
             assert profile["user_agent"] == FALLBACK_USER_AGENT
             assert profile["hwid"] == direct["hwid"]
@@ -342,7 +357,21 @@ with tempfile.TemporaryDirectory(prefix="forkop-preview-test-") as temp:
             cache_command("finish-source-update", "rollback")
             assert persistent.read_bytes() == runtime.read_bytes() == working
             assert update_runtime(guarded=True) == "1\t0\t0\t0"
-            cache_command("finish-source-update", "commit")
+            flash = persistent.parent
+            saved_flash = work / "offline-flash"
+            flash.rename(saved_flash)
+            flash.touch()  # deterministic write failure even when running as root
+            try:
+                cache_command("finish-source-update", "commit")
+            except AssertionError:
+                pass
+            else:
+                raise AssertionError("failed flash persistence was reported as a success")
+            assert runtime.read_bytes() == proposed
+            flash.unlink()
+            saved_flash.rename(flash)
+            # The next update begins by recovering interrupted transactions.
+            cache_command("finish-source-update", "rollback")
             assert persistent.read_bytes() == runtime.read_bytes() == proposed
             state.write_text(common_uci + source_uci("feed", f"{base}/changed-source"))
             assert update_runtime(guarded=True) == "1\t0\t0\t0"

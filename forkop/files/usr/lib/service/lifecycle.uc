@@ -443,33 +443,41 @@ function clash_api_json(action, arg1, arg2, arg3) {
 }
 
 function capture_selector_state() {
-    return selector_state_from_proxies_payload(clash_api_json("get_proxies"));
+    let payload = clash_api_json("get_proxies");
+    return type(payload?.proxies) == "object" ? selector_state_from_proxies_payload(payload) : null;
 }
 
 function restore_selector_state(snapshot) {
-    let pairs = selector_restore_pairs(snapshot, clash_api_json("get_proxies"));
-
-    for (let pair in pairs)
-        module_success(DIAGNOSTICS_UC, [ "clash-api", "set_group_proxy", pair.group, pair.proxy, "" ]);
+    if (type(snapshot) != "object")
+        return 1;
+    if (!length(snapshot))
+        return 0;
+    for (let attempt = 0; attempt < 2; attempt++) {
+        if (attempt)
+            sleep(250);
+        let payload = clash_api_json("get_proxies");
+        if (type(payload?.proxies) != "object")
+            continue;
+        let ok = true;
+        for (let pair in selector_restore_pairs(snapshot, payload))
+            if (!module_success(DIAGNOSTICS_UC, [ "clash-api", "set_group_proxy", pair.group, pair.proxy, "" ]))
+                ok = false;
+        if (ok)
+            return 0;
+    }
+    log_message("Could not restore the previous server selection through the Clash API", "error");
+    return 1;
 }
 
 function save_selector_state(path) {
-    let payload = clash_api_json("get_proxies");
-    if (type(payload) != "object" || type(payload.proxies) != "object")
+    let snapshot = capture_selector_state();
+    if (snapshot == null)
         return 1;
-    return common.write_private_file(path, sprintf("%J", selector_state_from_proxies_payload(payload))) != null ? 0 : 1;
+    return common.write_private_file(path, sprintf("%J", snapshot)) != null ? 0 : 1;
 }
 
 function restore_saved_selector_state(path) {
-    let snapshot = read_json_file(path);
-    let payload = clash_api_json("get_proxies");
-    if (type(snapshot) != "object" || type(payload) != "object" || type(payload.proxies) != "object")
-        return 1;
-    let ok = true;
-    for (let pair in selector_restore_pairs(snapshot, payload))
-        if (!module_success(DIAGNOSTICS_UC, [ "clash-api", "set_group_proxy", pair.group, pair.proxy, "" ]))
-            ok = false;
-    return ok ? 0 : 1;
+    return restore_selector_state(read_json_file(path));
 }
 
 function module_background(module_path, args) {
@@ -1701,9 +1709,8 @@ function restart_runtime_for_reload(reason) {
     if (reason == "list-content")
         remove_file(LIST_UPDATE_RELOAD_FILE);
     write_file(WATCHDOG_READY_FILE, "1\n");
-    restore_selector_state(selector_state);
     remove_file(RELOAD_STATE_SNAPSHOT_FILE);
-    return 0;
+    return selector_state == null ? 0 : restore_selector_state(selector_state);
 }
 
 function write_service_trigger_sync_state(changed) {
@@ -2344,11 +2351,13 @@ function restart() {
     // and DNS survive while the core is replaced behind the transition guard.
     if (module_success(STATE_UC, [ "forkop-running", RT_TABLE_NAME, NFT_TABLE_NAME, NFT_FAKEIP_MARK ])) {
         let selector_state = capture_selector_state();
+        if (selector_state == null)
+            log_message("Could not read the current server selection before restarting the runtime", "warn");
         let status = reload("restart", true);
         if (status == 0)
             remove_file(RELOAD_STOPPED_FILE);
-        restore_selector_state(selector_state);
-        return status;
+        let restore_status = restore_selector_state(selector_state);
+        return status || restore_status;
     }
 
     let selector_state = capture_selector_state();
@@ -2379,8 +2388,7 @@ function restart() {
     ])) {
         remove_file(RELOAD_STOPPED_FILE);
         write_file(WATCHDOG_READY_FILE, "1\n");
-        restore_selector_state(selector_state);
-        return 0;
+        return selector_state == null ? 0 : restore_selector_state(selector_state);
     }
 
     log_message("Restart verification failed after Forkop was started; stopping Forkop runtime", "fatal");

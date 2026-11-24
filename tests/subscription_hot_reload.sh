@@ -24,7 +24,7 @@ function module_success(args){
  if(args[1]=="restore"){if(!fail_restore)active="old";return !fail_restore;}
  return true;
 }
-function singbox_runtime_success(args){push(calls,join(" ",args));if(args[0]=="commit-config-stage"){active="new";return !fail_commit;}return true;}
+function xrust_runtime_success(args){push(calls,join(" ",args));if(args[0]=="commit-config-stage"){active="new";return !fail_commit;}return true;}
 UC
 sed -n '/^function subscription_apply_failure(/,/^}/p' "$ROOT/forkop/files/usr/lib/components/updates.uc"
 sed -n '/^function subscription_record_result(/,/^}/p' "$ROOT/forkop/files/usr/lib/components/updates.uc"

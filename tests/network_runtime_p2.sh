@@ -98,10 +98,12 @@ let core_ip = require("core.ip");
 const DIR = ARGV[0] + '/support', CANCELLED = DIR + '/cancelled', SERVICE = '/fixture/support';
 const STATE = ARGV[0] + '/native', STATUS = ARGV[0] + '/native-status';
 const START_DEADLINE = ARGV[0] + '/native-deadline', INIT = '/fixture/native';
-let stop_called = false, start_calls = 0, clock_seconds = 100;
+let stop_called = false, start_calls = 0, clock_seconds = 100, wall_offset = 0;
+let support_running = false;
+function session_service_running() { return support_running; }
 function read_json(path) { return json(fs.readfile(path) || '{}'); }
 function status() { assert(stop_called, "awaited status before revoking the support session"); return {}; }
-function clock(monotonic) { assert(monotonic); return [clock_seconds, 0]; }
+function clock(monotonic) { return [monotonic ? clock_seconds : time() + wall_offset, 0]; }
 function system(command, timeout) {
     if (index(command, SERVICE) >= 0) {
         assert(fs.stat(CANCELLED) != null && fs.stat(DIR + '/auth.key') == null);
@@ -123,6 +125,21 @@ fs.writefile(DIR + '/operation', 'start');
 fs.writefile(DIR + '/auth.key', 'fixture');
 request({operation:'stop'});
 assert(stop_called && fs.readfile(CANCELLED) == '1\n');
+fs.writefile(DIR + '/operation', 'install');
+fs.mkdir(DIR + '/lock');
+function blocked_stop() {
+    try { request({operation:'stop'}); } catch (e) { return true; }
+    return false;
+}
+assert(blocked_stop(), "lost procd startup grace");
+wall_offset = 60;
+support_running = true;
+assert(blocked_stop(), "interrupted a live support installation");
+support_running = null;
+assert(blocked_stop(), "treated ubus failure as a dead worker");
+support_running = false;
+request({operation:'stop'});
+assert(!fs.stat(DIR + '/lock'), "stale support operation blocked retry");
 
 let routes = private_lan_routes({up:true, l3_device:'br-lan', 'ipv4-address':[
     {address:'172.20.1.1', mask:8}, {address:'192.168.1.1', mask:15}, {address:'10.1.0.2', mask:7},
@@ -140,6 +157,36 @@ print("#26 support stop revokes locally, #28 whole LAN route is private, #29 res
 UC
 } >"$WORK/native.uc"
 ucode -L "$LIB" "$WORK/native.uc" "$WORK"
+
+{
+  cat <<'UC'
+let fs = require('fs');
+const DIR = ARGV[0], STATE = DIR, INIT = '/fixture/init', CONTROL_LOCK = '/fixture/lock';
+let calls = 0, output_count = 0, owned = false, allowed = ARGV[1] != 'busy';
+function output(command) { output_count++; return 'fixture-version'; }
+function system(command) { assert(owned); calls++; return ARGV[1] == 'failed' ? 1 : 0; }
+let locks = { acquire: () => { owned = allowed; return owned; }, release: () => { owned = false; } };
+function result(value) {
+  assert(!owned && value.state == 'error');
+  assert(ARGV[1] == 'busy' ? calls == 0 && fs.stat(STATE + '/enabled') != null : calls == 2);
+}
+UC
+  sed -n '/^function read_json(/,/^}/p; /^function version(/,/^}/p' "$LIB/support/session.uc"
+  sed -n '/^function native_flag_write(/,/^}/p; /^function run_native_action(/,/^}/p' "$LIB/tailscale/action.uc"
+  cat <<'UC'
+fs.writefile(STATE + '/enabled', '1');
+let path = DIR + '/test-binary', cache = DIR + '/test-cache';
+fs.writefile(path, 'a');
+fs.unlink(cache);
+assert(version('fixture', path, cache) == 'fixture-version');
+assert(version('fixture', path, cache) == 'fixture-version' && output_count == 1);
+fs.writefile(path, 'changed');
+assert(version('fixture', path, cache) == 'fixture-version' && output_count == 2);
+UC
+  sed -n '/^} else if (action == '\''disconnect'\'') {$/,/^} else if (action == '\''ssh'\''/p' "$LIB/tailscale/action.uc" | sed '1d;$d'
+  printf '%s\n' "assert(ARGV[1] == 'ok' && !owned && calls == 2 && !fs.stat(STATE + '/enabled'));"
+} >"$WORK/controls.uc"
+for mode in busy failed ok; do ucode "$WORK/controls.uc" "$WORK" "$mode"; done
 
 mkdir -p "$WORK/bin"
 cat >"$WORK/bin/sysctl" <<'SH'

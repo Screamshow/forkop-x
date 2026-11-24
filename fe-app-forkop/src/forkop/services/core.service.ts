@@ -165,7 +165,7 @@ export function coreService(options: CoreServiceOptions = {}) {
       ui.addNotification(
         alert.title,
         E('div', {}, alert.message),
-        'error',
+        alert.severity,
         'fkp-subscription-apply-error',
       );
     }

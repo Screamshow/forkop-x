@@ -126,17 +126,24 @@ function change_native_setting(path, contents) {
     return 'Tailscale did not start and could not recover the previous connection.';
 }
 
-function apply_native_setting(path, contents) {
+function run_native_action(operation, failure_message) {
     let pid = match(fs.readfile('/proc/self/stat') || '', /^[1-9][0-9]*/)?.[0];
     if (!locks.acquire(CONTROL_LOCK, pid)) {
         result({state:'error', message:'Another Tailscale operation is running'});
         exit(0);
     }
-    let message;
-    try { message = change_native_setting(path, contents); }
-    catch (e) { message = 'Could not change the Tailscale settings'; }
+    let outcome;
+    try { outcome = operation(); }
+    catch (e) { outcome = {state:'error', message:failure_message}; }
     locks.release(CONTROL_LOCK);
-    if (message) { result({state:'error', message}); exit(0); }
+    if (outcome) { result(outcome); exit(0); }
+}
+
+function apply_native_setting(path, contents) {
+    run_native_action(() => {
+        let message = change_native_setting(path, contents);
+        return message ? {state:'error', message} : null;
+    }, 'Could not change the Tailscale settings');
 }
 
 function private_lan_routes(lan) {
@@ -214,20 +221,14 @@ function connect_native(staged) {
 }
 
 if (action == 'connect') {
-    let pid = match(fs.readfile('/proc/self/stat') || '', /^[1-9][0-9]*/)?.[0];
-    if (!locks.acquire(CONTROL_LOCK, pid)) {
-        result({ state:'error', message:'Another Tailscale operation is running' });
-        exit(0);
-    }
-    let outcome;
-    try { outcome = connect_native(ARGV[1]); }
-    catch (e) { outcome = { state:'error', message:'Tailscale connection failed' }; }
-    locks.release(CONTROL_LOCK);
-    if (outcome) { result(outcome); exit(0); }
+    run_native_action(() => connect_native(ARGV[1]), 'Tailscale connection failed');
 } else if (action == 'disconnect') {
-    fs.unlink(STATE + '/enabled');
-    system(INIT + ' stop >/dev/null 2>&1');
-    system(INIT + ' disable >/dev/null 2>&1');
+    run_native_action(() => {
+        let disabled = native_flag_write(STATE + '/enabled', null);
+        let stopped = system(INIT + ' stop >/dev/null 2>&1') == 0;
+        let boot_disabled = system(INIT + ' disable >/dev/null 2>&1') == 0;
+        return disabled && stopped && boot_disabled ? null : {state:'error', message:'Could not fully disconnect Tailscale'};
+    }, 'Could not disconnect Tailscale');
 } else if (action == 'ssh' || action == 'exit') {
     if (!(action == 'ssh' ? ssh_available : exit_available) || (ARGV[1] != '0' && ARGV[1] != '1')) exit(1);
     let flag = action == 'ssh' ? '/ssh-enabled' : '/exit-enabled';

@@ -10,6 +10,10 @@ let subscription_outbounds_changed=false;
 let subscription_failure_detail=null;
 const LIB_DIR="lib", PRIORITY_UC="priority", DNS_FAILOVER_UC="dns", SECTION_CACHE_DIR="section-cache";
 const SUBSCRIPTION_UPDATE_LOCK_DIR="subscriptions.lock", RELOAD_LOCK_DIR="reload.lock";
+const RUNTIME_STATE_DIR="state";
+const TMP_SUBSCRIPTION_FOLDER="subscriptions";
+let common={secure_private_dir:()=>true};
+function as_string(v){return v == null ? "" : "" + v;}
 function trim(v){return replace(v,/^[ \t\r\n]+|[ \t\r\n]+$/g,"");}
 function service_state_success(args){push(calls,join(" ",args));if(args[0]=="sing-box-current-owned-service-runtime"||args[0]=="sing-box-service-running")return running;die("unexpected service mutation\n");}
 function command_output_from_args(args){return "probe";}
@@ -85,6 +89,10 @@ desired="config";
 reset();prepare_ok=false;if(subscription_update_common_locked(true,"section",0))die("failed preparation accepted\n");
 reset();
 assert(subscription_update_common(true, "section", 1) == 0, "accepted subscription update failed");
+assert(index(calls,"cache:prefetch-direct 1 section 1 probe") > index(calls,"lock:subscriptions.lock.fetch") &&
+       index(calls,"cache:prefetch-direct 1 section 1 probe") < index(calls,"lock:reload.lock") &&
+       index(calls,"lock:reload.lock") < index(calls,"lock:subscriptions.lock"),
+       "direct fetch must precede both runtime locks");
 assert(index(calls,"cache:finish-source-update commit") > index(calls,"publish-section-cache probe/candidate.json") &&
        index(calls,"cache:finish-source-update commit") < index(calls,"unlock:reload.lock"),
        "source cache must be published after runtime acknowledgement under lock");

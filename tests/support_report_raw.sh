@@ -245,3 +245,7 @@ printf '%s\n' '{"password":"fixture"' >"$fixture"
 [ "$(ucode -L "$LIB" "$LIB/diagnostics/status.uc" mask-sing-box-config "$fixture")" = '"MASKED"' ] ||
   fail "invalid JSON was not withheld"
 printf 'Xrust diagnostics masking checks passed\n'
+printf '%s\n' '{"route":{"rule_set":[{"type":"remote","url":"https://fixture.test/rules/token?key=secret"}]}}' >"$fixture"
+ucode -L "$LIB" "$LIB/diagnostics/status.uc" mask-sing-box-config "$fixture" | grep -q '"MASKED"'
+masked=$(printf '%s\n' '2001:db8::42' 'upstream detail' | ucode -L "$LIB" "$LIB/diagnostics/status.uc" proxy-response-ip-mask)
+[ "$masked" = '2001:db8:0:XXXX:XXXX:XXXX' ] || fail 'diagnostics exposed IPv6 or an upstream response'

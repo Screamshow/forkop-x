@@ -410,7 +410,7 @@ async function applyCompletedComponentAction({
   void refreshSystemInfoAfterMutation();
 }
 
-async function completeComponentActionJob(
+export async function completeComponentActionJob(
   key: UpdatesActionKey,
   jobId: string,
   response: Forkop.MethodResponse<Forkop.ComponentActionResult>,
@@ -427,14 +427,12 @@ async function completeComponentActionJob(
     return;
   }
 
-  const shouldNotify = shouldNotifyOwnedUiAction('component', jobId);
-
   if (!response.success || response.data.success === false) {
     const message = response.success
       ? response.data.message || _('Failed to execute')
       : response.error || _('Failed to execute');
 
-    if (isTransientRpcError(message)) {
+    if (!response.success && isTransientRpcError(message)) {
       setActionLoading(key, false);
       void refreshComponentActionState();
       return;
@@ -442,7 +440,7 @@ async function completeComponentActionJob(
 
     handledComponentJobs.add(jobId);
     setActionLoading(key, false);
-    if (shouldNotify) {
+    if (shouldNotifyOwnedUiAction('component', jobId)) {
       showToast(message, 'error');
     }
     await ackComponentActionJob(jobId);
@@ -454,7 +452,7 @@ async function completeComponentActionJob(
   await applyCompletedComponentAction({
     key,
     result: response.data,
-    notify: shouldNotify,
+    notify: shouldNotifyOwnedUiAction('component', jobId),
   });
 }
 

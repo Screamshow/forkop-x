@@ -427,7 +427,9 @@ async function loadDraftSubscriptionChoices(section_id, sources) {
       if (response.code || metadata.error) {
         const error = new Error(metadata.error || "Preview failed");
         error.previewStatus = metadata.status;
-        error.previewMessage = metadata.error;
+        error.previewMessage = metadata.reason === "preview_source_limit"
+          ? `Предпросмотр поддерживает до ${metadata.limit} источников подписки. Это ограничение не влияет на сохранение настроек и обновление подписок.`
+          : metadata.error;
         throw error;
       }
       const choices = [...new Set(Object.values(plainObject(metadata.names)))].sort();

@@ -3073,7 +3073,7 @@ function exclude_sources_from_route_rule(rule, section) {
     let matchers = {};
     let result = {};
     for (let key, value in rule) {
-        if (key == "action" || key == "outbound")
+        if (key == "action" || key == "outbound" || key == "server")
             result[key] = value;
         else
             matchers[key] = value;
@@ -3114,7 +3114,10 @@ function add_source_aware_bypass_dns_rules(config, matchers, rewrite_ttl) {
     let fallback = copy_dns_matchers(matchers);
     fallback.action = "route";
     fallback.server = runtime_constants.DNS_SERVER_TAG;
-    fallback.query_type = [ "A", "AAAA" ];
+    if (fallback.type == "logical")
+        fallback.rules = [ ...fallback.rules, { query_type: [ "A", "AAAA" ] } ];
+    else
+        fallback.query_type = [ "A", "AAAA" ];
     fallback.rewrite_ttl = rewrite_ttl;
     push_dns_matcher_rule(config, fallback);
 }
@@ -3376,7 +3379,7 @@ function add_fully_routed_ips_rules(config, section) {
         add_source_dns_matchers(dns_matchers, source_ip_cidr);
         add_source_aware_bypass_dns_rules(
             config,
-            dns_matchers,
+            exclude_sources_from_matchers(dns_matchers, section),
             int_option(runtime_settings(), "dns_rewrite_ttl", "60")
         );
     }

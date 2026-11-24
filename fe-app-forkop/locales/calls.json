@@ -4030,6 +4030,16 @@
     ]
   },
   {
+    "call": "Subscription update processed",
+    "key": "Subscription update processed",
+    "places": ["src/forkop/services/subscriptionApplyAlert.service.ts:16"]
+  },
+  {
+    "call": "The cache for offline use has not been saved yet. Forkop will retry.",
+    "key": "The cache for offline use has not been saved yet. Forkop will retry.",
+    "places": ["src/forkop/services/subscriptionApplyAlert.service.ts:20"]
+  },
+  {
     "call": "Subscription update failed",
     "key": "Subscription update failed",
     "places": [

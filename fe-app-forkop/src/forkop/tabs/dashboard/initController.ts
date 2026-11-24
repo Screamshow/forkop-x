@@ -308,15 +308,13 @@ async function completeSubscriptionUpdateJob(
     return;
   }
 
-  const shouldNotify = jobId
-    ? shouldNotifyOwnedUiAction('subscription', jobId)
-    : false;
   const failed = !response.success || response.data.success === false;
   const message = response.success
     ? response.data.message || _('Failed to update subscriptions')
     : response.error || _('Failed to update subscriptions');
 
-  if (failed && isTransientRpcError(message)) {
+  setSubscriptionUpdating(sectionName, false);
+  if (!response.success && isTransientRpcError(message)) {
     void refreshRuntimeUiState({ force: true });
     return;
   }
@@ -325,7 +323,7 @@ async function completeSubscriptionUpdateJob(
     handledSubscriptionJobs.add(jobId);
   }
 
-  setSubscriptionUpdating(sectionName, false);
+  const shouldNotify = shouldNotifyOwnedUiAction('subscription', jobId);
 
   if (jobId && response.success) {
     void ForkopShellMethods.uiActionAck('subscription', jobId);
@@ -345,7 +343,7 @@ async function completeSubscriptionUpdateJob(
   void fetchServicesInfo();
 }
 
-async function followSubscriptionUpdateState(
+export async function followSubscriptionUpdateState(
   state: Forkop.SubscriptionUpdateJobState,
 ) {
   const jobId = state.job_id;
@@ -355,7 +353,7 @@ async function followSubscriptionUpdateState(
     return;
   }
 
-  if (!state.running && handledSubscriptionJobs.has(jobId)) {
+  if (handledSubscriptionJobs.has(jobId)) {
     return;
   }
 
@@ -391,29 +389,7 @@ async function followSubscriptionUpdateState(
   }
 }
 
-async function completeLatencyTestJob(jobId: string, sectionName: string) {
-  setLatencyFetching(sectionName, false);
-
-  if (pageUnloading) {
-    return;
-  }
-
-  if (jobId && handledLatencyJobs.has(jobId)) {
-    return;
-  }
-
-  if (jobId) {
-    handledLatencyJobs.add(jobId);
-  }
-
-  if (jobId) {
-    void ForkopShellMethods.uiActionAck('latency', jobId);
-  }
-
-  void fetchDashboardSections({ force: true });
-}
-
-async function followLatencyTestState(state: Forkop.LatencyActionState) {
+export async function followLatencyTestState(state: Forkop.LatencyActionState) {
   const jobId = state.job_id;
   const sectionName = state.section || '';
 
@@ -421,7 +397,7 @@ async function followLatencyTestState(state: Forkop.LatencyActionState) {
     return;
   }
 
-  if (!state.running && handledLatencyJobs.has(jobId)) {
+  if (handledLatencyJobs.has(jobId)) {
     return;
   }
 
@@ -431,29 +407,37 @@ async function followLatencyTestState(state: Forkop.LatencyActionState) {
   }
 
   try {
-    if (state.running) {
-      await ForkopShellMethods.waitLatencyTestJob(jobId);
-    }
-
-    await completeLatencyTestJob(jobId, sectionName);
+    const response = state.running
+      ? await ForkopShellMethods.waitLatencyTestJob(jobId)
+      : { success: true as const, data: state };
+    if (!response.success) throw new Error(response.error);
+    if (pageUnloading) return;
+    handledLatencyJobs.add(jobId);
+    void ForkopShellMethods.uiActionAck('latency', jobId);
+    if (!response.data.success && shouldNotifyOwnedUiAction('latency', jobId))
+      showToast(response.data.message || _('Latency test failed'), 'error');
+    void fetchDashboardSections({ force: true });
   } catch (error) {
     logger.error('[DASHBOARD]', 'followLatencyTestState failed', error);
     if (!pageUnloading) {
-      setLatencyFetching(sectionName, false);
+      const message =
+        error instanceof Error ? error.message : _('Latency test failed');
+      if (
+        !isTransientRpcError(message) &&
+        shouldNotifyOwnedUiAction('latency', jobId)
+      )
+        showToast(message, 'error');
+      void refreshRuntimeUiState({ force: true });
     }
   } finally {
+    setLatencyFetching(sectionName, false);
     followedLatencyJobs.delete(jobId);
   }
 }
 
 function followDashboardActionsFromUiState(uiState: Forkop.UiState) {
   for (const state of uiState.actions.subscription || []) {
-    if (state.running || (state.job_id && state.section)) {
-      void followSubscriptionUpdateState(state);
-    } else if (state.job_id && !handledSubscriptionJobs.has(state.job_id)) {
-      handledSubscriptionJobs.add(state.job_id);
-      void ForkopShellMethods.uiActionAck('subscription', state.job_id);
-    }
+    void followSubscriptionUpdateState(state);
   }
 
   for (const state of uiState.actions.latency || []) {
@@ -759,10 +743,6 @@ async function handleTestLatency(
     true,
     getInitialLatencyProgress(latencyType, tag),
   );
-  let jobId = '';
-  let ownsJobFollow = false;
-  let completed = false;
-
   try {
     const startResponse = await ForkopShellMethods.latencyTestStart(
       latencyType,
@@ -775,37 +755,24 @@ async function handleTestLatency(
       throw new Error(startResponse.error);
     }
 
-    jobId = startResponse.data.job_id;
-    if (followedLatencyJobs.has(jobId)) {
-      completed = true;
-      return;
-    }
-
-    followedLatencyJobs.add(jobId);
-    ownsJobFollow = true;
-    const completion = await ForkopShellMethods.waitLatencyTestJob(jobId);
-    if (!completion.success) {
-      throw new Error(completion.error);
-    }
-    if (!completion.data.success) {
-      throw new Error(completion.data.message || _('Latency test failed'));
-    }
-    await completeLatencyTestJob(jobId, sectionName);
-    completed = true;
+    const jobId = startResponse.data.job_id;
+    markUiActionOwned('latency', jobId);
+    await followLatencyTestState({
+      kind: 'latency',
+      running: true,
+      success: true,
+      job_id: jobId,
+      latency_type: latencyType,
+      section: sectionName,
+      tag,
+    });
   } catch (error) {
     logger.error('[DASHBOARD]', 'handleTestLatency: failed', error);
     if (!pageUnloading) {
       const message = error instanceof Error ? error.message : '';
       showToast(message || _('Latency test failed'), 'error');
     }
-  } finally {
-    if (ownsJobFollow) {
-      followedLatencyJobs.delete(jobId);
-    }
-
-    if (!completed) {
-      setLatencyFetching(sectionName, false);
-    }
+    setLatencyFetching(sectionName, false);
   }
 }
 
@@ -1063,7 +1030,7 @@ function renderUrlTestInfoModal(outbound: Forkop.Outbound) {
   ]);
 }
 
-function renderUrlTestEditorModal(outbound: Forkop.Outbound) {
+export function renderUrlTestEditorModal(outbound: Forkop.Outbound) {
   const info = outbound.urlTestInfo;
   if (!info) return;
 
@@ -1109,8 +1076,10 @@ function renderUrlTestEditorModal(outbound: Forkop.Outbound) {
     const jobId = response.data.job_id;
     if (!jobId) throw new Error('reload failed');
     const result = await ForkopShellMethods.waitServiceActionJob(jobId);
-    void ForkopShellMethods.uiActionAck('service', jobId);
     if (!result.success) throw new Error(result.error || 'reload failed');
+    void ForkopShellMethods.uiActionAck('service', jobId);
+    if (!result.data.success)
+      throw new Error(result.data.message || _('Service action failed'));
     setBusy(true, _('Refreshing Dashboard…'));
     await fetchDashboardSections({ force: true });
   };
@@ -1151,7 +1120,12 @@ function renderUrlTestEditorModal(outbound: Forkop.Outbound) {
     } catch (error) {
       logger.error('[DASHBOARD]', 'URLTest override failed', error);
       setBusy(false);
-      showToast(_('Failed to save URLTest settings'), 'error');
+      showToast(
+        error instanceof Error && error.message
+          ? error.message
+          : _('Failed to save URLTest settings'),
+        'error',
+      );
     }
   };
 
@@ -1468,8 +1442,6 @@ async function handleUpdateSubscription() {
   }
 
   setSubscriptionUpdating('*', true, true);
-  let jobId = '';
-  let ownsJobFollow = false;
 
   try {
     const startResponse = await ForkopShellMethods.subscriptionUpdateStart();
@@ -1478,16 +1450,14 @@ async function handleUpdateSubscription() {
       throw new Error(startResponse.error);
     }
 
-    jobId = startResponse.data.job_id;
+    const jobId = startResponse.data.job_id;
     markUiActionOwned('subscription', jobId);
-    if (followedSubscriptionJobs.has(jobId)) {
-      return;
-    }
-
-    followedSubscriptionJobs.add(jobId);
-    ownsJobFollow = true;
-    const response = await ForkopShellMethods.waitSubscriptionUpdateJob(jobId);
-    await completeSubscriptionUpdateJob(jobId, '*', response);
+    await followSubscriptionUpdateState({
+      job_id: jobId,
+      section: '*',
+      success: true,
+      running: true,
+    });
   } catch (error) {
     logger.error('[DASHBOARD]', 'handleUpdateSubscription: failed', error);
     if (!pageUnloading) {
@@ -1500,10 +1470,6 @@ async function handleUpdateSubscription() {
       if (!isTransientRpcError(message)) {
         showToast(subscriptionUpdateErrorMessage(message), 'error');
       }
-    }
-  } finally {
-    if (ownsJobFollow) {
-      followedSubscriptionJobs.delete(jobId);
     }
   }
 }

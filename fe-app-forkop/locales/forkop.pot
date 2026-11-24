@@ -2458,6 +2458,14 @@ msgstr ""
 msgid "Subscription info:"
 msgstr ""
 
+#: src/forkop/services/subscriptionApplyAlert.service.ts
+msgid "Subscription update processed"
+msgstr ""
+
+#: src/forkop/services/subscriptionApplyAlert.service.ts
+msgid "The cache for offline use has not been saved yet. Forkop will retry."
+msgstr ""
+
 #: src/forkop/services/subscriptionApplyAlert.service.ts:23
 #: src/forkop/methods/shell/index.ts:736
 #: src/forkop/methods/shell/index.ts:756

@@ -1146,10 +1146,10 @@ function persist_list_cache(timestamp, runtime) {
     return true;
 }
 
-function list_update_last_success() {
+function list_update_last_success(now) {
     let persistent = int(trim(file_first_line_value(LIST_UPDATE_STATE_FILE)) || "0");
     let runtime = int(trim(file_first_line_value(LIST_UPDATE_RUNTIME_STATE_FILE)) || "0");
-    return runtime > persistent ? runtime : persistent;
+    return max(duration.schedule_timestamp(now, runtime), duration.schedule_timestamp(now, persistent));
 }
 
 function copy_file(source, target) {
@@ -1291,7 +1291,7 @@ function update_due_status(now_value, last_run_value, interval_value, subscripti
     if (now == null || interval == null || interval <= 0)
         return 2;
 
-    let last_run = unsigned_number(last_run_value);
+    let last_run = duration.schedule_timestamp(now, unsigned_number(last_run_value));
     if (last_run == null)
         last_run = 0;
 
@@ -1399,7 +1399,7 @@ function scheduled_list_update_status(settings, now) {
     if (interval == "")
         return 1;
     let last_attempt = unsigned_number(file_first_line_value(LIST_UPDATE_ATTEMPT_FILE)) ?? 0;
-    return update_due_status(now, max(list_update_last_success(), last_attempt), scheduled_update_seconds(interval));
+    return update_due_status(now, max(list_update_last_success(now), duration.schedule_timestamp(now, last_attempt)), scheduled_update_seconds(interval));
 }
 
 function section_subscription_update_interval(section) {
@@ -1573,7 +1573,7 @@ function cron_refresh_apply_result(settings, sections, existing_crontab, bin, li
 
     return {
         status: int(plan.status || 0),
-        crontab: filtered_crontab + (int(plan.status || 0) == 0 ? cron_jobs : ""),
+        crontab: plan.status == 0 ? filtered_crontab + cron_jobs : existing_crontab,
         logs
     };
 }
@@ -1625,7 +1625,12 @@ function refresh_cron_from_sources(settings, sections, bin, list_marker, subscri
         component_marker
     );
 
-    if (result.status == 0 && result.crontab == existing)
+    if (result.status != 0) {
+        for (let item in result.logs)
+            if (item.level == "error") log_message(item.message, item.level);
+        exit(result.status);
+    }
+    if (result.crontab == existing)
         exit(0);
     if (!write_crontab_text(result.crontab))
         exit(1);
@@ -3923,13 +3928,13 @@ function run_pending_reload_if_requested() {
     service_state_success([ "run-pending-reload-if-requested", PENDING_RELOAD_FILE, SERVICE_INIT ]);
 }
 
-function subscription_prepare_cache_request(force, target_section, target_source_index, guarded) {
+function subscription_prepare_cache_request(force, target_section, target_source_index, guarded, direct_dir) {
     let result = subscription_cache_capture([
         "update-request",
         force ? "1" : "0",
         as_string(target_section),
         as_string(target_source_index),
-        guarded ? "1" : "0"
+        guarded ? "1" : "0", direct_dir || ""
     ]);
     if (result.status != 0) {
         log_file_lines_from_text(result.output, "error", "subscription update: ");
@@ -4119,10 +4124,10 @@ function subscription_runtime_change_check(config_path) {
     return { ok: prepared && valid && published, changed: !unchanged };
 }
 
-function subscription_update_common_locked(force, target_section, target_source_index) {
+function subscription_update_common_locked(force, target_section, target_source_index, direct_dir) {
     subscription_failure_detail = null;
     subscription_outbounds_changed = false;
-    let prepared = subscription_prepare_cache_request(force, target_section, target_source_index, true);
+    let prepared = subscription_prepare_cache_request(force, target_section, target_source_index, true, direct_dir);
     if (!prepared.ok)
         return false;
     let updated = prepared.updated;
@@ -4256,32 +4261,56 @@ function subscription_update_common(force, target_section, target_source_index) 
         exit(1);
 
     force = !!force;
-    if (!acquire_runtime_lock(SUBSCRIPTION_UPDATE_LOCK_DIR, force)) {
+    let fetch_lock = SUBSCRIPTION_UPDATE_LOCK_DIR + ".fetch";
+    if (!acquire_runtime_lock(fetch_lock, force)) {
         log_message("Subscription update is already running", "info");
         if (force)
             mark_pending_reload("subscription_update_busy");
         return force ? 1 : 0;
     }
 
+    // Only other downloads wait here. A settings apply or startup can proceed.
+    // A fresh subdirectory isolates late writes from an interrupted worker.
+    let parent = RUNTIME_STATE_DIR + "/subscription-prefetch";
+    let work = command_success_from_args([ "rm", "-rf", parent ]) && common.secure_private_dir(parent)
+        ? trim(command_output_from_args([ "mktemp", "-d", parent + "/batch.XXXXXX" ])) : "";
+    if (!work || !subscription_cache_success([ "prefetch-direct", force ? "1" : "0",
+        as_string(target_section), as_string(target_source_index), work ])) {
+        command_success_from_args([ "rm", "-rf", parent ]);
+        release_runtime_lock(fetch_lock);
+        return 1;
+    }
     if (!acquire_runtime_lock(RELOAD_LOCK_DIR, force)) {
-        release_runtime_lock(SUBSCRIPTION_UPDATE_LOCK_DIR);
+        command_success_from_args([ "rm", "-rf", parent ]);
+        release_runtime_lock(fetch_lock);
         log_message("Forkop reload is already running; skipping subscription update", "info");
         if (force)
             mark_pending_reload("reload_busy");
         return force ? 1 : 0;
     }
 
+    if (!acquire_runtime_lock(SUBSCRIPTION_UPDATE_LOCK_DIR, force)) {
+        release_runtime_lock(RELOAD_LOCK_DIR);
+        command_success_from_args([ "rm", "-rf", parent ]);
+        release_runtime_lock(fetch_lock);
+        log_message("Subscription cache is busy; skipping subscription update", "info");
+        return force ? 1 : 0;
+    }
     let ok = subscription_cache_success([ "finish-source-update", "rollback" ]);
     if (ok) {
-        ok = subscription_update_common_locked(force, target_section, target_source_index);
+        ok = subscription_update_common_locked(force, target_section, target_source_index, work);
         let finished = subscription_cache_success([ "finish-source-update", ok ? "commit" : "rollback" ]);
         if (!finished)
             log_message("Could not finalize subscription source cache transaction", "error");
         ok = ok && finished;
     }
+    if (!ok && fs.stat(TMP_SUBSCRIPTION_FOLDER + "/.update-rollback/.commit") != null)
+        subscription_failure_detail = { reason: "cache_persistence_failed", state: "applied" };
     subscription_record_result(ok, target_section);
-    release_runtime_lock(RELOAD_LOCK_DIR);
     release_runtime_lock(SUBSCRIPTION_UPDATE_LOCK_DIR);
+    release_runtime_lock(RELOAD_LOCK_DIR);
+    command_success_from_args([ "rm", "-rf", parent ]);
+    release_runtime_lock(fetch_lock);
     run_pending_reload_if_requested();
     if (ok && subscription_outbounds_changed)
         module_background([ DIAGNOSTICS_UC, "automatic-latency-test", "new" ]);
@@ -4295,22 +4324,23 @@ function subscription_prepare_only(target_section, target_source_index) {
     if (!subscription_cache_success([ "ensure-runtime-dirs" ]))
         exit(1);
 
-    if (!acquire_runtime_lock(SUBSCRIPTION_UPDATE_LOCK_DIR, true)) {
-        log_message("Subscription update is already running; manual restart preparation was not started", "warn");
-        exit(1);
-    }
     let owns_reload_lock = as_string(getenv("FORKOP_MANUAL_RESTART_LOCK_HELD") || "0") != "1";
     if (owns_reload_lock && !acquire_runtime_lock(RELOAD_LOCK_DIR, true)) {
-        release_runtime_lock(SUBSCRIPTION_UPDATE_LOCK_DIR);
         log_message("Forkop reload is already running; manual restart preparation was not started", "warn");
+        exit(1);
+    }
+    if (!acquire_runtime_lock(SUBSCRIPTION_UPDATE_LOCK_DIR, true)) {
+        if (owns_reload_lock)
+            release_runtime_lock(RELOAD_LOCK_DIR);
+        log_message("Subscription update is already running; manual restart preparation was not started", "warn");
         exit(1);
     }
 
     let restored = subscription_cache_success([ "finish-source-update", "rollback" ]);
     let prepared = restored ? subscription_prepare_cache_request(true, target_section, target_source_index) : { ok: false };
+    release_runtime_lock(SUBSCRIPTION_UPDATE_LOCK_DIR);
     if (owns_reload_lock)
         release_runtime_lock(RELOAD_LOCK_DIR);
-    release_runtime_lock(SUBSCRIPTION_UPDATE_LOCK_DIR);
     if (!prepared.ok)
         exit(1);
 

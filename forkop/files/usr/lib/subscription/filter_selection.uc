@@ -156,14 +156,17 @@ function display_matches(bound_keys, next, selected_name) {
 
 // Resolve against the OLD feed before considering any new names. In particular,
 // simultaneous A->B / B->A renames must not cascade through string replacements.
-function reconcile(values, saved, previous, next) {
+function reconcile(values, saved, previous, next, indexes) {
     let records = [];
     let names = [];
+    if (!length(list(values)))
+        return { names, records };
+    indexes ||= {};
     let records_by_name = {}, saved_by_name = {};
-    let previous_index = candidate_index(previous);
-    let next_index = candidate_index(next);
+    let previous_index = indexes.previous ||= candidate_index(previous);
+    let next_index = previous === next ? previous_index : (indexes.next ||= candidate_index(next));
     let original = length(previous) ? previous_index : next_index;
-    let passwords = password_repairs(next);
+    let passwords = indexes.passwords ||= password_repairs(next);
     for (let record in list(saved))
         saved_by_name[record.name] = record.keys;
     for (let name in list(values)) {
@@ -243,7 +246,10 @@ function descriptors(section) {
 }
 
 function snapshot(section) {
-    return { section, previous: candidates(section), descriptors: descriptors(section), saved: read(section[".name"]) };
+    let items = descriptors(section);
+    let has_selections = length(filter(items, item => length(list(item.values)))) > 0;
+    return { section, previous: has_selections ? candidates(section) : [], descriptors: items,
+        has_selections, saved: read(section[".name"]) };
 }
 
 function publish(target, value) {
@@ -276,14 +282,15 @@ function binding_records(saved, side, values) {
 function finish(before) {
     if (!uci.reload(CONFIG))
         return { ok: false, changed: false };
-    let next = candidates(before.section);
+    let next = before.has_selections ? candidates(before.section) : [];
+    let indexes = {}, old_indexes = {};
     let saved = {};
     let changes = [];
     for (let item in before.descriptors) {
         // A concurrent user edit wins over an in-flight subscription update.
         if (sprintf("%J", current_values(item)) != sprintf("%J", list(item.values)))
             continue;
-        let result = reconcile(item.values, binding_records(before.saved[item.key], item.side, item.values), before.previous, next);
+        let result = reconcile(item.values, binding_records(before.saved[item.key], item.side, item.values), before.previous, next, indexes);
         saved[item.key] ||= {};
         saved[item.key][item.side] = result.records;
         saved[item.key]["_" + item.side + "_values"] = result.names;
@@ -300,7 +307,7 @@ function finish(before) {
         if (sprintf("%J", saved[item.key]["_" + item.side + "_values"]) == sprintf("%J", list(item.values)))
             continue;
         let old = reconcile(item.values, binding_records(before.saved[item.key], item.side, item.values),
-            before.previous, before.previous);
+            before.previous, before.previous, old_indexes);
         saved[item.key]["_" + item.side + "_previous"] = { values: list(item.values), records: old.records };
     }
     let target = path(before.section[".name"]);

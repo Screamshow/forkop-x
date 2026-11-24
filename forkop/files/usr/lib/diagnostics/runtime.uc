@@ -1597,7 +1597,7 @@ function clash_api(action, arg1, arg2, arg3) {
         if (as_string(arg1) == "" || as_string(arg2) == "")
             return clash_json_error("group_tag and proxy_tag required");
         let payload = status_output([ "clash-set-group-proxy-payload", arg2 ], null);
-        let args = [ "curl", "-X", "PUT", "-s", "-w", "\n%{http_code}", base_url + "/proxies/" + core_url.encode(arg1) ];
+        let args = [ "curl", "--max-time", CLASH_PROXY_LIST_TIMEOUT_SECONDS, "-X", "PUT", "-s", "-w", "\n%{http_code}", base_url + "/proxies/" + core_url.encode(arg1) ];
         push(args, "--data-raw");
         push(args, payload);
         let result = status_capture([ "clash-set-group-proxy-result", arg1, arg2 ], command_output(command_from_args(args)));

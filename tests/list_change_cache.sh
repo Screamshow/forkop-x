@@ -180,6 +180,13 @@ grep -Fxq '* * * * * /usr/bin/forkop list_update_if_due # forkop-list-update' "$
 grep -Fxq '* * * * * /usr/bin/forkop component_updates_if_due # forkop-component-update-check' "$FORKOP_CRONTAB_FILE" ||
   fail 'component checks must see the first eligible minute'
 ! grep -q '^\*/45 ' "$FORKOP_CRONTAB_FILE" || fail 'old calendar steps survived'
+cp "$FORKOP_CRONTAB_FILE" "$WORK/valid-crontab"
+sed -i 's/component_update_check_interval=45m/component_update_check_interval=broken/' "$WORK/uci.state"
+if updates refresh-cron-from-uci /usr/bin/forkop '# forkop-list-update' '# forkop-subscription-update' '# forkop-component-update-check'; then
+  fail 'invalid schedule accepted'
+fi
+cmp "$WORK/valid-crontab" "$FORKOP_CRONTAB_FILE" || fail 'invalid interval erased unrelated schedules'
+sed -i 's/component_update_check_interval=broken/component_update_check_interval=45m/' "$WORK/uci.state"
 
 expect_list_due() {
   local interval="$1" last="$2" now="$3" expected="$4" status=0
@@ -194,6 +201,10 @@ expect_list_due 1d 86405 172800 1
 expect_list_due 1d 86405 172860 0
 expect_list_due 100ms 2700 2759 1
 expect_list_due 100ms 2700 2760 0
+expect_list_due 1d 1900000000 1800000000 0
+expect_list_due 1d 1900000000 42 1
+ucode -L "$LIB" "$LIB/subscription/cache.uc" update-due-status-fixture 1800000000 1900000000 3600 ||
+  fail 'future subscription timestamp suppressed updates after clock correction'
 
 export TEST_REAL_UCODE="$(command -v ucode)" TEST_COMPONENT_CALLS="$WORK/component-calls"
 cat >"$WORK/bin/ucode" <<'EOF'
@@ -221,6 +232,8 @@ date +%s >"$WORK/state/component-update-check.timestamp"
 updates component-updates-if-due || fail 'a saved sub-minute component interval must use a one-minute minimum'
 
 printf '1234\n' >"$WORK/state/list-update-last-success.timestamp"
+mkdir -p "$FORKOP_PERSISTENT_LIST_CACHE_DIR"
+printf '%s\n' "$((now + 86400))" >"$FORKOP_PERSISTENT_LIST_CACHE_DIR/last-success.timestamp"
 if TEST_ACCEPT_NEW=0 updates list-update-if-due; then
   fail 'scheduled download failure was not detected'
 fi

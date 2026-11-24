@@ -43,4 +43,11 @@ function round_milliseconds(value, fallback) {
     return max(1, nearest_integer(seconds * 1000));
 }
 
-return { parse_seconds, round_seconds, ceil_seconds, round_milliseconds };
+// A router waiting for its initial clock sync can still be near the Unix
+// epoch. Once the clock is plausible, discard stamps from before a backward
+// clock correction so they cannot suppress scheduled work indefinitely.
+function schedule_timestamp(now, stamp) {
+    return now >= 1704067200 && stamp > now ? 0 : stamp;
+}
+
+return { parse_seconds, round_seconds, ceil_seconds, round_milliseconds, schedule_timestamp };

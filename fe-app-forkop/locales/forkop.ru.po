@@ -1560,7 +1560,7 @@ msgid "Section name"
 msgstr "Имя секции"
 
 msgid "Section: %s"
-msgstr ""
+msgstr "Раздел: %s"
 
 msgid "Sections"
 msgstr "Секции"
@@ -1717,6 +1717,12 @@ msgstr "Автообновление подписи"
 
 msgid "Subscription info:"
 msgstr "Информация о подписке:"
+
+msgid "Subscription update processed"
+msgstr "Обновление подписки обработано"
+
+msgid "The cache for offline use has not been saved yet. Forkop will retry."
+msgstr "Кэш для работы без интернета пока не сохранён. Forkop повторит попытку сохранения."
 
 msgid "Subscription update failed"
 msgstr "Обновление подписки завершилось ошибкой"

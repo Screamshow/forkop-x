@@ -15,12 +15,23 @@ function output(command) {
     let value = p.read('all');
     return p.close() == 0 ? trim(value || '') : '';
 }
-function version(command) {
-    // Keep the command's exit code: a pipeline through head hides CLI failures.
-    return trim(split(output(command + ' version'), '\n')[0] || '');
-}
 function read_json(path) {
     try { return json(fs.readfile(path) || '{}'); } catch (e) { return {}; }
+}
+function version(command, path, cache) {
+    let info = fs.stat(path);
+    if (!info) return '';
+    let stamp = join(':', [path, info.dev, info.inode, info.size, info.mtime, info.ctime]);
+    let previous = read_json(cache);
+    if (previous?.stamp == stamp && previous.version) return previous.version;
+    let value = trim(split(output(command + ' version'), '\n')[0] || '');
+    if (value) {
+        if (!fs.stat(DIR)) { fs.mkdir('/var/run/forkop'); fs.mkdir(DIR, 0700); }
+        let tmp = cache + '.' + fs.readlink('/proc/self');
+        if (fs.writefile(tmp, sprintf('%J', {stamp, version:value})) != null && !fs.rename(tmp, cache))
+            fs.unlink(tmp);
+    }
+    return value;
 }
 function uptime() { return int(split(fs.readfile('/proc/uptime') || '0', ' ')[0]); }
 function available() {
@@ -44,34 +55,38 @@ function primary_running() {
 function session_service_running() {
     let running = output("ubus -t 2 call service list '{\"name\":\"forkop-support\"}'");
     try {
-        let service = json(running)['forkop-support'];
+        let services = json(running);
+        if (type(services) != 'object') return null;
+        let service = services['forkop-support'];
         for (let name, instance in service?.instances || {})
             if (instance.running) return true;
-    } catch (e) {}
+    } catch (e) { return null; }
     return false;
 }
 function status() {
     let state = read_json(DIR + '/status.json');
-    let active = session_service_running();
+    let active = session_service_running() === true;
     // A completed attempt from the old package installer is not current Lite state.
     // Never discard the status of a running operation.
     if (!active && state.schema != 2) state = {};
     let cancelled = fs.stat(CANCELLED) != null;
     let managed = packaged();
     let lite = lite_installed();
-    let system_installed = output('command -v tailscale') != '';
-    let lite_version = lite ? version(LITE + '/tailscale') : '';
-    let system_version = system_installed ? version('tailscale') : '';
+    let system_path = output('command -v tailscale');
+    let system_installed = system_path != '';
+    let primary = primary_running();
+    let lite_version = lite ? version(LITE + '/tailscale', LITE + '/tailscale', DIR + '/lite-version.json') : '';
+    let system_version = system_installed ? version('tailscale', system_path, DIR + '/system-version.json') : '';
     let result = {
-        installed: available(),
+        installed: lite || (system_installed && output('command -v tailscaled') != ''),
         package_installed: managed,
         lite_installed: lite,
         system_installed,
         lite_version,
         system_version,
-        removable: !active && (lite_installed() || (managed && !primary_running() && !primary_enabled())),
+        removable: !active && (lite || (managed && !primary && !primary_enabled())),
         version: lite ? lite_version : system_version,
-        primary_running: primary_running(),
+        primary_running: primary,
         active,
         phase: cancelled ? 'stopped' : (active ? (state.phase || 'starting') : (state.phase == 'failed' ? 'failed' : 'stopped')),
         session_id: state.session_id || '',
@@ -114,6 +129,19 @@ function request(data) {
         current.announcement_granted = !!granted;
         return current;
     }
+    if (index(['stop', 'start', 'install', 'remove'], data.operation) == -1) die('Invalid operation');
+    if (!fs.stat(DIR)) {
+        if (data.operation == 'stop') return status();
+        fs.mkdir('/var/run/forkop');
+        fs.mkdir(DIR, 0700);
+    }
+    if (!fs.chmod(DIR, 0700)) die('Cannot prepare support directory');
+    // Serialize request handoff and stale-lock reclamation between LuCI tabs.
+    let guard = fs.open(DIR + '/request.guard', 'a', 0600);
+    if (!guard || !guard.lock('x')) die('Cannot lock support operation');
+    let lock = fs.stat(DIR + '/lock');
+    if (lock && int(clock()[0]) - lock.mtime >= 15 && session_service_running() === false)
+        fs.rmdir(DIR + '/lock');
     if (data.operation == 'stop') {
         let current = read_json(DIR + '/status.json');
         if (index(['install', 'remove'], trim(fs.readfile(DIR + '/operation') || '')) != -1 &&
@@ -132,7 +160,6 @@ function request(data) {
         fs.writefile(DIR + '/status.json', '{"phase":"stopped"}');
         return status();
     }
-    if (index(['start', 'install', 'remove'], data.operation) == -1) die('Invalid operation');
     if (fs.stat('/var/run/forkop/component-action.lock') != null ||
         fs.stat('/var/run/forkop/package-upgrade.quiesce') != null ||
         fs.stat('/tmp/forkop-full-uninstall.lock') != null)
@@ -155,9 +182,6 @@ function request(data) {
     } else if (primary_running()) {
         die('An existing Tailscale process needs manual inspection');
     }
-    fs.mkdir('/var/run/forkop');
-    fs.mkdir(DIR, 0700);
-    fs.chmod(DIR, 0700);
     if (!fs.mkdir(DIR + '/lock', 0700)) die('A support operation is already starting');
     try {
         let previous = read_json(DIR + '/status.json');

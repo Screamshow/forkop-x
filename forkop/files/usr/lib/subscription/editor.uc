@@ -33,7 +33,11 @@ fs.unlink(request);
 let input;
 try { input = json(raw || ''); } catch (e) { exit(1); }
 let sources = input.sources;
-if (type(sources) != 'array' || length(sources) > 16) exit(1);
+if (type(sources) != 'array') exit(1);
+if (length(sources) > 16) {
+    print('{"error":"Too many subscription sources for preview","reason":"preview_source_limit","limit":16}\n');
+    exit(0);
+}
 let dir = root + '/' + id;
 if (!common.secure_private_dir(dir)) exit(1);
 function q(value) { return "'" + replace(value, /'/g, "'\\''") + "'"; }
