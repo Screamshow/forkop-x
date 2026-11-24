@@ -32,6 +32,7 @@ function fixture(type, legacy, savedServers) {
   const writes = [];
   const uci = {
     get(_package, _section, name) { return saved[name]; },
+    set(_package, _section, name, value) { saved[name] = value; writes.push([name, value]); },
     unset(_package, _section, name) { delete saved[name]; writes.push([name]); },
   };
   const section = {
@@ -69,14 +70,14 @@ function fixture(type, legacy, savedServers) {
 }
 
 async function testLegacyProtocolSelection() {
+  const choices = ['doh', 'dot', 'udp', 'legacy-doh', 'legacy-dot'];
   for (const type of ['doh', 'dot']) {
     const { saved, writes, dnsProtocol, bootstrapOption, state } =
       fixture(type, type, ['resolver.lan', '1.1.1.1:53']);
     assert.equal(dnsProtocol.current, `legacy-${type}`);
-    assert.equal(dnsProtocol.keylist.length, 4);
-    assert.match(dnsProtocol.vallist[3], /Bootstrap DNS over UDP/);
+    assert.deepEqual(dnsProtocol.keylist, choices);
+    assert.match(dnsProtocol.vallist[choices.indexOf(`legacy-${type}`)], /UDP for Bootstrap DNS/);
     await dnsProtocol.parse('settings');
-    await dnsProtocol.write('settings', `legacy-${type}`);
     assert.deepEqual(writes, []);
     assert.equal(saved.bootstrap_dns_legacy_type, type);
     assert.equal(bootstrapOption.validate('settings', 'resolver.lan'), true);
@@ -98,15 +99,22 @@ async function testLegacyProtocolSelection() {
     await dnsProtocol.parse('settings');
     assert.deepEqual(writes, [['dns_type', type], ['bootstrap_dns_legacy_type']]);
     assert.equal(dnsProtocol.load('settings'), type);
-    assert.deepEqual(dnsProtocol.keylist, ['doh', 'dot', 'udp']);
+    assert.deepEqual(dnsProtocol.keylist, choices);
   }
 
   const fresh = fixture('udp', undefined, ['1.1.1.1']);
   assert.equal(fresh.dnsProtocol.current, 'udp');
-  assert.deepEqual(fresh.dnsProtocol.keylist, ['doh', 'dot', 'udp']);
+  assert.deepEqual(fresh.dnsProtocol.keylist, choices);
+  for (const type of ['doh', 'dot']) {
+    fresh.dnsProtocol.current = `legacy-${type}`;
+    await fresh.dnsProtocol.parse('settings');
+    assert.equal(fresh.saved.dns_type, type);
+    assert.equal(fresh.saved.bootstrap_dns_legacy_type, type);
+    assert.equal(fresh.dnsProtocol.load('settings'), `legacy-${type}`);
+  }
   const mismatched = fixture('dot', 'doh', ['1.1.1.1']);
   assert.equal(mismatched.dnsProtocol.current, 'dot');
-  assert.equal(mismatched.dnsProtocol.keylist.length, 3);
+  assert.deepEqual(mismatched.dnsProtocol.keylist, choices);
   console.log('Bootstrap DNS legacy selection, save and validation checks passed');
 }
 

@@ -210,12 +210,13 @@ function configureDnsProtocol(option, bootstrapOption) {
     for (const [value, label] of Object.entries(choices)) {
       this.value(value, label);
     }
+    for (const [value, label] of Object.entries(legacyChoices)) {
+      this.value(`legacy-${value}`, label);
+    }
     const selected = uci.get(UCI_PACKAGE, sectionId, "dns_type");
     const legacy = uci.get(UCI_PACKAGE, sectionId, "bootstrap_dns_legacy_type");
     if (selected === legacy && isEncryptedDnsProtocol(selected)) {
-      const value = `legacy-${selected}`;
-      this.value(value, legacyChoices[selected]);
-      return value;
+      return `legacy-${selected}`;
     }
     return selected;
   };
@@ -236,7 +237,12 @@ function configureDnsProtocol(option, bootstrapOption) {
   };
   const write = option.write;
   option.write = function (sectionId, value) {
-    // The compatibility choice exists only in the form. Store actual DNS types.
+    if (value === "legacy-doh" || value === "legacy-dot") {
+      const protocol = value.slice("legacy-".length);
+      const result = write.call(this, sectionId, protocol);
+      uci.set(UCI_PACKAGE, sectionId, "bootstrap_dns_legacy_type", protocol);
+      return result;
+    }
     if (value !== "udp" && !isEncryptedDnsProtocol(value)) return;
     const result = write.call(this, sectionId, value);
     uci.unset(UCI_PACKAGE, sectionId, "bootstrap_dns_legacy_type");
