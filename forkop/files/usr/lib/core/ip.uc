@@ -97,6 +97,8 @@ function valid_ipv6(value) {
 
         let left = substr(value, 0, marker);
         let right = substr(value, marker + 2);
+        if (index(left, ".") >= 0)
+            return false;
         let left_count = left == "" ? 0 : ipv6_parts_count(split(left, ":"));
         let right_count = right == "" ? 0 : ipv6_parts_count(split(right, ":"));
 

@@ -846,7 +846,7 @@ async function loadRuntimeMetadata(
   reference: Forkop.RuntimeConfigReference,
 ): Promise<XrustRuntimeMetadata> {
   const parsed = JSON.parse(
-    await readForkopRuntimeConfig(reference.path, reference.revision),
+    await readForkopRuntimeConfig(reference.revision),
   ) as XrustRuntimeConfig;
   const groups: Record<string, UrlTestCacheGroup> = {};
   for (const outbound of Array.isArray(parsed?.outbounds)

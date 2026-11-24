@@ -48,9 +48,9 @@ it('requests metadata by revision, without exposing a file read interface', asyn
       Response.json({ code: 0, stdout: '{"outbounds":[]}', stderr: '' }),
     );
   vi.stubGlobal('fetch', fetch);
-  await expect(
-    readForkopRuntimeConfig('/srv/custom/xrust.json', '100:42'),
-  ).resolves.toBe('{"outbounds":[]}');
+  await expect(readForkopRuntimeConfig('100:42')).resolves.toBe(
+    '{"outbounds":[]}',
+  );
   expect(read).not.toHaveBeenCalled();
   expect(String(fetch.mock.calls[0][1].body)).toBe(
     'operation=runtime_config&subject=100%3A42&token=fixture-token',

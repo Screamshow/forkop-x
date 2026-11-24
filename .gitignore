@@ -179,6 +179,7 @@ ops/deployed-nginx/
 !/tests/cache_failure_recovery.sh
 !/tests/config_migration_transaction.sh
 !/tests/monitoring_runtime_config.sh
+!/tests/luci_runtime_metadata.sh
 !/tests/priority_scheduler.sh
 !/tests/dns_failover_startup_grace.sh
 !/tests/service_memory.uc

@@ -70,14 +70,47 @@ state() {
     mv "$STATUS.new" "$STATUS"
 }
 
+guard_owner_changes() {
+    # Use the same permanent guard inode as core.locks for component owners.
+    exec 9>>"$COMPONENT_LOCK.guard"
+    if command -v flock >/dev/null 2>&1; then flock -x 9
+    else busybox flock -x 9; fi
+}
+
+claim_lock() {
+    local path="$1" pid modified
+    if ! mkdir "$path" 2>/dev/null; then
+        [ -d "$path" ] && [ ! -L "$path" ] &&
+            [ "$(stat -c %u "$path")" = "$(id -u)" ] || return 1
+        case "$(stat -c %a "$path")" in *[0145][0145]) ;; *) return 1 ;; esac
+        [ ! -L "$path/pid" ] || return 1
+        pid="$(cat "$path/pid" 2>/dev/null || true)"
+        case "$pid" in
+            '') # Keep the creation grace period used by older unguarded workers.
+                modified="$(stat -c %Y "$path")" || return 1
+                [ "$(($(date +%s) - modified))" -ge 5 ] || return 1 ;;
+            0*|*[!0-9]*) ;;
+            *) if kill -0 "$pid" 2>/dev/null; then return 1; fi ;;
+        esac
+    fi
+    printf '%s\n' "$$" > "$path/pid"
+}
+
+release_owned_lock() {
+    local path="$1"
+    [ "$(cat "$path/pid" 2>/dev/null || true)" = "$$" ] || return 0
+    rm -f "$path/pid"
+    rmdir "$path" 2>/dev/null || true
+}
+
 finish() {
     code=$?
     trap - EXIT
     if [ "$code" -ne 0 ]; then state failed; fi
-    rm -f "$COMPONENT_LOCK/pid"
-    rmdir "$COMPONENT_LOCK" 2>/dev/null || true
-    rm -f "$LOCK/pid"
-    rmdir "$LOCK" 2>/dev/null || true
+    guard_owner_changes
+    release_owned_lock "$COMPONENT_LOCK"
+    release_owned_lock "$LOCK"
+    exec 9>&-
     # A short-lived, non-sensitive status file remains readable after LuCI is
     # uninstalled, so the browser never has to guess whether removal succeeded.
     (sleep 300; rm -f "$STATUS" "$STATUS.new") </dev/null >/dev/null 2>&1 &
@@ -192,6 +225,11 @@ run() {
     done
     if [ ! -L "$ROOT/etc/forkop-backups" ]; then
         rm -f "$ROOT/etc/forkop-backups/configuration.tar.gz"
+        for file in "$ROOT"/etc/forkop-backups/forkop-before-xrust.??????; do
+            [ -f "$file" ] && [ ! -L "$file" ] || continue
+            case "${file##*.}" in *[!a-zA-Z0-9]*) continue ;; esac
+            rm -f "$file"
+        done
         rmdir "$ROOT/etc/forkop-backups" 2>/dev/null || true
     fi
     while IFS='|' read -r file source; do
@@ -199,7 +237,7 @@ run() {
     done < "$JOB/repositories"
     # Leave the component lock intact until finish() releases it.
     for item in "$ROOT"/var/run/forkop/*; do
-        [ "$item" = "$COMPONENT_LOCK" ] || rm -rf "$item"
+        case "$item" in "$COMPONENT_LOCK"|"$COMPONENT_LOCK.guard") ;; *) rm -rf "$item" ;; esac
     done
     PHASE=complete
     state complete
@@ -208,18 +246,16 @@ run() {
 case "${1:-}" in
     start)
         mkdir -p "$ROOT/tmp" "$ROOT/www" "$ROOT/var/run/forkop"
-        if ! mkdir "$LOCK" 2>/dev/null; then
+        guard_owner_changes
+        if ! claim_lock "$LOCK"; then
             echo '{"success":false,"message":"Removal is already running"}'
             exit 1
         fi
-        if ! mkdir "$COMPONENT_LOCK" 2>/dev/null; then
-            rmdir "$LOCK"
+        trap 'release_owned_lock "$COMPONENT_LOCK"; release_owned_lock "$LOCK"' EXIT
+        if ! claim_lock "$COMPONENT_LOCK"; then
             echo '{"success":false,"message":"Another component action is running"}'
             exit 1
         fi
-        trap 'rm -f "$LOCK/pid" "$COMPONENT_LOCK/pid"; rmdir "$LOCK" "$COMPONENT_LOCK" 2>/dev/null || true' EXIT
-        printf '%s\n' "$$" > "$LOCK/pid"
-        printf '%s\n' "$$" > "$COMPONENT_LOCK/pid"
         JOB="$(mktemp -d "$ROOT/tmp/forkop-uninstall.XXXXXX")"
         STATUS="$ROOT/www/$(basename "$JOB").json"
         cp "$0" "$JOB/worker.sh"
@@ -231,8 +267,10 @@ case "${1:-}" in
     worker)
         JOB="$2"
         STATUS="$3"
+        # The inherited guard covers the parent-to-worker PID handover.
         printf '%s\n' "$$" > "$LOCK/pid"
         printf '%s\n' "$$" > "$COMPONENT_LOCK/pid"
+        exec 9>&-
         run
         ;;
     *) exit 2 ;;

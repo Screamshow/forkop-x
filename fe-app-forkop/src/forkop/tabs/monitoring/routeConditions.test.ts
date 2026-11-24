@@ -81,10 +81,7 @@ describe('runtime route config refresh', () => {
     await loader.load({ path: flash, revision: '1' });
     await loader.load({ path: ram, revision: '1' });
     await loader.load({ path: ram, revision: '1' });
-    expect(read.mock.calls).toEqual([
-      [flash, '1'],
-      [ram, '1'],
-    ]);
+    expect(read.mock.calls).toEqual([['1'], ['1']]);
     expect(update).toHaveBeenLastCalledWith([{ domain: 'after.test' }]);
   });
 
@@ -120,17 +117,28 @@ describe('runtime route config refresh', () => {
     expect(update).toHaveBeenLastCalledWith([]);
   });
 
-  it('retries an unreadable revision while using the core’s original rule', async () => {
-    const read = vi
-      .fn()
-      .mockRejectedValueOnce(new Error())
-      .mockResolvedValueOnce(body('retry.test'));
-    const update = vi.fn();
-    const loader = createRuntimeRouteRulesLoader(read, update);
-    const reference = { path: ram, revision: '1' };
-    await loader.load(reference);
-    expect(update).toHaveBeenLastCalledWith([]);
-    await loader.load(reference);
-    expect(update).toHaveBeenLastCalledWith([{ domain: 'retry.test' }]);
-  });
+  it.each([{ path: ram, revision: '1' }, undefined])(
+    'retries failed reads after a delay for %j',
+    async (reference) => {
+      const now = vi.spyOn(Date, 'now').mockReturnValue(1000);
+      try {
+        const read = vi
+          .fn()
+          .mockRejectedValueOnce(new Error())
+          .mockResolvedValueOnce(body('retry.test'));
+        const update = vi.fn();
+        const loader = createRuntimeRouteRulesLoader(read, update);
+        await loader.load(reference);
+        expect(update).toHaveBeenLastCalledWith([]);
+        await loader.load(reference);
+        expect(read).toHaveBeenCalledTimes(1);
+        now.mockReturnValue(6000);
+        await loader.load(reference);
+        expect(update).toHaveBeenLastCalledWith([{ domain: 'retry.test' }]);
+        expect(read).toHaveBeenLastCalledWith(reference?.revision ?? 'legacy');
+      } finally {
+        now.mockRestore();
+      }
+    },
+  );
 });

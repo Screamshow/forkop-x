@@ -79,12 +79,41 @@ function ui_runtime_config_reference() {
 	return json(content);
 }
 
+function ui_runtime_metadata_source(path) {
+	let info = stat(path);
+	if (info?.type != 'file') return null;
+	if (info.size <= UI_READ_MAX_BYTES) return json(readfile(path));
+	let result = { route: { rules: [] }, outbounds: [] };
+	if (info.size > 16 * 1024 * 1024) return result;
+
+	// A large subscription can consist almost entirely of proxy credentials.
+	// Pass only the two sections needed by the UI into the LuCI interpreter.
+	let quoted = "'" + replace(path, /'/g, "'\\''") + "'";
+	let pipe = popen("ulimit -v 32768 && exec jsonfilter -q -i " + quoted + " -t '@' -e '@.route.rules' " +
+		"-e '@.outbounds[@.type=\"urltest\"]' 2>/dev/null", 'r');
+	if (!pipe) return null;
+	let data = pipe.read(UI_READ_MAX_BYTES + 1) || '';
+	let code = pipe.close();
+	if (length(data) > UI_READ_MAX_BYTES)
+		// Fall back to the core's reported rule for this revision.
+		return result;
+	// jsonfilter exits 1 if an optional selector has no match.
+	let lines = split(trim(data), '\n');
+	if ((code != 0 && code != 1) || shift(lines) != 'object') return result;
+	for (let line in lines) {
+		let value = json(line);
+		if (type(value) == 'array') result.route.rules = value;
+		else if (value?.type == 'urltest') push(result.outbounds, value);
+	}
+	return result;
+}
+
 function ui_read_runtime_config(revision) {
 	let reference = ui_runtime_config_reference();
 	if (!reference?.path || (revision != 'legacy' && revision != reference.revision))
 		return null;
 
-	let config = ui_read_json_file(reference.path);
+	let config = ui_runtime_metadata_source(reference.path);
 	if (type(config) != 'object')
 		return null;
 
@@ -193,7 +222,9 @@ function action_ui_read() {
 			return;
 		}
 		if (operation == 'get_ui_state') {
-			let value = ui_read_fields(json(output), ['service', 'runtime_config', 'capabilities']);
+			let state = json(output);
+			let value = ui_read_fields(state, ['service', 'capabilities']);
+			if ('runtime_config' in state) value.runtime_config = state.runtime_config;
 			value.actions = { service: [], latency: [], component: [], subscription: [] };
 			output = sprintf('%J', value);
 		}

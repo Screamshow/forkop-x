@@ -198,8 +198,6 @@ function wait_ready(entries, before, processes, instances, timeout) {
 function apply(init) {
     let entries = plan();
     let before = {};
-    let processes = process_map();
-    let instances = service_instances();
     let loopback_supported = true;
     for (let entry in entries || []) {
         if (entry.disabled || entry.port == 0) continue;
@@ -216,6 +214,8 @@ function apply(init) {
     // synchronous restart contract; do not infer readiness from another DNS.
     if (init != "/etc/init.d/dnsmasq" || entries == null || !loopback_supported)
         return system("[ -x " + quote(init) + " ] && " + quote(init) + " restart", 15000) == 0;
+    let processes = process_map();
+    let instances = service_instances();
     for (let entry in entries) before[entry.path] = fs.readfile(entry.path);
     if (processes != null && instances != null &&
         system("exec " + quote(init) + " reload", 15000) == 0 && wait_ready(entries, before, processes, instances, 4)) return true;

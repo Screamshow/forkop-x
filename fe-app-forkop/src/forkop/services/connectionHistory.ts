@@ -44,6 +44,7 @@ export function moveConnectionToClosed(
   });
 }
 export function trimClosedConnections() {
+  if (closedConnections.size <= 300) return;
   const sorted = [...closedConnections.values()].sort(
     (a, b) => (b.closedAt || 0) - (a.closedAt || 0),
   );

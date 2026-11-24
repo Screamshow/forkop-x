@@ -19,6 +19,7 @@ MIRROR_BACKUP_COUNT=0
 MIRROR_BACKUP_MANIFEST=""
 FETCHER=""
 TMP_DIR=""
+INSTALLER_CLAIM=""
 FORKOP_WAS_ENABLED=0
 FORKOP_WAS_RUNNING=0
 FORKOP_LEGACY_DETECTED=0
@@ -156,9 +157,36 @@ cleanup() {
     rollback_package_mirror
     if [ "$UPDATE_ROLLBACK_FAILED" -eq 1 ]; then
         warn "Rollback files retained for recovery: $TMP_DIR"
-        return
+    else
+        [ -z "$TMP_DIR" ] || rm -rf "$TMP_DIR"
     fi
-    [ -n "$TMP_DIR" ] && rm -rf "$TMP_DIR"
+    [ -z "$INSTALLER_CLAIM" ] || rmdir "$INSTALLER_CLAIM"
+}
+
+installer_process_ticks() {
+    # Everything following the final ')' starts with field 3 (state).
+    sed -n 's/^.*) //p' "/proc/$1/stat" 2>/dev/null | awk '{print $20}'
+}
+
+acquire_installer_claim() {
+    # Clean OpenWrt installations need not have flock yet. Publish our own
+    # claim before inspecting other installers, so two callers cannot both
+    # pass preflight. A PID plus its start time survives PID reuse safely.
+    local dir="${FORKOP_INSTALLER_LOCK_DIR:-/var/run/forkop-installer}" ticks path name pid
+    ticks="$(installer_process_ticks "$$")"
+    case "$ticks" in ''|*[!0-9]*) return 1 ;; esac
+    mkdir -p "$dir" && mkdir "$dir/$$.$ticks" || return 1
+    INSTALLER_CLAIM="$dir/$$.$ticks"
+    for path in "$dir"/*.*; do
+        [ "$path" != "$INSTALLER_CLAIM" ] && [ -d "$path" ] || continue
+        name="${path##*/}"
+        pid="${name%%.*}"
+        case "$pid:${name#*.}" in *[!0-9:]*|:*|*:) continue ;; esac
+        if [ "$(installer_process_ticks "$pid")" = "${name#*.}" ]; then
+            return 1
+        fi
+        rmdir "$path" 2>/dev/null || true
+    done
 }
 
 read_openwrt_release_value() {
@@ -388,16 +416,24 @@ function read_stdin_json() {
     }
 }
 
-function command_output(args) {
+function shell_quote(value) {
+    return "'" + replace(as_string(value), /'/g, "'\\''") + "'";
+}
+
+function command_from_args(args) {
     let parts = [];
     for (let arg in args)
-        push(parts, "'" + replace(as_string(arg), /'/g, "'\\''") + "'");
-    let pipe = fs.popen(join(" ", parts) + " 2>/dev/null", "r");
+        push(parts, shell_quote(arg));
+    return join(" ", parts);
+}
+
+function command_output(args, require_success) {
+    let pipe = fs.popen(command_from_args(args) + " 2>/dev/null", "r");
     if (!pipe)
         return "";
     let data = pipe.read("all");
     let status = pipe.close();
-    return status == 0 && data != null ? as_string(data) : "";
+    return data == null || (require_success && status != 0) ? "" : data;
 }
 
 function process_start_ticks(pid) {
@@ -417,7 +453,7 @@ function sing_box_exe_path(path) {
 // Rust X also runs the independent Tailscale service from the same binary.
 // Match LuCI's upgrade process selection; only the proxy runtime must stop.
 function installer_sing_box_process(exe) {
-    if (!sing_box_exe_path(command_output([ "readlink", exe ])))
+    if (!sing_box_exe_path(fs.readlink(exe)))
         return false;
     let pid = split(exe, "/")[2];
     let args = split(fs.readfile("/proc/" + pid + "/cmdline") || "", chr(0));
@@ -425,7 +461,7 @@ function installer_sing_box_process(exe) {
 }
 
 function managed_upgrade_sing_box_service_pid() {
-    let data = command_output([ "ubus", "call", "service", "list", "{\"name\":\"sing-box\"}" ]);
+    let data = command_output([ "ubus", "call", "service", "list", "{\"name\":\"sing-box\"}" ], true);
     let service;
     try { service = json(data)["sing-box"]; } catch (e) { return 0; }
     let instances = service && type(service.instances) == "object" ? service.instances : {};
@@ -672,17 +708,6 @@ function run(command) {
     return system(command) == 0;
 }
 
-function shell_quote(value) {
-    return "'" + replace(as_string(value), /'/g, "'\\''") + "'";
-}
-
-function command_from_args(args) {
-    let parts = [];
-    for (let arg in args)
-        push(parts, shell_quote(arg));
-    return join(" ", parts);
-}
-
 function normalize_status(status) {
     status = int(status);
     return status > 255 ? int(status / 256) : status;
@@ -690,16 +715,6 @@ function normalize_status(status) {
 
 function run_args(args) {
     return normalize_status(system(command_from_args(args) + " >/dev/null 2>&1")) == 0;
-}
-
-function command_output(args) {
-    let pipe = fs.popen(command_from_args(args) + " 2>/dev/null", "r");
-    if (!pipe)
-        return "";
-
-    let data = pipe.read("all");
-    pipe.close();
-    return data == null ? "" : data;
 }
 
 function read_text_file(path) {
@@ -3380,12 +3395,21 @@ detect_install_mode() {
 prepare_legacy_config_backup() {
     [ -n "$LEGACY_CONFIG_PATH" ] || return 0
 
-    LEGACY_CONFIG_BACKUP="/etc/.forkop-legacy-config-backup.$$"
-    cp "$LEGACY_CONFIG_PATH" "$LEGACY_CONFIG_BACKUP" ||
+    LEGACY_CONFIG_BACKUP="$(mktemp /etc/.forkop-legacy-config-backup.XXXXXX)" ||
+        fail "Failed to prepare the legacy configuration backup"
+    cat "$LEGACY_CONFIG_PATH" > "$LEGACY_CONFIG_BACKUP" ||
         fail "Failed to back up the legacy configuration"
-    chmod 0600 "$LEGACY_CONFIG_BACKUP" ||
-        fail "Failed to secure the legacy configuration backup"
     msg "$(installer_text legacy_backup_ready): $LEGACY_CONFIG_BACKUP"
+}
+
+restore_private_config() {
+    local source="$1" target="$2" temporary
+    temporary="$(mktemp "${target%/*}/.forkop-migrate.XXXXXX")" || return 1
+    if cat "$source" > "$temporary" && mv -f "$temporary" "$target"; then
+        return 0
+    fi
+    rm -f "$temporary"
+    return 1
 }
 
 prepare_current_config_backup() {
@@ -3423,8 +3447,10 @@ rollback_legacy_config_on_failure() {
     fi
     [ -n "$LEGACY_CONFIG_PATH" ] || return 0
 
-    cp "$LEGACY_CONFIG_BACKUP" "$LEGACY_CONFIG_PATH" 2>/dev/null || return 0
-    chmod 0600 "$LEGACY_CONFIG_PATH" 2>/dev/null || true
+    restore_private_config "$LEGACY_CONFIG_BACKUP" "$LEGACY_CONFIG_PATH" || {
+        warn "Legacy configuration could not be restored; its backup remains at $LEGACY_CONFIG_BACKUP"
+        return 0
+    }
     warn "Legacy configuration was restored after the failed migration. Its backup remains at $LEGACY_CONFIG_BACKUP"
 }
 
@@ -3522,16 +3548,16 @@ migrate_legacy_configuration() {
     [ "$FORKOP_LEGACY_DETECTED" -eq 1 ] || return 0
 
     if [ -n "$LEGACY_CONFIG_BACKUP" ]; then
-        cp "$LEGACY_CONFIG_BACKUP" /etc/config/forkop ||
+        legacy_config_dir="${FORKOP_INSTALLER_CONFIG_DIR:-/etc/config}"
+        restore_private_config "$LEGACY_CONFIG_BACKUP" "$legacy_config_dir/forkop" ||
             fail "Failed to restore the legacy configuration for migration"
-        chmod 0644 /etc/config/forkop ||
-            fail "Failed to set permissions on the Forkop configuration"
 
         msg "Migrating the legacy configuration to Forkop"
         if ! FORKOP_CONFIG_NAME="forkop" \
             FORKOP_LIB="/usr/lib/forkop" \
             ucode -L /usr/lib/forkop /usr/lib/forkop/config/migration.uc migrate-podkop; then
-            cp "$LEGACY_CONFIG_BACKUP" /etc/config/forkop 2>/dev/null || true
+            restore_private_config "$LEGACY_CONFIG_BACKUP" "$legacy_config_dir/forkop" ||
+                fail "Legacy configuration migration and restoration failed"
             fail "Legacy configuration migration failed; the original configuration was restored"
         fi
     else
@@ -3584,6 +3610,7 @@ main() {
 
     parse_args "$@"
     check_root
+    acquire_installer_claim || { warn "Cannot acquire the Forkop installer lock. Check for another running installer."; exit 1; }
     normalize_mirror_base_url
     export FORKOP_MIRROR_BASE_URL="$MIRROR_BASE_URL"
     init_tmp_dir
@@ -3652,6 +3679,7 @@ install_forkop_upgrade_bridge() (
     # Phase one owns its downloads, lifecycle adapter and rollback. Keep the
     # outer transaction's resolved 3.x release and selected channel intact.
     trap - EXIT
+    INSTALLER_CLAIM=""
     TMP_DIR="$(mktemp -d /tmp/forkop.XXXXXX)" ||
         fail "Cannot create the temporary directory for the Forkop $FORKOP_BRIDGE_VERSION update"
     trap cleanup EXIT

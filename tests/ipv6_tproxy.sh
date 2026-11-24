@@ -7,6 +7,11 @@ NFT_UC=$FORKOP_LIB/nft/apply.uc
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+ucode -L "$FORKOP_LIB" -e '
+    let ip = require("core.ip");
+    exit(ip.nft_ip_or_cidr("::ffff:192.0.2.1") &&
+        !ip.nft_ip_or_cidr("192.0.2.1::") && !ip.nft_ip_or_cidr("2001:192.0.2.1::1/96") ? 0 : 1);
+' || fail 'invalid placement of embedded IPv4 in IPv6'
 mkdir -p "$WORK_DIR/bin" "$WORK_DIR/sysctl/all" "$WORK_DIR/sysctl/lo"
 export FORKOP_IPV6_SYSCTL_DIR=$WORK_DIR/sysctl
 export IPV6_TEST_LOG=$WORK_DIR/ip.log

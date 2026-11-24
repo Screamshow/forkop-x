@@ -1560,8 +1560,6 @@ function setServiceAvailability(next: ServiceAvailability) {
 
 function watchServiceState() {
   serviceStateUnsubscribe?.();
-  const mountId = monitoringMountId;
-  let legacyConfigRequested = false;
   serviceStateUnsubscribe = subscribeRuntimeUiState((uiState) => {
     if (!monitoringMounted) {
       return;
@@ -1573,38 +1571,10 @@ function watchServiceState() {
       running: uiState.service.forkop.running,
     });
     setServiceAvailability(availability);
-    if (availability !== 'running') {
+    if (availability !== 'running' || uiState.runtime_config === null) {
       runtimeRouteRulesLoader.clear();
-      legacyConfigRequested = false;
-    } else if (uiState.runtime_config) {
+    } else {
       void runtimeRouteRulesLoader.load(uiState.runtime_config);
-    } else if (uiState.runtime_config === null) {
-      runtimeRouteRulesLoader.clear();
-      legacyConfigRequested = false;
-    } else if (uiState.runtime_config === undefined && !legacyConfigRequested) {
-      // Older backend packages only expose the configured path through UCI.
-      legacyConfigRequested = true;
-      void CustomForkopMethods.getConfigSections()
-        .then((sections) => {
-          if (
-            !monitoringMounted ||
-            mountId !== monitoringMountId ||
-            serviceAvailability !== 'running' ||
-            getCachedRuntimeUiState()?.runtime_config !== undefined
-          ) {
-            return;
-          }
-          const settings = sections.find(
-            (section) => section['.type'] === 'settings',
-          );
-          return runtimeRouteRulesLoader.load({
-            path: settings?.config_path || '/etc/xrust/config.json',
-            revision: 'legacy',
-          });
-        })
-        .catch(() => {
-          legacyConfigRequested = false;
-        });
     }
   });
 }

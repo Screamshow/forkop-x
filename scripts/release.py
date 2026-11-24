@@ -483,6 +483,9 @@ class Release:
                 if entry['assets'] != archived['assets']:
                     raise ValueError('Xrust release catalog mismatch')
             local = {a['file']: a for a in manifest['assets']}
+            archived_names = [asset['file'] for asset in archived['assets']]
+            if not local or len(archived_names) != len(local) or set(archived_names) != local.keys():
+                raise ValueError('Xrust mirror package list differs from signed release')
             for asset in archived['assets']:
                 if asset['sha256'] != local[asset['file']]['sha256'] or asset['size'] != local[asset['file']]['size']:
                     raise ValueError('Xrust mirror differs from signed release')

@@ -35,6 +35,26 @@ rm "$work/config/forkop"
 if (prepare_current_config_backup); then fail 'accepted missing configuration'; fi
 [ "$(sha256sum "$work/backups/configuration.tar.gz")" = "$before" ] || fail 'failed backup destroyed previous copy'
 [ "$(find "$work/backups" -name '.configuration.*' | wc -l)" = 0 ] || fail 'temporary archive leaked'
+(
+    eval "$(sed -n '/^restore_private_config() {/,/^}/p; /^migrate_legacy_configuration() {/,/^}/p' "$ROOT/install.sh")"
+    FORKOP_LEGACY_DETECTED=1
+    LEGACY_CONFIG_BACKUP="$work/legacy.config"
+    printf 'subscription fixture\n' > "$LEGACY_CONFIG_BACKUP"
+    install_json_ucode() { :; }
+    ucode() {
+        [ "$(stat -c %a "$work/config/forkop")" = 600 ] &&
+            cmp -s "$LEGACY_CONFIG_BACKUP" "$work/config/forkop" && [ "$migration_ok" = 1 ]
+    }
+    for migration_ok in 1 0; do
+        touch "$work/config/forkop" && chmod 644 "$work/config/forkop"
+        if (migrate_legacy_configuration); then
+            [ "$migration_ok" = 1 ] || fail 'migration failure was lost'
+        else
+            [ "$migration_ok" = 0 ] || fail 'migration saw insecure permissions or incorrect data'
+        fi
+        [ "$(stat -c %a "$work/config/forkop")" = 600 ] || fail 'insecure legacy configuration'
+    done
+)
 # Both LuCI update variants must reach the common backup after preflight.
 ucode -e 'let fs = require("fs"); let s = fs.readfile(ARGV[0]);
 let a = index(s, "function install_forkop(");
@@ -49,6 +69,7 @@ if (!(start > a && backup > start && mutation > backup)) exit(1);' \
 {
 cat <<'UCODE'
 const SERVICE_INIT = "/fixture/forkop";
+const FORKOP_MIRROR_BASE_URL = "https://mirror.example.test";
 const translation = "luci-i18n-forkop-ru", previous = "2.7.4", target = "2.7.5";
 let forkop_package_init = "/fixture/init", forkop_configuration_backup = "/fixture/backup";
 let forkop_package_version_reader = "/fixture/packages.uc";
@@ -71,7 +92,7 @@ function command_env() { return ""; }
 function command_from_args(args) { return join(" ", args); }
 function pkg_restore_file_command(path) { return path; }
 function run_logged(description, command) {
-    if (index(description, "Removing translation") == 0) {
+    if (index(description, "Removing " + translation) == 0) {
         assert(index(command, (apk ? "apk del --no-network " : "opkg remove ") + translation) == 0, "wrong removal command");
         push(events, "remove translation");
         if (fault == "remove")
@@ -96,7 +117,7 @@ function file_exists() { return true; }
 function wait_for_forkop_restore() { return index(events, "start") >= 0; }
 UCODE
 sed -n '/^function stage_forkop_rollback_packages(/,/^}/p;
-        /^function remove_new_forkop_translation(/,/^}/p;
+        /^function remove_new_forkop_ui_package(/,/^}/p;
         /^function restore_forkop_packages(/,/^}/p' "$ROOT/forkop/files/usr/lib/components/action.uc"
 cat <<'UCODE'
 for (let format in [ "APK", "IPK" ]) {

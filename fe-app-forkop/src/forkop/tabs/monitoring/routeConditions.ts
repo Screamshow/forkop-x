@@ -3,35 +3,37 @@ import type { Forkop } from '../../types';
 export type RuntimeRouteRule = Record<string, unknown>;
 
 export function createRuntimeRouteRulesLoader(
-  read: (path: string, revision: string) => Promise<string>,
+  read: (revision: string) => Promise<string>,
   update: (rules: RuntimeRouteRule[]) => void,
 ) {
-  let requested: Forkop.RuntimeConfigReference | undefined;
+  let requested: { path?: string; revision: string } | undefined;
+  let retryAfter = 0;
   return {
     clear() {
       if (!requested) return;
       requested = undefined;
+      retryAfter = 0;
       update([]);
     },
-    async load(reference: Forkop.RuntimeConfigReference) {
-      if (
-        requested?.path === reference.path &&
-        requested.revision === reference.revision
-      ) {
-        return;
-      }
+    async load(reference?: Forkop.RuntimeConfigReference) {
+      const revision = reference?.revision ?? 'legacy';
+      const same =
+        requested &&
+        requested.path === reference?.path &&
+        requested.revision === revision;
+      if (same && (!retryAfter || Date.now() < retryAfter)) return;
 
-      const request = { ...reference };
+      const request = { path: reference?.path, revision };
       requested = request;
-      update([]);
+      retryAfter = 0;
+      if (!same) update([]);
       try {
-        const config = JSON.parse(await read(request.path, request.revision));
+        const config = JSON.parse(await read(request.revision));
         if (requested === request) {
           update(Array.isArray(config?.route?.rules) ? config.route.rules : []);
         }
       } catch {
-        // Retry on the next state refresh, displaying the core's original rule.
-        if (requested === request) requested = undefined;
+        if (requested === request) retryAfter = Date.now() + 5000;
       }
     },
   };

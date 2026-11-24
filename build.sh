@@ -71,8 +71,8 @@ PROJECT_URL="https://github.com/Screamshow/forkop-x"
 BACKEND_DEPENDS_IPK="libc, ca-bundle, kmod-inet-diag, kmod-tun, curl, ucode, ucode-mod-fs, ucode-mod-uci, kmod-nft-tproxy, bind-dig, nftables-json, kmod-nft-nat, ip-full"
 BACKEND_DEPENDS_APK="bind-dig ca-bundle curl ip-full kmod-inet-diag kmod-nft-nat kmod-nft-tproxy kmod-tun libc nftables-json ucode ucode-mod-fs ucode-mod-uci !https-dns-proxy !nextdns !luci-app-passwall !luci-app-passwall2"
 BACKEND_CONFLICTS_IPK="https-dns-proxy, nextdns, luci-app-passwall, luci-app-passwall2"
-APP_DEPENDS_IPK="libc, luci-base, forkop"
-APP_DEPENDS_APK="libc luci-base forkop"
+APP_DEPENDS_IPK="libc, luci-base, forkop, jsonfilter"
+APP_DEPENDS_APK="libc luci-base forkop jsonfilter"
 
 ensure_host_deps() {
   local missing=()

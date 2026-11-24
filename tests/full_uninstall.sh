@@ -120,7 +120,14 @@ run_case() {
 }
 
 fixture opkg
+printf 'repair configuration backup\n' > "$ROOT/etc/forkop-backups/forkop-before-xrust.aB0cD1"
+printf 'user backup\n' > "$ROOT/etc/forkop-backups/forkop-before-xrust.manual-copy"
+mkdir -p "$ROOT/tmp/forkop-full-uninstall.lock" "$ROOT/var/run/forkop/component-action.lock"
+printf '99999999\n' > "$ROOT/tmp/forkop-full-uninstall.lock/pid"
+printf '99999999\n' > "$ROOT/var/run/forkop/component-action.lock/pid"
 run_case complete
+[ ! -e "$ROOT/etc/forkop-backups/forkop-before-xrust.aB0cD1" ]
+grep -qx 'user backup' "$ROOT/etc/forkop-backups/forkop-before-xrust.manual-copy"
 grep -Fq 'https://vendor.example.test/releases/24.10.2/' "$ROOT/etc/opkg/distfeeds.conf"
 [ ! -f "$ROOT/etc/forkop-backups/configuration.tar.gz" ]
 grep -qx 'user backup' "$ROOT/etc/forkop-backups/manual.tar.gz"
@@ -147,6 +154,15 @@ grep -Fq 'torrserver/direct.uc remove' "$ROOT/service-calls"
 [ ! -e "$ROOT/etc/init.d/forkop-torrserver-direct" ]
 
 fixture missing_backup
+mkdir -p "$ROOT/var/run/forkop/component-action.lock"
+printf '%s\n' "$$" > "$ROOT/var/run/forkop/component-action.lock/pid"
+if FORKOP_UNINSTALL_ROOT="$ROOT" sh "$SCRIPT" start; then
+    echo 'Live component owner was ignored' >&2; exit 1
+fi
+[ "$(cat "$ROOT/var/run/forkop/component-action.lock/pid")" = "$$" ]
+[ ! -d "$ROOT/tmp/forkop-full-uninstall.lock" ]
+rm "$ROOT/var/run/forkop/component-action.lock/pid"
+rmdir "$ROOT/var/run/forkop/component-action.lock"
 rm "$ROOT/etc/opkg/distfeeds.conf.pre-forkop-mirror"
 run_case complete
 # A legacy mirror file without a Forkop-created backup is not guessed back to

@@ -285,20 +285,32 @@ class SignatureGateTests(unittest.TestCase):
             ssh_key=Path('test-key'), timeout=1, resume=False), 'rust-x', '0.0.45')
         operation.source = 'a' * 40
         operation.directory.mkdir(parents=True)
-        (operation.directory / 'openwrt-manifest.json').write_text('{"assets": []}')
+        assets = [dict(file='core.' + fmt, size=10, sha256='a' * 64) for fmt in ('apk', 'ipk')]
+        (operation.directory / 'openwrt-manifest.json').write_text(json.dumps({'assets': assets}))
+        mirrored = [dict(asset, url='https://mirror.invalid/' + asset['file']) for asset in assets]
         archive_url = release.BASE + '/forkop/rust-x/releases/0.0.45/manifest.json'
         catalog_url = release.BASE + '/forkop/rust-x/releases.json'
-        endpoints = {archive_url: {'assets': [], 'binary_source_commit': operation.source},
-                     catalog_url: {'releases': [{'version': operation.version, 'assets': []}]}}
+        endpoints = {archive_url: {'assets': mirrored, 'binary_source_commit': operation.source},
+                     catalog_url: {'releases': [{'version': operation.version, 'assets': mirrored}]}}
         with patch.object(operation, 'current', return_value={'isDraft': True}), \
                 patch.object(operation, 'verify_signatures'), patch.object(operation, 'remote') as remote, \
                 patch.object(release, 'run') as commands, \
                 patch.object(release, 'public_json', side_effect=endpoints.__getitem__) as query:
             operation.finalize()
             self.assertEqual(commands.call_args.args[-2:], ('--draft=false', '--latest=true'))
-            operation.sync()
+            with patch.object(release, 'verify_mirror_asset') as verify:
+                operation.sync()
+                self.assertEqual(verify.call_count, len(assets))
             self.assertNotIn('--latest', remote.call_args.args[0])
             self.assertEqual([call.args[0] for call in query.call_args_list], [archive_url, catalog_url])
+
+            for incomplete in ([], mirrored[:1], [mirrored[0], mirrored[0]], mirrored + mirrored[:1]):
+                with self.subTest(assets=incomplete), patch.object(release, 'verify_mirror_asset') as verify:
+                    endpoints[archive_url]['assets'] = incomplete
+                    endpoints[catalog_url]['releases'][0]['assets'] = incomplete
+                    with self.assertRaisesRegex(ValueError, 'package list differs'):
+                        operation.sync()
+                    verify.assert_not_called()
 
     def test_xrust_pin_requires_complete_matching_mirror_assets(self):
         version = '0.0.44'

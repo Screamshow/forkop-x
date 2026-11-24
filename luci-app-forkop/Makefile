@@ -17,7 +17,7 @@ PKG_RELEASE:=
 PKG_PO_VERSION:=$(PKG_VERSION)
 
 LUCI_TITLE:=LuCI Forkop app
-LUCI_DEPENDS:=+luci-base +forkop
+LUCI_DEPENDS:=+luci-base +forkop +jsonfilter
 LUCI_PKGARCH:=all
 LUCI_LANG.ru:=Русский (Russian)
 LUCI_LANG.en:=English

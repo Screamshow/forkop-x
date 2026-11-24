@@ -83,7 +83,14 @@ function restart_dnsmasq() {
 }
 
 function dnsmasq_legacy_instance_exists() {
-    return uci_exists("dhcp.forkop");
+    let section = uci.get_all("dhcp", "forkop");
+    if (!section || section[".type"] != "dnsmasq")
+        return false;
+    let primary = uci.get_all("dhcp", "@dnsmasq[0]");
+    return (!primary || primary[".name"] != "forkop") &&
+        uci_get("dhcp.forkop.noresolv") == "1" && uci_get("dhcp.forkop.cachesize") == "0" &&
+        list_has(uci_get("dhcp.forkop.server"), SB_DNS_INBOUND_ADDRESS) &&
+        list_has(uci_get("dhcp.forkop.notinterface"), "lo");
 }
 
 function dnsmasq_default_servers() {
@@ -173,7 +180,7 @@ function dnsmasq_has_forkop_managed_state() {
 }
 
 function dnsmasq_default_values_are_managed() {
-    return dnsmasq_default_has_forkop_dns() &&
+    return dnsmasq_default_servers() == SB_DNS_INBOUND_ADDRESS &&
         uci_get(DNSMASQ_DEFAULT + "noresolv") == "1" &&
         uci_get(DNSMASQ_DEFAULT + "cachesize") == "0";
 }
@@ -249,29 +256,35 @@ function current_field_matches_forkop_value(key) {
     return false;
 }
 
+function additional_dnsmasq_servers() {
+    let current = dnsmasq_option_value("server");
+    return filter(type(current) == "array" ? current : words(current),
+        value => value != SB_DNS_INBOUND_ADDRESS);
+}
+
 function restore_snapshot_server() {
     let current_path = "dhcp.@dnsmasq[0].server";
-    if (!current_field_matches_forkop_value("server")) {
+    if (!dnsmasq_default_has_forkop_dns()) {
         log("DNS rollback conflict: dnsmasq server changed outside Forkop; preserving the external value", "warn");
         return false;
     }
 
-    if (uci_get(snapshot_path("server_present")) != "1") {
-        uci_delete(current_path);
-        return true;
-    }
-
+    let additional = additional_dnsmasq_servers();
     let kind = uci_get(snapshot_path("server_kind"));
     let value = dnsmasq_option_value("forkop_dns_server");
     uci_delete(current_path);
-    if (kind == "list") {
+    if (kind == "list" || length(additional)) {
         // In fixture mode UCI list values are serialized as whitespace-separated
         // text; on OpenWrt get_all() returns the original ordered array.
-        let values = type(value) == "array" ? value : words(as_string(value));
+        let values = type(value) == "array" ? value :
+            (kind == "scalar" && as_string(value) != "" ? [ value ] : words(value));
+        for (let entry in additional)
+            if (index(values, entry) < 0)
+                push(values, entry);
         for (let entry in values)
             uci_add_list(current_path, entry);
     }
-    else {
+    else if (kind == "scalar") {
         uci_set(current_path, as_string(value));
     }
     return true;
@@ -295,7 +308,8 @@ function dnsmasq_cleanup_legacy_instance() {
     let legacy_instance_present = dnsmasq_legacy_instance_exists();
     let legacy_interfaces = legacy_instance_present ? dnsmasq_legacy_interfaces() : "";
 
-    uci_delete("dhcp.forkop");
+    if (legacy_instance_present)
+        uci_delete("dhcp.forkop");
 
     let backup_notinterfaces = uci_get("dhcp.@dnsmasq[0].forkop_notinterface");
     if (backup_notinterfaces != "") {
@@ -320,11 +334,14 @@ function clear_legacy_dnsmasq_defaults() {
 }
 
 function restore_legacy_dnsmasq_defaults() {
-    let managed_server = current_field_matches_forkop_value("server");
+    let managed_server = dnsmasq_default_has_forkop_dns();
     let changed = managed_server;
     if (managed_server) {
         let servers = dnsmasq_option_value("forkop_server");
         servers = type(servers) == "array" ? servers : words(servers);
+        for (let entry in additional_dnsmasq_servers())
+            if (index(servers, entry) < 0)
+                push(servers, entry);
         uci_delete(DNSMASQ_DEFAULT + "server");
         for (let server in servers)
             if (server != SB_DNS_INBOUND_ADDRESS)
@@ -513,7 +530,7 @@ function dnsmasq_restore(force, quiet, preserve_on_failure) {
     if (has_legacy_defaults) {
         // A prior upgrade could have saved the already-managed resolver in
         // the versioned backup. Complete that rollback using the old backup.
-        if (!has_snapshot || current_field_matches_forkop_value("server"))
+        if (!has_snapshot || dnsmasq_default_has_forkop_dns())
             changed = restore_legacy_dnsmasq_defaults() || changed;
         else
             clear_legacy_dnsmasq_defaults();

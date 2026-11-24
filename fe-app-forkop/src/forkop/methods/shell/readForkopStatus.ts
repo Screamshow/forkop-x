@@ -80,7 +80,7 @@ export async function readForkopClashData<T>(
   }
 }
 
-export async function readForkopRuntimeConfig(_path: string, revision: string) {
+export async function readForkopRuntimeConfig(revision: string) {
   const result = await readForkopStatus('runtime_config', revision);
   if (result.code !== 0) throw new Error(result.stderr);
   return result.stdout;

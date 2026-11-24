@@ -20,8 +20,7 @@ vi.mock('../../shell', () => ({
 
 vi.mock('../../shell/readForkopStatus', () => ({
   isReadOnlyForkopView: () => false,
-  readForkopRuntimeConfig: (path: string, revision: string) =>
-    mocks.fsRead(path, revision),
+  readForkopRuntimeConfig: mocks.fsRead,
 }));
 
 vi.mock('../../../services/runtimeUiState.service', () => ({
@@ -402,7 +401,7 @@ describe('getDashboardSections', () => {
       },
     });
     mocks.fsRead.mockImplementation(async (path: string) => {
-      if (path === appliedPath) {
+      if (path === 'a' || path === 'b') {
         return JSON.stringify({
           outbounds: [
             {
@@ -468,16 +467,14 @@ describe('getDashboardSections', () => {
     });
     await getDashboardSections();
     expect(
-      mocks.fsRead.mock.calls.filter(([path]) => path === appliedPath),
+      mocks.fsRead.mock.calls.filter(([revision]) => revision === 'a'),
     ).toHaveLength(1);
     expect(mocks.fsRead).not.toHaveBeenCalledWith('/etc/xrust/config.json');
     mocks.getCachedRuntimeUiState.mockReturnValue({
       runtime_config: { path: appliedPath, revision: 'b' },
     });
     await getDashboardSections();
-    expect(
-      mocks.fsRead.mock.calls.filter(([path]) => path === appliedPath),
-    ).toHaveLength(2);
+    expect(mocks.fsRead).toHaveBeenCalledWith('b');
     mocks.getCachedRuntimeUiState.mockReturnValue({ runtime_config: null });
     const transitioning = await getDashboardSections();
     expect(transitioning.data[0].outbounds[0].urlTestInfo?.interval).not.toBe(

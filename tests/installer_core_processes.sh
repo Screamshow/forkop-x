@@ -8,8 +8,7 @@ cat > "$WORK/check.uc" <<'EOF'
 function as_string(value) { return value == null ? "" : "" + value; }
 let executable = "/usr/lib/rust-x/sing-box";
 let cmdline = "";
-let fs = { readfile: function(path) { return cmdline; } };
-function command_output(args) { return executable; }
+let fs = { readfile: function(path) { return cmdline; }, readlink: function(path) { return executable; } };
 EOF
 sed -n '/^function sing_box_exe_path(/,/^}/p; /^function installer_sing_box_process(/,/^}/p' "$ROOT/install.sh" >> "$WORK/check.uc"
 cat >> "$WORK/check.uc" <<'EOF'

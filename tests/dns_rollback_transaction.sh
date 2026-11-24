@@ -53,6 +53,39 @@ ucode -L "$FORKOP_LIB" "$APPLY" failsafe-restore
 cmp -s "$WORK_DIR/foreign.before" "$STATE" || fail 'foreign dnsmasq was changed'
 [ ! -s "$DNSMASQ_LOG" ] || fail 'foreign dnsmasq was restarted'
 
+# A named DHCP reservation is independent of the old Forkop dnsmasq instance.
+cat >>"$STATE" <<'EOF_STATE'
+dhcp.forkop=host
+dhcp.forkop.ip=192.168.1.12
+EOF_STATE
+ucode -L "$FORKOP_LIB" "$APPLY" configure force
+ucode -L "$FORKOP_LIB" "$APPLY" restore force
+[ "$(value dhcp.forkop)" = host ] && [ "$(value dhcp.forkop.ip)" = 192.168.1.12 ] ||
+    fail 'foreign DHCP reservation was removed'
+cat >"$STATE" <<'EOF_STATE'
+dhcp.@dnsmasq[0]=dnsmasq
+dhcp.forkop=dnsmasq
+dhcp.forkop.server=192.0.2.53
+dhcp.forkop.port=5354
+EOF_STATE
+cp "$STATE" "$WORK_DIR/foreign.before"
+ucode -L "$FORKOP_LIB" "$APPLY" configure force
+ucode -L "$FORKOP_LIB" "$APPLY" restore force
+cmp -s "$WORK_DIR/foreign.before" "$STATE" || fail 'foreign dnsmasq instance was changed'
+
+# A split DNS entry added while Forkop runs survives reconfigure and rollback.
+printf '%s\n' 'dhcp.@dnsmasq[0].server=9.9.9.9' >"$STATE"
+ucode -L "$FORKOP_LIB" "$APPLY" configure force
+sed -i 's|^dhcp.@dnsmasq\[0\].server=.*|dhcp.@dnsmasq[0].server=127.0.0.42 /corp.example/10.0.0.53|' "$STATE"
+cp "$STATE" "$WORK_DIR/conflict.before"
+if ucode -L "$FORKOP_LIB" "$APPLY" configure force; then
+    fail 'reconfigure accepted conflicting DNS entries'
+fi
+cmp -s "$WORK_DIR/conflict.before" "$STATE" || fail 'reconfigure discarded an external resolver'
+ucode -L "$FORKOP_LIB" "$APPLY" restore force
+[ "$(value 'dhcp.@dnsmasq[0].server')" = '9.9.9.9 /corp.example/10.0.0.53' ] ||
+    fail 'rollback failed to combine the original and external resolvers'
+
 # A Forkop transaction restores exactly the original values, including absence.
 cat >"$STATE" <<'EOF_STATE'
 dhcp.@dnsmasq[0].server=1.1.1.1
@@ -177,6 +210,10 @@ dhcp.@dnsmasq[0].notinterface=lan mesh
 dhcp.forkop=dnsmasq
 dhcp.forkop.interface=mesh
 dhcp.forkop.port=5354
+dhcp.forkop.server=127.0.0.42
+dhcp.forkop.noresolv=1
+dhcp.forkop.cachesize=0
+dhcp.forkop.notinterface=lo
 EOF_STATE
 for action in configure restore; do
     if [ "$action" = restore ]; then
@@ -239,6 +276,17 @@ ucode -L "$FORKOP_LIB" "$APPLY" configure force
 grep '\.forkop_' "$WORK_DIR/legacy.defaults" >>"$STATE"
 ucode -L "$FORKOP_LIB" "$APPLY" restore force
 legacy_upstream_restored
+
+# An external addition can coexist with both generations of backup.
+grep -v '\.forkop_' "$WORK_DIR/legacy.defaults" >"$STATE"
+ucode -L "$FORKOP_LIB" "$APPLY" configure force
+grep '\.forkop_' "$WORK_DIR/legacy.defaults" >>"$STATE"
+sed -i 's|^dhcp.@dnsmasq\[0\].server=.*|dhcp.@dnsmasq[0].server=127.0.0.42 /corp.example/10.0.0.53|' "$STATE"
+ucode -L "$FORKOP_LIB" "$APPLY" restore force
+[ "$(value 'dhcp.@dnsmasq[0].server')" = '1.1.1.1#53 8.8.8.8#53 /corp.example/10.0.0.53' ] ||
+    fail 'mixed DNS rollback lost an upstream resolver'
+absent 'dhcp.@dnsmasq[0].forkop_dns_version'
+absent 'dhcp.@dnsmasq[0].forkop_server'
 
 # Preserve later external DNS edits even when legacy fields still exist.
 sed 's/^dhcp.@dnsmasq\[0\].server=.*/dhcp.@dnsmasq[0].server=9.9.9.9/' "$WORK_DIR/legacy.defaults" >"$STATE"

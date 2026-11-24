@@ -32,6 +32,22 @@ fail() {
 
 [ -r "$INSTALLER" ] || fail "install.sh is missing"
 
+# A second installer must fail before either process owns package state.
+claim_functions="$WORK_DIR/installer-claim.sh"
+sed -n '/^installer_process_ticks() {/,/^}/p; /^acquire_installer_claim() {/,/^}/p' \
+  "$INSTALLER" > "$claim_functions"
+export FORKOP_INSTALLER_LOCK_DIR="$WORK_DIR/installer-lock"
+. "$claim_functions"
+mkdir -p "$FORKOP_INSTALLER_LOCK_DIR/99999999.123" "$FORKOP_INSTALLER_LOCK_DIR/$$.0"
+acquire_installer_claim || fail "dead or reused installer PID blocked installation"
+[ ! -d "$FORKOP_INSTALLER_LOCK_DIR/99999999.123" ] &&
+  [ ! -d "$FORKOP_INSTALLER_LOCK_DIR/$$.0" ] || fail "stale installer claim remained"
+if sh -c '. "$1"; trap '\''[ -z "${INSTALLER_CLAIM:-}" ] || rmdir "$INSTALLER_CLAIM"'\'' EXIT; acquire_installer_claim' sh "$claim_functions"; then
+  fail "two installers acquired the same transaction"
+fi
+[ -d "$INSTALLER_CLAIM" ] || fail "competing installer removed the active owner"
+rmdir "$INSTALLER_CLAIM"
+
 grep -Fq 'trap cleanup EXIT' "$INSTALLER" ||
   fail "installer cleanup must run on every exit"
 for signal_status in "HUP 129" "INT 130" "TERM 143"; do
@@ -224,22 +240,25 @@ awk '
   in_main && /pkg_list_update/ { update = NR }
   in_main && /ensure_bootstrap_ucode_runtime/ { ensure = NR }
   in_main && /resolve_forkop_release/ { resolve = NR }
-  in_main && /download_forkop_packages/ { download = NR }
-  in_main && /ensure_flash_space/ { space = NR }
-  in_main && /confirm_legacy_migration/ { confirm = NR }
+  in_main && /install_resolved_forkop_release/ { dispatch = NR }
   in_main && /detect_legacy_installation/ { detect = NR }
-  in_main && /cleanup_legacy_installation/ { cleanup = NR }
-  in_main && /install_backend_package/ && backend == 0 { backend = NR }
-  in_main && /migrate_legacy_configuration/ { migration = NR }
-  in_main && /validate_installed_configuration/ { validation = NR }
-  in_main && /install_ui_packages/ { ui = NR }
-  in_main && /install_selected_sing_box/ { sing_box = NR }
-  in_main && /^[[:space:]]*\}/ { in_main = 0 }
+  /^install_resolved_forkop_release\(\) \{/ { in_release = 1 }
+  in_release && /download_forkop_packages/ { download = NR }
+  in_release && /ensure_flash_space/ { space = NR }
+  in_release && /confirm_legacy_migration/ { confirm = NR }
+  in_release && /begin_legacy_migration/ { begin = NR }
+  in_release && /cleanup_legacy_installation/ { cleanup = NR }
+  in_release && /install_backend_package/ && backend == 0 { backend = NR }
+  in_release && /migrate_legacy_configuration/ { migration = NR }
+  in_release && /validate_installed_configuration/ { validation = NR }
+  in_release && /install_ui_packages/ { ui = NR }
+  in_release && /install_selected_sing_box/ { sing_box = NR }
+  /^\}/ { in_main = in_release = 0 }
   END {
     if (detect > 0 && i18n > detect && select_sing_box > i18n &&
         update > select_sing_box && ensure > update && resolve > ensure &&
-        download > resolve && confirm > download && space > confirm &&
-        backend > space && migration > backend && cleanup > space &&
+        dispatch > resolve && download > 0 && confirm > download && space > confirm &&
+        backend > space && begin > backend && migration > begin && cleanup > space &&
         ui > migration && ui > cleanup &&
         sing_box > ui && validation > sing_box)
       exit 0
