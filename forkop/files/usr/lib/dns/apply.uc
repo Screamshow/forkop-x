@@ -163,6 +163,12 @@ function dnsmasq_option_value(option) {
     return type(section) == "object" ? section[option] : null;
 }
 
+function additional_dnsmasq_servers() {
+    let current = dnsmasq_option_value("server");
+    return filter(type(current) == "array" ? current : words(current),
+        value => value != SB_DNS_INBOUND_ADDRESS);
+}
+
 function dnsmasq_has_legacy_defaults() {
     for (let key in LEGACY_BACKUP_KEYS)
         if (uci_get(DNSMASQ_DEFAULT + key) != "")
@@ -179,8 +185,22 @@ function dnsmasq_has_forkop_managed_state() {
         dnsmasq_has_legacy_instance_state() || dnsmasq_has_legacy_defaults();
 }
 
+function dnsmasq_server_is_scoped(server) {
+    let parts = split(server, "/");
+    if (length(parts) < 3 || parts[0] != "")
+        return false;
+
+    // An empty selector matches unqualified names. Require a literal domain
+    // character in the other selectors to exclude catch-all patterns.
+    for (let i = 1; i < length(parts) - 1; i++)
+        if (parts[i] != "" && !match(parts[i], /^\*?\.?[A-Za-z0-9_-][A-Za-z0-9_.-]*$/))
+            return false;
+    return true;
+}
+
 function dnsmasq_default_values_are_managed() {
-    return dnsmasq_default_servers() == SB_DNS_INBOUND_ADDRESS &&
+    return dnsmasq_default_has_forkop_dns() &&
+        length(filter(additional_dnsmasq_servers(), server => !dnsmasq_server_is_scoped(server))) == 0 &&
         uci_get(DNSMASQ_DEFAULT + "noresolv") == "1" &&
         uci_get(DNSMASQ_DEFAULT + "cachesize") == "0";
 }
@@ -254,12 +274,6 @@ function current_field_matches_forkop_value(key) {
     if (key == "cachesize")
         return uci_get("dhcp.@dnsmasq[0].cachesize") == "0";
     return false;
-}
-
-function additional_dnsmasq_servers() {
-    let current = dnsmasq_option_value("server");
-    return filter(type(current) == "array" ? current : words(current),
-        value => value != SB_DNS_INBOUND_ADDRESS);
 }
 
 function restore_snapshot_server() {
@@ -362,9 +376,14 @@ function restore_legacy_dnsmasq_defaults() {
 }
 
 function dnsmasq_configure_default_instance() {
+    // The caller checked that a live snapshot still owns the default DNS
+    // settings. Leave domain-specific servers added during that transaction.
+    if (dnsmasq_snapshot_is_valid())
+        return true;
+
     // Normalize a legacy backup in the same UCI commit that enables
     // forwarding, so the versioned backup captures the upstream settings.
-    if (!dnsmasq_snapshot_is_valid() && dnsmasq_has_legacy_defaults())
+    if (dnsmasq_has_legacy_defaults())
         restore_legacy_dnsmasq_defaults();
     if (!snapshot_dnsmasq_default_instance())
         return false;

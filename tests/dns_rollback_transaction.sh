@@ -77,11 +77,27 @@ cmp -s "$WORK_DIR/foreign.before" "$STATE" || fail 'foreign dnsmasq instance was
 printf '%s\n' 'dhcp.@dnsmasq[0].server=9.9.9.9' >"$STATE"
 ucode -L "$FORKOP_LIB" "$APPLY" configure force
 sed -i 's|^dhcp.@dnsmasq\[0\].server=.*|dhcp.@dnsmasq[0].server=127.0.0.42 /corp.example/10.0.0.53|' "$STATE"
-cp "$STATE" "$WORK_DIR/conflict.before"
-if ucode -L "$FORKOP_LIB" "$APPLY" configure force; then
-    fail 'reconfigure accepted conflicting DNS entries'
-fi
-cmp -s "$WORK_DIR/conflict.before" "$STATE" || fail 'reconfigure discarded an external resolver'
+printf '%s\n' 'forkop.settings.shutdown_correctly=0' >>"$STATE"
+cp "$STATE" "$WORK_DIR/scoped.before"
+ucode -L "$FORKOP_LIB" "$APPLY" configure force || fail 'reconfigure refused a domain-specific resolver'
+cmp -s "$WORK_DIR/scoped.before" "$STATE" || fail 'reconfigure changed an external resolver'
+: >"$DNSMASQ_LOG"
+ucode -L "$FORKOP_LIB" "$APPLY" configure || fail 'unclean shutdown recovery refused a domain-specific resolver'
+cmp -s "$WORK_DIR/scoped.before" "$STATE" || fail 'unclean shutdown recovery changed an external resolver'
+[ ! -s "$DNSMASQ_LOG" ] || fail 'unclean shutdown recovery reconfigured an already valid instance'
+
+# Competing default upstreams still conflict. Leave the existing settings and
+# ownership snapshot available for explicit rollback.
+for resolver in '10.0.0.53' '/*/10.0.0.53' '/#/10.0.0.53'; do
+    sed "s|/corp.example/10.0.0.53|$resolver|" "$WORK_DIR/scoped.before" >"$STATE"
+    cp "$STATE" "$WORK_DIR/conflict.before"
+    if ucode -L "$FORKOP_LIB" "$APPLY" configure force; then
+        fail 'reconfigure accepted a conflicting default resolver'
+    fi
+    cmp -s "$WORK_DIR/conflict.before" "$STATE" || fail 'reconfigure changed a conflicting default resolver'
+done
+[ ! -s "$DNSMASQ_LOG" ] || fail 'reconfigure restarted dnsmasq with a conflicting default resolver'
+cp "$WORK_DIR/scoped.before" "$STATE"
 ucode -L "$FORKOP_LIB" "$APPLY" restore force
 [ "$(value 'dhcp.@dnsmasq[0].server')" = '9.9.9.9 /corp.example/10.0.0.53' ] ||
     fail 'rollback failed to combine the original and external resolvers'

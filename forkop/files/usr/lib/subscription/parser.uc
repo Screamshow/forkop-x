@@ -383,7 +383,8 @@ function read_json_file(path) {
 }
 
 function reality_public_key_valid(value) {
-    return match(as_string(value), /^[A-Za-z0-9_-]{43}$/) != null;
+    // A 32-byte unpadded base64url key has two zero bits in its final sextet.
+    return match(as_string(value), /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/) != null;
 }
 
 function subscription_reality_valid(outbound) {

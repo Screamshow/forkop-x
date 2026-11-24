@@ -5,7 +5,7 @@ FORKOP_LIB="$ROOT_DIR/forkop/files/usr/lib"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 cat >"$WORK_DIR/fixture.json" <<'JSON'
-{"settings":{"dns_server":"1.1.1.1"},"section":[{".name":"voice",".type":"section","enabled":"1","action":"vpn","interface":"wg0","community_lists":["discord","telegram"],"source_ip_cidr":["192.168.1.10/32"],"excluded_source_ip_cidr":["192.168.1.11/32"],"ports":["3478","19294-19344"]}]}
+{"settings":{"dns_server":"1.1.1.1"},"section":[{".name":"voice",".type":"section","enabled":"1","action":"vpn","interface":"wg0","community_lists":["discord","telegram"],"source_ip_cidr":["192.168.1.10/32"],"excluded_source_ip_cidr":["192.168.1.11/32"],"ports":["3478","443-443","19294-19344"]}]}
 JSON
 mkdir -p "$WORK_DIR/config.json.rulesets"
 ucode -L "$FORKOP_LIB" -e '
@@ -28,7 +28,10 @@ for (let r in c.route.rules) {
   let base=r.rules[0];
   let tags=type(base.rule_set)=="array" ? base.rule_set : [base.rule_set];
   if (index(tags,"voice-community-subnets-lists-ruleset") < 0) continue;
-  if (r.outbound != "voice-out" || base.source_ip_cidr[0] != "192.168.1.10/32" || base.port[0] != 3478 || base.port_range[0] != "19294:19344") die("section scope lost\n");
+  if (r.outbound != "voice-out" || base.source_ip_cidr[0] != "192.168.1.10/32") die("section scope lost\n");
+  assert(sprintf("%J", base.port) == sprintf("%J", [3478,443]) &&
+    sprintf("%J", base.port_range) == sprintf("%J", ["19294:19344"]),
+    "equal endpoints must emit a single numeric port");
   if (!r.rules[1].invert) die("excluded source lost\n");
   found=true;
 }

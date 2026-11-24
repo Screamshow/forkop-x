@@ -2356,7 +2356,7 @@ function restart() {
         let status = reload("restart", true);
         if (status == 0)
             remove_file(RELOAD_STOPPED_FILE);
-        let restore_status = restore_selector_state(selector_state);
+        let restore_status = selector_state == null ? 0 : restore_selector_state(selector_state);
         return status || restore_status;
     }
 

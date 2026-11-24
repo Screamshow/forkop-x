@@ -145,6 +145,37 @@ UC
 } > "$WORK/selectors.uc"
 ucode "$WORK/selectors.uc"
 
+{
+cat <<'UC'
+const UI_UC="ui", STATE_UC="state", RT_TABLE_NAME="route", NFT_TABLE_NAME="nft", NFT_FAKEIP_MARK="mark";
+const RELOAD_STOPPED_FILE="stopped";
+let snapshot, reload_status, restore_status, restores, cleared;
+function log_message() {}
+function module_success(module,args) { return args[0] == "forkop-running"; }
+function capture_selector_state() { return snapshot; }
+function reload(reason, keep_runtime) {
+    assert(reason == "restart" && keep_runtime);
+    return reload_status;
+}
+function remove_file(path) { assert(path == RELOAD_STOPPED_FILE); cleared++; }
+function restore_selector_state(state) { assert(state === snapshot && state != null); restores++; return restore_status; }
+UC
+sed -n '/^function restart(/,/^}/p' "$FORKOP_LIB/service/lifecycle.uc"
+cat <<'UC'
+function check(state, replaced, restored, expected) {
+    snapshot=state; reload_status=replaced; restore_status=restored; cleared=0; restores=0;
+    assert(restart() == expected, "restart returned the wrong status");
+    assert(cleared == (replaced == 0 ? 1 : 0), "incorrect reload marker cleanup");
+    assert(restores == (state == null ? 0 : 1), "incorrect selector restore attempt");
+}
+check(null,0,1,0);
+check(null,1,1,1);
+check({group:"old"},0,0,0);
+check({group:"old"},0,1,1);
+UC
+} > "$WORK/restart.uc"
+ucode "$WORK/restart.uc"
+
 mkdir -p "$WORK/bin"
 cat > "$WORK/bin/curl" <<'SH'
 #!/bin/sh

@@ -7,9 +7,10 @@ trap 'rm -rf "$WORK"' EXIT
 normalize() { ucode -L "$LIB" "$LIB/subscription/parser.uc" normalize-content-validated "$1" "$2"; }
 
 base='vless://00000000-0000-4000-8000-000000000001@node.example:443?security=reality&sni=site.example'
-printf '%s\n' "$base&pbk=bad#Broken" "$base&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA#Healthy" > "$WORK/mixed"
+printf '%s\n' "$base&pbk=bad#Broken" "$base&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB#Noncanonical" \
+    "$base&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA#Healthy" > "$WORK/mixed"
 normalize "$WORK/mixed" "$WORK/out"
-ucode -e 'let v=json(require("fs").readfile(ARGV[0])); assert(v.skipped==1 && length(v.outbounds)==1 && v.outbounds[0].tag=="Healthy");' "$WORK/out"
+ucode -e 'let v=json(require("fs").readfile(ARGV[0])); assert(v.skipped==2 && length(v.outbounds)==1 && v.outbounds[0].tag=="Healthy");' "$WORK/out"
 printf '%s\n' "$base&pbk=bad#Broken" > "$WORK/invalid"
 if normalize "$WORK/invalid" "$WORK/out"; then exit 1; fi
 [ ! -e "$WORK/out" ]
