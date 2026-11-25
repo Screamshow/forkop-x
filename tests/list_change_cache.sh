@@ -211,7 +211,15 @@ cat >"$WORK/bin/ucode" <<'EOF'
 #!/bin/sh
 case "$*" in
   *'/components/action.uc component-action forkop check_update')
+    [ "${FORKOP_COMPONENT_BACKGROUND:-0}" = 1 ] || exit 90
     echo check >>"$TEST_COMPONENT_CALLS"
+    case "${TEST_COMPONENT_RESULT:-error}" in
+      occupied) exec "$TEST_REAL_UCODE" "$@" ;;
+      latest)
+        printf '%s\n' '{"success":true,"component":"forkop","action":"check_update","status":"latest","latest_version":"3.0.7"}'
+        exit 0
+        ;;
+    esac
     exit 1
     ;;
 esac
@@ -222,6 +230,25 @@ now=$(date +%s)
 printf '%s\n' "$((now - 44 * 60))" >"$WORK/state/component-update-check.timestamp"
 updates component-updates-if-due || fail 'early component poll failed'
 [ ! -e "$TEST_COMPONENT_CALLS" ] || fail 'component poll started an early request'
+printf '%s\n' "$((now - 46 * 60))" >"$WORK/state/component-update-check.timestamp"
+mkdir "$WORK/state/component-action.lock"
+printf '%s\n' "$$" >"$WORK/state/component-action.lock/pid"
+TEST_COMPONENT_RESULT=occupied updates component-updates-if-due || fail 'busy component poll failed'
+[ "$(cat "$WORK/state/component-update-check.timestamp")" = "$((now - 46 * 60))" ] ||
+  fail 'busy component poll consumed the scheduled attempt'
+[ "$(cat "$WORK/state/component-action.lock/pid")" = "$$" ] ||
+  fail 'busy component poll changed the existing action owner'
+[ ! -d "$WORK/state/component-update-check.lock" ] || fail 'busy component poll retained its scheduler lock'
+[ ! -e "$WORK/state/component-update-checks/forkop.json" ] || fail 'busy component poll cached a result'
+rm "$WORK/state/component-action.lock/pid"
+rmdir "$WORK/state/component-action.lock"
+TEST_COMPONENT_RESULT=latest updates component-updates-if-due || fail 'deferred component poll did not retry'
+grep -Eq '"status"[[:space:]]*:[[:space:]]*"latest"' "$WORK/state/component-update-checks/forkop.json" ||
+  fail 'retried component poll did not cache the successful result'
+[ "$(wc -l <"$TEST_COMPONENT_CALLS")" -eq 2 ] || fail 'expected a deferred poll and one retry'
+
+# An actual check failure still consumes an attempt to avoid polling the mirror every minute.
+: >"$TEST_COMPONENT_CALLS"
 printf '%s\n' "$((now - 46 * 60))" >"$WORK/state/component-update-check.timestamp"
 updates component-updates-if-due || fail 'due component check failed'
 updates component-updates-if-due || fail 'component poll after the attempt failed'

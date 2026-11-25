@@ -2553,9 +2553,11 @@ function component_action_status(job_id) {
 function run_automatic_component_update_check(component) {
     let output_file = temp_path();
     if (output_file == "")
-        return false;
+        return 1;
 
-    let command = command_env(component_worker_env()) + " " +
+    let env = component_worker_env();
+    env.FORKOP_COMPONENT_BACKGROUND = "1";
+    let command = command_env(env) + " " +
         command_from_args([
             "ucode",
             "-L", LIB_DIR,
@@ -2568,10 +2570,12 @@ function run_automatic_component_update_check(component) {
     let value = output_json_object(output_file);
     remove_file(output_file);
 
-    if (status != 0 || !component_update_check_result_cacheable(value))
-        return false;
+    if (status != 0)
+        return status;
+    if (!component_update_check_result_cacheable(value))
+        return 1;
 
-    return cache_component_update_check_result(value, true);
+    return cache_component_update_check_result(value, true) ? 0 : 1;
 }
 
 function component_updates_if_due() {
@@ -2609,7 +2613,10 @@ function component_updates_if_due() {
     }
 
     ensure_dir(COMPONENT_UPDATE_CHECK_CACHE_DIR);
-    run_automatic_component_update_check("forkop");
+    if (run_automatic_component_update_check("forkop") == 75) {
+        release_runtime_lock(COMPONENT_UPDATE_CHECK_LOCK_DIR);
+        exit(0);
+    }
 
     if (!write_file(COMPONENT_UPDATE_CHECK_STATE_FILE, as_string(now_seconds()) + "\n")) {
         release_runtime_lock(COMPONENT_UPDATE_CHECK_LOCK_DIR);
