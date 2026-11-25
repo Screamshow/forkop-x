@@ -340,7 +340,14 @@ export FORKOP_POST_START_LATENCY_FILE="$WORK_DIR/post-start-latency.pending"
 : >"$FORKOP_WATCHDOG_READY_FILE"
 : >"$FORKOP_PENDING_RELOAD_FILE"
 : >"$FORKOP_POST_START_LATENCY_FILE"
+export TEST_WATCHDOG_UPDATES="$WORK_DIR/watchdog-updates"
+cat >"$WORK_DIR/bin/forkop-watchdog-fixture" <<'EOF_WATCHDOG'
+#!/bin/sh
+printf '%s\n' "$1" >>"$TEST_WATCHDOG_UPDATES"
+EOF_WATCHDOG
+chmod +x "$WORK_DIR/bin/forkop-watchdog-fixture"
 FORKOP_WATCHDOG_GRACE_SECONDS=0 FORKOP_WATCHDOG_INTERVAL_SECONDS=1 \
+  FORKOP_WATCHDOG_UPDATE_CHECK_INTERVAL_SECONDS=1 FORKOP_BIN="$WORK_DIR/bin/forkop-watchdog-fixture" \
   ucode -L "$FORKOP_LIB" "$FORKOP_LIB/service/watchdog.uc" &
 watchdog_pid=$!
 sleep 3
@@ -355,6 +362,8 @@ for attempt in 1 2 3 4 5 6 7 8 9 10; do
 done
 [ ! -e "$FORKOP_AUTOMATIC_LATENCY_PENDING_FILE" ] || fail "watchdog did not dispatch due latency retry"
 [ "$(wc -l <"$TEST_CURL_LOG")" -eq 9 ] || fail "watchdog retry lost or duplicated probes"
+grep -Fxq list_update_if_due "$TEST_WATCHDOG_UPDATES" || fail "watchdog did not check for list updates"
+grep -Fxq component_updates_if_due "$TEST_WATCHDOG_UPDATES" || fail "watchdog did not check for component updates"
 
 grep -Fq 'Starting new automatic latency test' "$TEST_LOG" || fail "new-test log is missing"
 grep -Fq 'Resuming interrupted automatic latency test' "$TEST_LOG" || fail "resume log is missing"

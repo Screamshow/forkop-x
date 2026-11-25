@@ -175,11 +175,10 @@ printf '%s\n' '*/45 * * * * /usr/bin/forkop list_update_if_due # forkop-list-upd
   '*/45 * * * * /usr/bin/forkop component_updates_if_due # forkop-component-update-check' >>"$FORKOP_CRONTAB_FILE"
 updates() { ucode -L "$LIB" "$LIB/components/updates.uc" "$@"; }
 updates refresh-cron-from-uci /usr/bin/forkop '# forkop-list-update' '# forkop-subscription-update' '# forkop-component-update-check'
-grep -Fxq '* * * * * /usr/bin/forkop list_update_if_due # forkop-list-update' "$FORKOP_CRONTAB_FILE" ||
-  fail 'list checks must see the first eligible minute'
-grep -Fxq '* * * * * /usr/bin/forkop component_updates_if_due # forkop-component-update-check' "$FORKOP_CRONTAB_FILE" ||
-  fail 'component checks must see the first eligible minute'
-! grep -q '^\*/45 ' "$FORKOP_CRONTAB_FILE" || fail 'old calendar steps survived'
+! grep -Eq 'forkop-(list-update|component-update-check)' "$FORKOP_CRONTAB_FILE" ||
+  fail 'legacy list or component cron entries survived'
+grep -Fxq '0 12 * * * unrelated-job' "$FORKOP_CRONTAB_FILE" ||
+  fail 'migration removed an unrelated cron entry'
 cp "$FORKOP_CRONTAB_FILE" "$WORK/valid-crontab"
 sed -i 's/component_update_check_interval=45m/component_update_check_interval=broken/' "$WORK/uci.state"
 if updates refresh-cron-from-uci /usr/bin/forkop '# forkop-list-update' '# forkop-subscription-update' '# forkop-component-update-check'; then

@@ -71,7 +71,6 @@ const COMPONENT_UPDATE_CHECK_STATE_FILE = getenv("FORKOP_COMPONENT_UPDATE_CHECK_
 const COMPONENT_UPDATE_CHECK_LOCK_DIR = getenv("FORKOP_COMPONENT_UPDATE_CHECK_LOCK_DIR") || RUNTIME_STATE_DIR + "/component-update-check.lock";
 // These jobs use the elapsed time from their timestamps. Calendar steps
 // such as */45 can skip the first eligible minute after an hour boundary.
-const SCHEDULED_UPDATE_POLL_CRON = "* * * * *";
 const COMPONENT_JOB_FINISHED_TTL_MINUTES = getenv("UPDATES_JOB_FINISHED_TTL_MINUTES") || "60";
 const COMPONENT_JOB_ORPHAN_OUTPUT_TTL_MINUTES = getenv("UPDATES_JOB_ORPHAN_OUTPUT_TTL_MINUTES") || "60";
 const COMPONENT_JOB_STALE_GRACE_SECONDS = getenv("UPDATES_JOB_STALE_GRACE_SECONDS") || getenv("FORKOP_UI_ACTION_STALE_GRACE_SECONDS") || "15";
@@ -1461,7 +1460,7 @@ function filter_cron_markers_text(data, markers) {
     return result;
 }
 
-function cron_refresh_plan_rows(settings, sections, bin, list_marker, subscription_marker, component_marker) {
+function cron_refresh_plan_rows(settings, sections, bin, subscription_marker) {
     let status = 0;
     let rows = [];
 
@@ -1475,9 +1474,6 @@ function cron_refresh_plan_rows(settings, sections, bin, list_marker, subscripti
             if (seconds == null) {
                 push(rows, "list-error\t" + as_string(interval));
                 status = 1;
-            }
-            else {
-                push(rows, "list\t" + SCHEDULED_UPDATE_POLL_CRON + " " + as_string(bin) + " list_update_if_due " + as_string(list_marker));
             }
         }
     }
@@ -1518,9 +1514,6 @@ function cron_refresh_plan_rows(settings, sections, bin, list_marker, subscripti
             push(rows, "component-error\t" + as_string(component_interval));
             status = 1;
         }
-        else {
-            push(rows, "component\t" + SCHEDULED_UPDATE_POLL_CRON + " " + as_string(bin) + " component_updates_if_due " + as_string(component_marker));
-        }
     }
 
     return {
@@ -1530,7 +1523,7 @@ function cron_refresh_plan_rows(settings, sections, bin, list_marker, subscripti
 }
 
 function cron_refresh_apply_result(settings, sections, existing_crontab, bin, list_marker, subscription_marker, component_marker) {
-    let plan = cron_refresh_plan_rows(settings, sections, bin, list_marker, subscription_marker, component_marker);
+    let plan = cron_refresh_plan_rows(settings, sections, bin, subscription_marker);
     let filtered_crontab = filter_cron_markers_text(existing_crontab, [ list_marker, subscription_marker, component_marker ]);
     let cron_jobs = "";
     let logs = [ { level: "info", message: "The cron job removed" } ];
@@ -1542,11 +1535,7 @@ function cron_refresh_apply_result(settings, sections, existing_crontab, bin, li
         let type = separator >= 0 ? substr(line, 0, separator) : line;
         let rest = separator >= 0 ? substr(line, separator + 1) : "";
 
-        if (type == "list") {
-            cron_jobs += rest + "\n";
-            push(logs, { level: "info", message: "The cron job has been created: " + rest });
-        }
-        else if (type == "list-disabled") {
+        if (type == "list-disabled") {
             push(logs, { level: "info", message: "Remote list auto-update is disabled" });
         }
         else if (type == "list-error") {
@@ -1561,10 +1550,6 @@ function cron_refresh_apply_result(settings, sections, existing_crontab, bin, li
             let section = section_separator >= 0 ? substr(rest, 0, section_separator) : rest;
             let interval = section_separator >= 0 ? substr(rest, section_separator + 1) : "";
             push(logs, { level: "error", message: "Invalid subscription_update_interval value for rule '" + section + "': " + interval });
-        }
-        else if (type == "component") {
-            cron_jobs += rest + "\n";
-            push(logs, { level: "info", message: "The component update check cron job has been created: " + rest });
         }
         else if (type == "component-error") {
             push(logs, { level: "error", message: "Invalid component_update_check_interval value: " + rest });
@@ -3734,7 +3719,7 @@ function list_update(reuse_sources, scheduled) {
     let settings = uci_settings();
     if (scheduled) {
         // Recheck under the lifecycle lock in case a manual update completed
-        // while cron was waiting. Record attempts separately from cache success.
+        // while the scheduled worker was waiting.
         let now = now_seconds();
         let due = scheduled_list_update_status(settings, now);
         if (due == 0 && (!ensure_parent_dir(LIST_UPDATE_ATTEMPT_FILE) ||
@@ -3840,6 +3825,8 @@ function list_update_if_due() {
     if (interval == "")
         exit(1);
     let status = scheduled_list_update_status(settings, now_seconds());
+    if (status == 0 && !has_list_update_sources(uci_sections("section")))
+        exit(0);
     if (status == 0)
         list_update(false, true);
     if (status == 2)

@@ -19,6 +19,7 @@ const NFT_UC = LIB_DIR + "/nft/apply.uc";
 const RUNTIME_STATE_DIR = getenv("FORKOP_RUNTIME_STATE_DIR") || "/var/run/forkop";
 const RELOAD_LOCK_DIR = getenv("FORKOP_RELOAD_LOCK_DIR") || "/var/run/forkop.reload.lock";
 const INTERVAL_SECONDS = int(getenv("FORKOP_WATCHDOG_INTERVAL_SECONDS") || "5");
+const UPDATE_CHECK_INTERVAL_SECONDS = int(getenv("FORKOP_WATCHDOG_UPDATE_CHECK_INTERVAL_SECONDS") || "60");
 const GRACE_SECONDS = int(getenv("FORKOP_WATCHDOG_GRACE_SECONDS") || "90");
 const FAILURE_SECONDS = int(getenv("FORKOP_WATCHDOG_FAILURE_SECONDS") || "60");
 const WATCHDOG_READY_FILE = getenv("FORKOP_WATCHDOG_READY_FILE") ||
@@ -97,6 +98,8 @@ function sleep_seconds(seconds) {
 
 function main() {
     let started = int(clock(true)[0]);
+    let update_check_interval = UPDATE_CHECK_INTERVAL_SECONDS > 0 ? UPDATE_CHECK_INTERVAL_SECONDS : 60;
+    let next_update_check = started + update_check_interval;
     let failed_since = null;
     let guard_retry_at = 0;
     let ambiguity_reported = false;
@@ -141,6 +144,13 @@ function main() {
             ambiguity_reported = false;
             replacement_attempted = false;
             resume_due_latency_test(int(clock()[0]));
+            if (now >= next_update_check) {
+                next_update_check = now + update_check_interval;
+                // The update workers own their locks and can download independently
+                // without delaying the watchdog's runtime health checks.
+                for (let command in [ "list_update_if_due", "component_updates_if_due" ])
+                    system(quote(BIN_PATH) + " " + command + " </dev/null >/dev/null 2>&1 &");
+            }
         }
         else if (kind == "absent") {
             ambiguity_reported = false;
