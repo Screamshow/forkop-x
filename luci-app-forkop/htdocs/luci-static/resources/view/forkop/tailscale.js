@@ -34,7 +34,7 @@ function createTailscaleContent(section) {
   const option = section.option(form.DummyValue, "_native_tailscale");
   option.rawhtml = true;
   option.cfgvalue = () => {
-    let busy = false, latest = {};
+    let busy = false, latest = {}, enteringNewKey = false;
     let statusGeneration = 0;
     const key = E("input", { type: "text", autocomplete: "off", style: "width:100%;max-width:480px" });
     const state = E("strong", {}, _("Checking status…"));
@@ -49,6 +49,7 @@ function createTailscaleContent(section) {
     const details = E("p");
     const transport = E("div", { style: "margin:16px 0;width:100%;max-width:100%;min-width:0;box-sizing:border-box" });
     const intro = E("p", {}, _("Enter an auth key for your Tailscale network."));
+    const newKey = E("button", { type: "button", class: "cbi-button cbi-button-neutral", "aria-expanded": "false", style: "display:none" }, _("Enter a new auth key"));
     const keyRow = E("label", {}, [_("Auth key"), E("br"), key]);
     const logs = E("pre", { style: "max-height:240px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:12px", "aria-live":"polite" }, _("No events yet."));
     const logPanel = E("details", { style:"margin-top:20px" }, [E("summary", { style:"cursor:pointer" }, _("Connection logs")), logs]);
@@ -93,10 +94,21 @@ function createTailscaleContent(section) {
         } else transport.appendChild(E("p", {}, _("No device connections yet.")));
         if (network && network.derp_region) transport.appendChild(E("p", { style: "font-size:13px;opacity:.75;margin:8px 0 0" }, _("Inbound fallback: DERP · ") + network.derp_region + (network.derp_latency_ms != null ? " · " + network.derp_latency_ms + _(" ms") : "")));
       }
-      intro.style.display = keyRow.style.display = data.state === "connected" ? "none" : "";
-      connect.style.display = data.state === "connected" ? "none" : "";
+      const connected = data.state === "connected";
+      const saved = Boolean(data.saved_identity);
+      if (connected) key.value = "";
+      if (connected || !saved) enteringNewKey = false;
+      const needsKey = !saved || enteringNewKey;
       const readonly = main.isReadOnlyForkopView();
-      connect.disabled = readonly || busy || !data.available || data.state === "connected" || data.state === "connecting";
+      intro.style.display = connect.style.display = connected ? "none" : "";
+      intro.textContent = saved ? _("Device credentials are saved.") : _("Enter an auth key for your Tailscale network.");
+      keyRow.style.display = !connected && needsKey ? "" : "none";
+      newKey.style.display = !connected && saved && !readonly ? "" : "none";
+      newKey.textContent = enteringNewKey ? _("Use saved credentials") : _("Enter a new auth key");
+      newKey.setAttribute("aria-expanded", String(enteringNewKey));
+      connect.textContent = needsKey ? _("Connect") : _("Reconnect using saved credentials");
+      connect.disabled = readonly || busy || !data.available || connected || data.state === "connecting";
+      newKey.disabled = connect.disabled;
       disconnect.disabled = readonly || busy || !data.available || data.state === "disconnected";
       key.disabled = readonly || busy || !data.available || data.state === "connected";
       ssh.disabled = readonly || busy || !data.ssh_available;
@@ -132,7 +144,9 @@ function createTailscaleContent(section) {
     }
     async function act(action, args = []) {
       if (busy || main.isReadOnlyForkopView()) return;
-      if (action === "connect" && !key.value.trim() && !latest.saved_identity) {
+      const needsKey = action === "connect" && (!latest.saved_identity || enteringNewKey);
+      const authKey = needsKey ? key.value.trim() : "";
+      if (needsKey && !authKey) {
         ui.addNotification(null, E("p", {}, _("Enter a Tailscale auth key"))); return;
       }
       statusGeneration++;
@@ -140,7 +154,6 @@ function createTailscaleContent(section) {
       try {
         let data;
         if (action === "connect") {
-          const authKey = key.value.trim();
           key.value = "";
           const response = await main.writeForkopUi("tailscale_connect", authKey);
           if (response.code !== 0) throw new Error(_("Tailscale action failed"));
@@ -158,6 +171,12 @@ function createTailscaleContent(section) {
         await refresh();
       }
     }
+    newKey.addEventListener("click", () => {
+      enteringNewKey = !enteringNewKey;
+      if (!enteringNewKey) key.value = "";
+      render(latest);
+      if (enteringNewKey) key.focus();
+    });
     connect.addEventListener("click", () => act("connect"));
     disconnect.addEventListener("click", () => act("disconnect"));
     ssh.addEventListener("change", () => act("ssh", [ssh.checked ? "1" : "0"]));
@@ -208,7 +227,7 @@ function createTailscaleContent(section) {
       intro,
       details, transport,
       keyRow,
-      E("p", { style: "display:flex;gap:12px;flex-wrap:wrap;margin-top:16px" }, [connect, disconnect]),
+      E("p", { style: "display:flex;gap:12px;flex-wrap:wrap;margin-top:16px" }, [connect, newKey, disconnect]),
       E("hr"),
       E("div", { style: "margin:14px 0" }, E("label", { style: "display:inline-flex;align-items:center;gap:8px", title: _("Allow SSH access to this router through Tailscale on port 22.") }, [ssh, _("Allow SSH")])),
       E("div", { style: "margin:14px 0" }, [E("label", { style: "display:inline-flex;align-items:center;gap:8px" }, [lan, _("Allow LAN access")]), lanStatus]),

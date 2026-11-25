@@ -2036,6 +2036,18 @@ msgstr "Проверка состояния…"
 msgid "Enter an auth key for your Tailscale network."
 msgstr "Введите ключ своей сети Tailscale."
 
+msgid "Device credentials are saved."
+msgstr "Данные устройства сохранены."
+
+msgid "Enter a new auth key"
+msgstr "Ввести новый ключ"
+
+msgid "Use saved credentials"
+msgstr "Использовать сохранённые данные"
+
+msgid "Reconnect using saved credentials"
+msgstr "Подключить снова"
+
 msgid "Auth key"
 msgstr "Ключ подключения"
 
