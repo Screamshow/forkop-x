@@ -79,7 +79,9 @@ export async function runXrustCheck() {
       ...insertIf<IDiagnosticsChecksItem>(Boolean(data.xrust_service_exist), [
         {
           state: data.xrust_autostart_disabled ? 'success' : 'error',
-          key: _('Xrust standalone autostart disabled'),
+          key: data.xrust_autostart_disabled
+            ? _('Forkop X manages Xrust startup')
+            : _('Xrust is set to start independently at boot'),
           value: '',
         },
       ]),

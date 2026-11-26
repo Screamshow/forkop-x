@@ -1893,6 +1893,13 @@
     ]
   },
   {
+    "call": "Forkop X manages Xrust startup",
+    "key": "Forkop X manages Xrust startup",
+    "places": [
+      "src/forkop/tabs/diagnostic/checks/runXrustCheck.ts:83"
+    ]
+  },
+  {
     "call": "Forkop X Settings",
     "key": "Forkop X Settings",
     "places": [
@@ -4724,6 +4731,13 @@
     ]
   },
   {
+    "call": "Xrust is set to start independently at boot",
+    "key": "Xrust is set to start independently at boot",
+    "places": [
+      "src/forkop/tabs/diagnostic/checks/runXrustCheck.ts:84"
+    ]
+  },
+  {
     "call": "Xrust version recognized",
     "key": "Xrust version recognized",
     "places": [
@@ -4821,13 +4835,6 @@
     "key": "Select the log level for Xrust",
     "places": [
       "../luci-app-forkop/htdocs/luci-static/resources/view/forkop/settings.js:869"
-    ]
-  },
-  {
-    "call": "Xrust standalone autostart disabled",
-    "key": "Xrust standalone autostart disabled",
-    "places": [
-      "src/forkop/tabs/diagnostic/checks/runXrustCheck.ts:77"
     ]
   },
   {

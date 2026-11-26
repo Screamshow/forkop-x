@@ -797,6 +797,9 @@ msgstr "Forkop X применяет изменения. Пожалуйста, п
 msgid "Forkop X is busy updating data or applying settings. Wait for the operation to finish, then try restarting again."
 msgstr "Forkop X обновляет данные или применяет настройки. Дождитесь завершения операции и повторите перезапуск."
 
+msgid "Forkop X manages Xrust startup"
+msgstr "Запуском Xrust управляет Forkop X"
+
 msgid "Forkop X Settings"
 msgstr "Настройки Forkop X"
 
@@ -1664,9 +1667,6 @@ msgstr "Настройки"
 msgid "Show Xrust config"
 msgstr "Показать конфигурацию Xrust"
 
-msgid "Xrust standalone autostart disabled"
-msgstr "Отдельный автозапуск Xrust отключён"
-
 msgid "Xrust FakeIP DNS does not work"
 msgstr "FakeIP DNS Xrust не работает"
 
@@ -1675,6 +1675,9 @@ msgstr "FakeIP DNS Xrust работает"
 
 msgid "Xrust installed"
 msgstr "Xrust установлен"
+
+msgid "Xrust is set to start independently at boot"
+msgstr "Xrust настроен на отдельный запуск при загрузке"
 
 msgid "Xrust listening ports"
 msgstr "Xrust слушает порты"
