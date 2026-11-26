@@ -1,3 +1,5 @@
+import { insertIf } from '../../../../helpers';
+import type { IDiagnosticsChecksItem } from '../../../services';
 import { DIAGNOSTICS_CHECKS_MAP } from './contstants';
 import { ForkopShellMethods } from '../../../methods';
 import { updateCheckStore } from './updateCheckStore';
@@ -62,31 +64,37 @@ export async function runXrustCheck() {
         key: _('Xrust installed'),
         value: '',
       },
-      {
-        state: data.xrust_version_ok ? 'success' : 'error',
-        key: _('Xrust version recognized'),
-        value: '',
-      },
+      ...insertIf<IDiagnosticsChecksItem>(Boolean(data.xrust_installed), [
+        {
+          state: data.xrust_version_ok ? 'success' : 'error',
+          key: _('Xrust version recognized'),
+          value: '',
+        },
+      ]),
       {
         state: data.xrust_service_exist ? 'success' : 'error',
         key: _('Xrust service exists'),
         value: '',
       },
-      {
-        state: data.xrust_autostart_disabled ? 'success' : 'error',
-        key: _('Xrust autostart disabled'),
-        value: '',
-      },
+      ...insertIf<IDiagnosticsChecksItem>(Boolean(data.xrust_service_exist), [
+        {
+          state: data.xrust_autostart_disabled ? 'success' : 'error',
+          key: _('Xrust standalone autostart disabled'),
+          value: '',
+        },
+      ]),
       {
         state: data.xrust_process_running ? 'success' : 'error',
         key: _('Xrust process running'),
         value: '',
       },
-      {
-        state: data.xrust_ports_listening ? 'success' : 'error',
-        key: _('Xrust listening ports'),
-        value: '',
-      },
+      ...insertIf<IDiagnosticsChecksItem>(Boolean(data.xrust_process_running), [
+        {
+          state: data.xrust_ports_listening ? 'success' : 'error',
+          key: _('Xrust listening ports'),
+          value: '',
+        },
+      ]),
     ],
   });
 

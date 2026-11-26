@@ -2386,7 +2386,7 @@ msgid "Show Xrust config"
 msgstr ""
 
 #: src/forkop/tabs/diagnostic/checks/runXrustCheck.ts:77
-msgid "Xrust autostart disabled"
+msgid "Xrust standalone autostart disabled"
 msgstr ""
 
 #: src/forkop/tabs/diagnostic/checks/runFakeIPCheck.ts:87

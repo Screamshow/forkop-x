@@ -1664,8 +1664,8 @@ msgstr "Настройки"
 msgid "Show Xrust config"
 msgstr "Показать конфигурацию Xrust"
 
-msgid "Xrust autostart disabled"
-msgstr "Автостарт Xrust отключен"
+msgid "Xrust standalone autostart disabled"
+msgstr "Отдельный автозапуск Xrust отключён"
 
 msgid "Xrust FakeIP DNS does not work"
 msgstr "FakeIP DNS Xrust не работает"

@@ -17,14 +17,26 @@ export async function runFakeIPCheck() {
     items: [],
   });
 
-  const routerFakeIPResponse = await ForkopShellMethods.checkFakeIP();
-  const publicIPComparisonAvailable =
-    !routerFakeIPResponse.success ||
-    routerFakeIPResponse.data.public_ip_comparison_available !== false;
-  const checkFakeIPResponse = await RemoteFakeIPMethods.getFakeIpCheck();
-  const checkIPResponse = publicIPComparisonAvailable
-    ? await RemoteFakeIPMethods.getIpCheck()
-    : null;
+  const routerResponse = ForkopShellMethods.checkFakeIP();
+  const [
+    checkFakeIPResponse,
+    { routerFakeIPResponse, publicIPComparisonAvailable, checkIPResponse },
+  ] = await Promise.all([
+    RemoteFakeIPMethods.getFakeIpCheck(),
+    routerResponse.then(async (routerFakeIPResponse) => {
+      const publicIPComparisonAvailable =
+        !routerFakeIPResponse.success ||
+        routerFakeIPResponse.data.public_ip_comparison_available !== false;
+      const checkIPResponse = publicIPComparisonAvailable
+        ? await RemoteFakeIPMethods.getIpCheck()
+        : null;
+      return {
+        routerFakeIPResponse,
+        publicIPComparisonAvailable,
+        checkIPResponse,
+      };
+    }),
+  ]);
   const browserFakeIPCheckUnavailable = !checkFakeIPResponse.success;
   const browserFakeIPCheckMessage = checkFakeIPResponse.success
     ? ''

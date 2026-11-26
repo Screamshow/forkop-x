@@ -985,7 +985,7 @@ function check_nft_rules() {
     command_status("sh -c " + shell_quote(
         "curl -m 3 -s " + shell_quote("https://" + CHECK_PROXY_IP_DOMAIN + "/check") + " >/dev/null 2>&1 & pid1=$!; " +
         "curl -m 3 -s " + shell_quote("https://" + FAKEIP_TEST_DOMAIN + "/check") + " >/dev/null 2>&1 & pid2=$!; " +
-        "wait $pid1 2>/dev/null; wait $pid2 2>/dev/null; sleep 1"
+        "wait $pid1 2>/dev/null; wait $pid2 2>/dev/null"
     ));
 
     let table_exist = 0;
@@ -1049,7 +1049,10 @@ function check_xrust() {
     let installed = file_executable(xrust.PATH);
     let version = installed ? trim(module_output(XRUST_RUNTIME_UC, [ "build-version" ])) : "";
     let service_exists = file_executable(xrust.INIT);
-    let autostart_disabled = service_exists && !command_success_from_args([ xrust.INIT, "enabled" ]);
+    let legacy_autostart_enabled = file_exists("/etc/rc.d/S99sing-box") &&
+        module_success([ LIB_DIR + "/core/packages.uc", "installed", "rust-x" ]);
+    let autostart_disabled = service_exists && !legacy_autostart_enabled &&
+        !command_success_from_args([ xrust.INIT, "enabled" ]);
     write_json({
         xrust_installed: installed ? 1 : 0,
         xrust_version_ok: version != "" ? 1 : 0,

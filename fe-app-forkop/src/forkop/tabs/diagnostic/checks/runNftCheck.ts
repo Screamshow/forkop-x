@@ -1,3 +1,4 @@
+import type { IDiagnosticsChecksItem } from '../../../services';
 import { DIAGNOSTICS_CHECKS_MAP } from './contstants';
 import { RemoteFakeIPMethods, ForkopShellMethods } from '../../../methods';
 import { updateCheckStore } from './updateCheckStore';
@@ -15,8 +16,10 @@ export async function runNftCheck() {
     items: [],
   });
 
-  await RemoteFakeIPMethods.getFakeIpCheck();
-  await RemoteFakeIPMethods.getIpCheck();
+  await Promise.all([
+    RemoteFakeIPMethods.getFakeIpCheck(),
+    RemoteFakeIPMethods.getIpCheck(),
+  ]);
 
   const nftablesChecks = await ForkopShellMethods.checkNftRules();
 
@@ -35,79 +38,65 @@ export async function runNftCheck() {
 
   const data = nftablesChecks.data;
 
+  const rules = [
+    [
+      data.rules_mangle_exist,
+      data.rules_mangle_counters,
+      _('Rules mangle exist'),
+      _('Rules mangle counters'),
+    ],
+    [
+      data.rules_mangle_output_exist,
+      data.rules_mangle_output_counters,
+      _('Rules mangle output exist'),
+      _('Rules mangle output counters'),
+    ],
+    [
+      data.rules_proxy_exist,
+      data.rules_proxy_counters,
+      _('Rules proxy exist'),
+      _('Rules proxy counters'),
+    ],
+  ] as const;
+  const atLeastOneGood = Boolean(data.table_exist);
   const allGood =
-    Boolean(data.table_exist) &&
-    Boolean(data.rules_mangle_exist) &&
-    Boolean(data.rules_mangle_counters) &&
-    Boolean(data.rules_mangle_output_exist) &&
-    Boolean(data.rules_mangle_output_counters) &&
-    Boolean(data.rules_proxy_exist) &&
-    Boolean(data.rules_proxy_counters) &&
+    atLeastOneGood &&
+    rules.every(([exists, counters]) => exists && counters) &&
     !data.rules_other_mark_exist;
-
-  const atLeastOneGood =
-    Boolean(data.table_exist) ||
-    Boolean(data.rules_mangle_exist) ||
-    Boolean(data.rules_mangle_counters) ||
-    Boolean(data.rules_mangle_output_exist) ||
-    Boolean(data.rules_mangle_output_counters) ||
-    Boolean(data.rules_proxy_exist) ||
-    Boolean(data.rules_proxy_counters) ||
-    !data.rules_other_mark_exist;
-
   const { state, description } = getMeta({ atLeastOneGood, allGood });
 
-  updateCheckStore({
-    order,
-    code,
-    title,
-    description,
-    state,
-    items: [
-      {
-        state: data.table_exist ? 'success' : 'error',
-        key: _('Table exist'),
+  const items: IDiagnosticsChecksItem[] = [
+    {
+      state: data.table_exist ? 'success' : 'error',
+      key: _('Table exist'),
+      value: '',
+    },
+  ];
+  if (data.table_exist) {
+    for (const [exists, counters, ruleKey, counterKey] of rules) {
+      items.push({
+        state: exists ? 'success' : 'error',
+        key: ruleKey,
         value: '',
-      },
-      {
-        state: data.rules_mangle_exist ? 'success' : 'error',
-        key: _('Rules mangle exist'),
-        value: '',
-      },
-      {
-        state: data.rules_mangle_counters ? 'success' : 'warning',
-        key: _('Rules mangle counters'),
-        value: '',
-      },
-      {
-        state: data.rules_mangle_output_exist ? 'success' : 'error',
-        key: _('Rules mangle output exist'),
-        value: '',
-      },
-      {
-        state: data.rules_mangle_output_counters ? 'success' : 'error',
-        key: _('Rules mangle output counters'),
-        value: '',
-      },
-      {
-        state: data.rules_proxy_exist ? 'success' : 'error',
-        key: _('Rules proxy exist'),
-        value: '',
-      },
-      {
-        state: data.rules_proxy_counters ? 'success' : 'error',
-        key: _('Rules proxy counters'),
-        value: '',
-      },
-      {
-        state: !data.rules_other_mark_exist ? 'success' : 'warning',
-        key: !data.rules_other_mark_exist
-          ? _('No other marking rules found')
-          : _('Additional marking rules found'),
-        value: '',
-      },
-    ],
+      });
+      if (exists) {
+        items.push({
+          state: counters ? 'success' : 'warning',
+          key: counterKey,
+          value: '',
+        });
+      }
+    }
+  }
+  items.push({
+    state: data.rules_other_mark_exist ? 'warning' : 'success',
+    key: data.rules_other_mark_exist
+      ? _('Additional marking rules found')
+      : _('No other marking rules found'),
+    value: '',
   });
+
+  updateCheckStore({ order, code, title, description, state, items });
 
   if (!atLeastOneGood) {
     throw new Error('Nftables checks failed');
