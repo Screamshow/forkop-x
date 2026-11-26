@@ -280,6 +280,7 @@ function safeCacheSectionName(section_id) {
 }
 
 function filteredOutboundMetadataFromCache(cache) {
+  cache = plainObject(cache);
   const metadata = plainObject(plainObject(cache).outboundMetadata);
   const names = plainObject(metadata.names);
   const countries = plainObject(metadata.countries);
@@ -288,18 +289,28 @@ function filteredOutboundMetadataFromCache(cache) {
     : [];
   const groups = plainObject(cache.urltestGroups);
   const result = {
-    names: {},
+    names: Object.create(null),
     countries: {},
+    orderedNames: [],
   };
 
   if (candidateTags.length > 0) {
+    const aliases = plainObject(metadata.aliases);
+    const candidates = new Set(candidateTags.filter((tag) => typeof tag === "string"));
     candidateTags.forEach((tag) => {
       tag = `${tag || ""}`;
       if (!tag) {
         return;
       }
-      if (names[tag] != null) {
-        result.names[tag] = names[tag];
+      const name = Object.hasOwn(names, tag) ? names[tag] : null;
+      if (typeof name === "string" && name.trim()) {
+        result.names[tag] = name;
+        const target = Object.hasOwn(aliases, tag) ? aliases[tag] : null;
+        if (target === tag || !candidates.has(target) ||
+            !Object.hasOwn(names, target) || typeof names[target] !== "string" ||
+            names[target].trim() !== name.trim()) {
+          result.orderedNames.push(name);
+        }
       }
       if (countries[tag] != null) {
         result.countries[tag] = countries[tag];
@@ -309,8 +320,9 @@ function filteredOutboundMetadataFromCache(cache) {
   }
 
   Object.entries(names).forEach(([tag, name]) => {
-    if (!groups[tag]) {
+    if (!Object.hasOwn(groups, tag) && typeof name === "string" && name.trim()) {
       result.names[tag] = name;
+      result.orderedNames.push(name);
     }
   });
   Object.entries(countries).forEach(([tag, country]) => {
@@ -320,6 +332,13 @@ function filteredOutboundMetadataFromCache(cache) {
   });
 
   return result;
+}
+
+function outboundNamesInSourceOrder(metadata) {
+  const names = Array.isArray(metadata.orderedNames)
+    ? metadata.orderedNames
+    : Object.values(plainObject(metadata.names));
+  return [...new Set(names.filter((name) => typeof name === "string" && name.trim()))];
 }
 
 function readOutboundMetadataFromSectionCache(section_id) {
@@ -432,7 +451,7 @@ async function loadDraftSubscriptionChoices(section_id, sources) {
           : metadata.error;
         throw error;
       }
-      const choices = [...new Set(Object.values(plainObject(metadata.names)))].sort();
+      const choices = outboundNamesInSourceOrder(metadata);
       if (editorPreviewStates.get(section_id) !== state || subscriptionSourceSignature(draftSubscriptionSources(section_id)) !== signature) return [];
       outboundNameChoicesCache.set(section_id, choices);
       state.message = `Серверы подписки: ${choices.length}`;
@@ -484,7 +503,7 @@ async function resolveOutboundNameChoices(section_id) {
       const metadata = await readOutboundMetadataFromSectionCache(section_id);
       // A delayed cache read must not repopulate a newly edited source list.
       if (signature !== subscriptionSourceSignature(draftSubscriptionSources(section_id))) return [];
-      const choices = [...new Set(Object.values(plainObject(metadata.names)))].filter(Boolean).sort();
+      const choices = outboundNamesInSourceOrder(metadata);
       if (choices.length) {
         editorPreviewStates.delete(section_id);
         outboundNameChoicesCache.set(section_id, choices);
@@ -521,12 +540,7 @@ async function resolveOutboundNameChoices(section_id) {
     .then((metadata) => {
       if (outboundNameChoicesInflight.get(section_id) !== task ||
           draftSubscriptionSources(section_id).length) return [];
-      const names = Object.values(plainObject(metadata.names));
-
-      const choices = names
-        .filter(Boolean)
-        .filter((name, index, values) => values.indexOf(name) === index)
-        .sort((a, b) => `${a}`.localeCompare(`${b}`));
+      const choices = outboundNamesInSourceOrder(metadata);
 
       outboundNameChoicesCache.set(section_id, choices);
 
@@ -1408,7 +1422,7 @@ const ServerNameDropdown = ui.Dropdown.extend({
 
 function configureServerNameChoices(option, parentSectionForItem, multiple) {
   const getChoices = (itemId, values) =>
-    currentOutboundNameChoices(parentSectionForItem(itemId), values);
+    currentOutboundNameChoices(parentSectionForItem(itemId), values, multiple);
 
   option.placeholder = _("-- Select --");
   option.load = function (itemId) {
@@ -1490,7 +1504,7 @@ function configureServerNameChoices(option, parentSectionForItem, multiple) {
   };
 }
 
-function currentOutboundNameChoices(section_id, values) {
+function currentOutboundNameChoices(section_id, values, preserveSourceOrder) {
   const seen = new Set();
   const result = [];
   const append = (name) => {
@@ -1507,7 +1521,9 @@ function currentOutboundNameChoices(section_id, values) {
   currentDraftOutboundNames(section_id).forEach(append);
   normalizeDynamicListItems(values).forEach(append);
 
-  return result.sort((a, b) => a.label.localeCompare(b.label));
+  return preserveSourceOrder
+    ? result
+    : result.sort((a, b) => a.label.localeCompare(b.label));
 }
 
 function currentSourceOptionValues(section_id, optionName) {

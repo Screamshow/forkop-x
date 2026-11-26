@@ -90,10 +90,23 @@ cmd += join(' ', map([ dir+'/fixture.json', dir+'/candidate.json', '127.0.0.1', 
 if (system(cmd+' >'+q(dir+'/generate.log')+' 2>&1') != 0) fail('Cannot build subscription catalogue');
 let state = json(fs.readfile(dir+'/candidate.json.section-cache/editor.json') || '{}');
 let metadata = state.outboundMetadata || {};
-let result = {names:{},countries:{}};
-for (let tag in state.urltestCandidateTags || []) {
-    if (metadata.names[tag] != null) result.names[tag] = metadata.names[tag];
-    if (metadata.countries[tag] != null) result.countries[tag] = metadata.countries[tag];
+let result = {names:{},countries:{},orderedNames:[]};
+let names = metadata.names || {};
+let aliases = metadata.aliases || {};
+let tags = state.urltestCandidateTags || [];
+let candidates = {};
+for (let tag in tags)
+    candidates[tag] = true;
+for (let tag in tags) {
+    let name = names[tag];
+    if (type(name) == "string" && trim(name) != "") {
+        result.names[tag] = name;
+        let target = aliases[tag];
+        if (type(target) != "string" || target == tag || !candidates[target] ||
+            type(names[target]) != "string" || trim(names[target]) != trim(name))
+            push(result.orderedNames, name);
+    }
+    if ((metadata.countries || {})[tag] != null) result.countries[tag] = metadata.countries[tag];
 }
 cleanup();
 print(sprintf('%J\n',result));
