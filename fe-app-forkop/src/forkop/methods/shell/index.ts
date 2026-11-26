@@ -14,19 +14,12 @@ const LATENCY_TEST_POLL_INTERVAL_MS = 1000;
 const COMPONENT_ACTION_RPC_TIMEOUT_MS = 15000;
 const COMPONENT_ACTION_POLL_INTERVAL_MS = 1500;
 const COMPONENT_ACTION_STATUS_REFRESH_INTERVAL_MS = 15000;
-const COMPONENT_ACTION_SELF_UPDATE_SETTLE_MS = 30000;
-const COMPONENT_ACTION_MISSING_JOB_GRACE_MS = 60000;
-const COMPONENT_ACTION_WAIT_LIMIT_MS = 15 * 60 * 1000;
-const COMPONENT_ACTION_TRANSIENT_RPC_GRACE_MS = 30000;
+const COMPONENT_ACTION_UNAVAILABLE_GRACE_MS = 60000;
 const COMPONENT_ACTION_STATE_DIR = '/var/run/forkop/component-actions';
 const GET_UI_STATE_RPC_TIMEOUT_MS = 3000;
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
-}
-
-function translate(message: string) {
-  return typeof _ === 'function' ? _(message) : message;
 }
 
 function localizeServiceActionMessage(message?: string) {
@@ -138,20 +131,6 @@ async function readComponentActionState(jobId: string) {
   } catch (_error) {
     return null;
   }
-}
-
-async function readForkopVersion() {
-  const response = await executeShellCommand({
-    command: '/usr/bin/forkop',
-    args: ['show_version'],
-    timeout: COMPONENT_ACTION_RPC_TIMEOUT_MS,
-  });
-
-  if ((response.code ?? 0) !== 0 || !response.stdout) {
-    return '';
-  }
-
-  return response.stdout.trim();
 }
 
 async function readComponentUiState() {
@@ -588,34 +567,18 @@ export const ForkopShellMethods = {
     ),
   waitComponentActionJob: async (
     jobId: string,
-    component: Forkop.ComponentName,
-    action: Forkop.ComponentAction,
-    expectedLatestVersion?: string,
-    expectedServiceRunning?: boolean,
-  ) => {
-    const deadline = Date.now() + COMPONENT_ACTION_WAIT_LIMIT_MS;
-    let firstMissingJobAt: number | undefined;
-    let selfUpdateVersionMatchedAt = 0;
+  ): Promise<Forkop.MethodResponse<Forkop.ComponentActionResult>> => {
+    let unavailableSince: number | undefined;
     let lastStatusRefreshAt = 0;
-    const transientRpc = createTransientRpcGraceTracker(
-      COMPONENT_ACTION_TRANSIENT_RPC_GRACE_MS,
-    );
 
-    while (Date.now() < deadline) {
+    while (true) {
       await sleep(COMPONENT_ACTION_POLL_INTERVAL_MS);
-
-      const stateResponse = await readComponentActionState(jobId);
-
-      if (stateResponse) {
-        firstMissingJobAt = undefined;
-        if (!stateResponse.running) {
-          transientRpc.reset();
-          return {
-            success: true,
-            data: stateResponse,
-          } as Forkop.MethodSuccessResponse<Forkop.ComponentActionResult>;
+      const state = await readComponentActionState(jobId);
+      if (typeof state?.running === 'boolean') {
+        unavailableSince = undefined;
+        if (state.running === false) {
+          return { success: true, data: state };
         }
-
         if (
           Date.now() - lastStatusRefreshAt <
           COMPONENT_ACTION_STATUS_REFRESH_INTERVAL_MS
@@ -625,107 +588,42 @@ export const ForkopShellMethods = {
       }
 
       lastStatusRefreshAt = Date.now();
-      const statusResponse = await executeShellCommand({
-        command: '/usr/bin/forkop',
-        args: [Forkop.AvailableMethods.COMPONENT_ACTION_STATUS, jobId],
-        timeout: COMPONENT_ACTION_RPC_TIMEOUT_MS,
-      });
-      const parsedResponse = parseComponentActionResult(statusResponse);
-
-      if ((statusResponse.code ?? 0) !== 0 || !parsedResponse) {
-        if (stateResponse?.running) {
-          transientRpc.reset();
-          continue;
+      const response = await ForkopShellMethods.componentActionStatus(jobId);
+      if (response.success && typeof response.data.running === 'boolean') {
+        unavailableSince = undefined;
+        if (response.data.running === false) {
+          return response;
         }
-
-        const uiState = await readComponentUiState();
-        if (
-          uiState?.actions?.component?.some(
-            (state) =>
-              state.job_id === jobId &&
-              state.component === component &&
-              state.action === action &&
-              state.running === true,
-          )
-        ) {
-          firstMissingJobAt = undefined;
-          transientRpc.reset();
-          continue;
-        }
-
-        const failure = componentActionFailure(statusResponse, parsedResponse);
-
-        if (transientRpc.shouldContinue(failure.error)) {
-          continue;
-        }
-
-        if (
-          component === 'forkop' &&
-          action === 'install' &&
-          expectedLatestVersion
-        ) {
-          firstMissingJobAt ??= Date.now();
-          const installedVersion = await readForkopVersion();
-          const service = uiState?.service?.forkop;
-          const stableService =
-            /^(?:running|stopped) (?:&|but) (?:enabled|disabled)$/.test(
-              service?.status || '',
-            ) &&
-            (expectedServiceRunning === undefined ||
-              Boolean(service?.running) === expectedServiceRunning);
-
-          if (installedVersion === expectedLatestVersion && stableService) {
-            if (!selfUpdateVersionMatchedAt) {
-              selfUpdateVersionMatchedAt = Date.now();
-            }
-
-            if (
-              Date.now() - selfUpdateVersionMatchedAt >=
-              COMPONENT_ACTION_SELF_UPDATE_SETTLE_MS
-            ) {
-              return {
-                success: true,
-                data: {
-                  success: true,
-                  component,
-                  action,
-                  message: translate('Forkop has been installed'),
-                  current_version: installedVersion,
-                  latest_version: expectedLatestVersion,
-                  changed: true,
-                  status: 'latest',
-                },
-              } as Forkop.MethodSuccessResponse<Forkop.ComponentActionResult>;
-            }
-          } else {
-            selfUpdateVersionMatchedAt = 0;
-          }
-
-          if (
-            Date.now() - firstMissingJobAt <
-            COMPONENT_ACTION_MISSING_JOB_GRACE_MS
-          )
-            continue;
-        }
-
-        return failure;
-      }
-
-      firstMissingJobAt = undefined;
-      transientRpc.reset();
-      if (parsedResponse.running) {
         continue;
       }
 
-      return {
-        success: true,
-        data: parsedResponse,
-      } as Forkop.MethodSuccessResponse<Forkop.ComponentActionResult>;
+      if (state?.running) {
+        continue;
+      }
+
+      const uiState = await readComponentUiState();
+      const job = uiState?.actions?.component?.find(
+        (item) => item.job_id === jobId,
+      );
+      if (typeof job?.running === 'boolean') {
+        unavailableSince = undefined;
+        if (job.running === false) {
+          return { success: true, data: job };
+        }
+        continue;
+      }
+
+      // Read the router before checking this deadline, including after resume.
+      unavailableSince ??= Date.now();
+      if (
+        Date.now() - unavailableSince >=
+        COMPONENT_ACTION_UNAVAILABLE_GRACE_MS
+      ) {
+        return response.success
+          ? { success: false, error: _('Could not confirm completion') }
+          : response;
+      }
     }
-    return {
-      success: false,
-      error: _('Could not confirm completion'),
-    } as Forkop.MethodFailureResponse;
   },
   subscriptionUpdateStart: async (section?: string, sourceIndex?: number) => {
     const startArgs = [

@@ -116,12 +116,20 @@ exit(status);
 done
 awk '
   /^function install_forkop\(/ { in_fn = 1 }
-  in_fn && /preflight_error = forkop_package_preflight/ && !flash { flash = NR; next }
-  in_fn && /preflight_error = forkop_package_preflight/ { recheck = NR }
+  in_fn && /forkop_package_preflight_space\(/ && !flash { flash = NR; next }
+  in_fn && /forkop_package_preflight_space\(/ { recheck = NR }
   in_fn && /preinstall_release_dependencies/ && !pre { pre = NR }
+  in_fn && /pkg_install_files_command\(dependency_files, true\)/ { offline = NR }
   in_fn && /prepare_forkop_runtime_for_package_upgrade/ && !stop { stop = NR }
   in_fn && /^}/ { exit }
-  END { exit !(flash && pre > flash && recheck > pre && stop > recheck) }
-' "$ACTION" || fail 'LuCI update must check space before and after installing dependencies, while Forkop still runs'
+  END { exit !(flash && pre > flash && offline > pre && recheck > offline && stop > recheck) }
+' "$ACTION" || fail 'LuCI update must check space and offline APK readiness before stopping Forkop'
+
+awk '
+  /^function pkg_install_files_command\(/ { in_fn = 1 }
+  in_fn && /"apk"/ && /"--no-network"/ { offline = 1 }
+  in_fn && /^}/ { exit }
+  END { exit !offline }
+' "$ACTION" || fail 'LuCI must install the prepared APK files offline'
 
 echo 'New release dependencies are installed before Forkop stops: OK'

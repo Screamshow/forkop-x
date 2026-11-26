@@ -19,7 +19,11 @@ import {
   hasLocalMutatingServiceActionLoading,
   isServiceTransitionStatus,
 } from '../diagnostic/serviceTransition';
-import { shouldApplyCompletedComponentActionResult } from './componentActionCompletion';
+import {
+  getLatestForkopInstall,
+  isForkopInstall,
+  shouldApplyCompletedComponentActionResult,
+} from './componentActionCompletion';
 import {
   shouldPreserveCompletedCheckResultOnNextMount,
   shouldExposeCheckResults,
@@ -86,6 +90,7 @@ let componentActionStateUnsubscribe: (() => void) | null = null;
 let componentActionStateRefreshPromise: Promise<void> | null = null;
 const followedComponentJobs = new Set<string>();
 const handledComponentJobs = new Set<string>();
+let forkopInstallStatus = '';
 
 if (typeof window !== 'undefined') {
   window.addEventListener('pagehide', () => {
@@ -240,24 +245,28 @@ function loadComponentUpdateCheckCache({ force = false } = {}) {
     return componentUpdateCheckCachePromise;
   }
 
-  const promise = ForkopShellMethods.componentUpdateCheckCache()
-    .then((response) =>
-      response.success
-        ? response.data
-        : ({
-            enabled: false,
-            results: [],
-          } satisfies Forkop.ComponentUpdateCheckCache),
-    )
-    .then((cache) => {
-      componentUpdateCheckCacheSnapshot = cache;
-      return cache;
-    })
-    .finally(() => {
-      if (componentUpdateCheckCachePromise === promise) {
-        componentUpdateCheckCachePromise = null;
-      }
-    });
+  const promise: Promise<Forkop.ComponentUpdateCheckCache> =
+    ForkopShellMethods.componentUpdateCheckCache()
+      .then((response) =>
+        response.success
+          ? response.data
+          : ({
+              enabled: false,
+              results: [],
+            } satisfies Forkop.ComponentUpdateCheckCache),
+      )
+      .then((cache) => {
+        if (componentUpdateCheckCachePromise !== promise) {
+          return loadComponentUpdateCheckCache();
+        }
+        componentUpdateCheckCacheSnapshot = cache;
+        return cache;
+      })
+      .finally(() => {
+        if (componentUpdateCheckCachePromise === promise) {
+          componentUpdateCheckCachePromise = null;
+        }
+      });
 
   componentUpdateCheckCachePromise = promise;
   return promise;
@@ -277,16 +286,6 @@ async function ackComponentActionJob(jobId: string) {
   } catch (error) {
     logger.debug('[UPDATES]', 'component action ack failed', error);
   }
-}
-
-function getExpectedLatestVersionForAction(button: ComponentActionButton) {
-  if (button.component !== 'forkop' || button.action !== 'install') {
-    return undefined;
-  }
-
-  return (
-    store.get().updatesChecks[button.component].latest_version || undefined
-  );
 }
 
 function getCheckToastMessage(status: UpdateStatus) {
@@ -383,7 +382,11 @@ async function applyCompletedComponentAction({
     return;
   }
 
-  if (result.action === 'install') {
+  if (isForkopInstall(result)) {
+    componentUpdateCheckCacheSnapshot = null;
+    componentUpdateCheckCachePromise = null;
+    resetCheckResult('forkop');
+  } else if (result.action === 'install') {
     setCheckResult(result.component, 'latest', result.latest_version || '');
   } else {
     resetCheckResult(result.component);
@@ -392,7 +395,7 @@ async function applyCompletedComponentAction({
   patchSystemInfoAfterMutation(result);
   setActionLoading(key, false);
 
-  if (result.component === 'forkop' && result.action === 'install') {
+  if (isForkopInstall(result)) {
     if (notify && result.message) {
       showToast(result.message, 'success', 1200);
     }
@@ -420,47 +423,53 @@ export async function completeComponentActionJob(
     return;
   }
 
-  const alreadyHandled = handledComponentJobs.has(jobId);
+  if (handledComponentJobs.has(jobId)) return;
 
-  if (alreadyHandled) {
+  if (!response.success) {
     setActionLoading(key, false);
+    if (key === 'forkopInstall') {
+      setForkopInstallStatus(_('Could not confirm completion'));
+    } else if (!isTransientRpcError(response.error)) {
+      showToast(response.error || _('Could not confirm completion'), 'error');
+    }
     return;
   }
 
-  if (!response.success || response.data.success === false) {
-    const message = response.success
-      ? response.data.message || _('Failed to execute')
-      : response.error || _('Failed to execute');
-
-    if (!response.success && isTransientRpcError(message)) {
-      setActionLoading(key, false);
-      void refreshComponentActionState();
-      return;
-    }
-
-    handledComponentJobs.add(jobId);
-    setActionLoading(key, false);
-    if (shouldNotifyOwnedUiAction('component', jobId)) {
-      showToast(message, 'error');
-    }
-    await ackComponentActionJob(jobId);
-    return;
-  }
-
+  if (response.data.running !== false) return;
   handledComponentJobs.add(jobId);
-  await ackComponentActionJob(jobId);
-  await applyCompletedComponentAction({
-    key,
-    result: response.data,
-    notify: shouldNotifyOwnedUiAction('component', jobId),
-  });
+  if (isForkopInstall(response.data)) {
+    // Keep the result available when LuCI reconnects or opens in another tab.
+    showForkopInstallStatus(response.data);
+  } else {
+    await ackComponentActionJob(jobId);
+  }
+
+  const notify = shouldNotifyOwnedUiAction('component', jobId);
+  if (response.data.success === false) {
+    setActionLoading(key, false);
+    if (notify)
+      showToast(response.data.message || _('Failed to execute'), 'error');
+    return;
+  }
+
+  if (
+    isForkopInstall(response.data) &&
+    !notify &&
+    !followedComponentJobs.has(jobId)
+  ) {
+    // A newly opened page may already have a more recent release comparison.
+    setActionLoading(key, false);
+    return;
+  }
+
+  await applyCompletedComponentAction({ key, result: response.data, notify });
 }
 
 async function followComponentActionState(state: Forkop.ComponentActionResult) {
   const jobId = state.job_id;
   const key = getComponentActionKey(state.component, state.action);
 
-  if (!jobId || !key || followedComponentJobs.has(jobId)) {
+  if (!jobId || !key || (state.running && followedComponentJobs.has(jobId))) {
     return;
   }
 
@@ -468,19 +477,14 @@ async function followComponentActionState(state: Forkop.ComponentActionResult) {
     return;
   }
 
-  followedComponentJobs.add(jobId);
+  if (state.running) followedComponentJobs.add(jobId);
   if (shouldShowLoadingForRestoredAction(state)) {
     setActionLoading(key, true);
   }
 
   try {
     const response = state.running
-      ? await ForkopShellMethods.waitComponentActionJob(
-          jobId,
-          state.component,
-          state.action,
-          state.latest_version || undefined,
-        )
+      ? await ForkopShellMethods.waitComponentActionJob(jobId)
       : ({
           success: true,
           data: state,
@@ -498,7 +502,7 @@ async function followComponentActionState(state: Forkop.ComponentActionResult) {
       }
     }
   } finally {
-    followedComponentJobs.delete(jobId);
+    if (state.running) followedComponentJobs.delete(jobId);
   }
 }
 
@@ -535,9 +539,41 @@ function isComponentActionAlreadyRunningError(message: string | undefined) {
   );
 }
 
+function setForkopInstallStatus(message: string) {
+  forkopInstallStatus = message;
+  const status = document.getElementById('fkp_forkop-install-status');
+  if (status && status.textContent !== message) {
+    status.textContent = message;
+    status.hidden = !message;
+  }
+}
+
+function showForkopInstallStatus(state: Forkop.ComponentActionResult) {
+  if (state.running) {
+    setForkopInstallStatus(_('Installing Forkop X…'));
+  } else if (state.success) {
+    setForkopInstallStatus(
+      [_('Forkop X installation completed'), state.current_version]
+        .filter(Boolean)
+        .join(' · '),
+    );
+  } else {
+    setForkopInstallStatus(
+      [_('Forkop X installation failed'), state.message]
+        .filter(Boolean)
+        .join(' · '),
+    );
+  }
+}
+
 function handleComponentUiState(uiState: Forkop.UiState) {
-  for (const state of uiState.actions.component || []) {
-    void followComponentActionState(state);
+  const actions = uiState.actions.component || [];
+  const latest = getLatestForkopInstall(actions);
+  if (latest) showForkopInstallStatus(latest);
+  for (const state of actions) {
+    if (!isForkopInstall(state) || state === latest) {
+      void followComponentActionState(state);
+    }
   }
 }
 
@@ -593,8 +629,6 @@ async function handleComponentAction(button: ComponentActionButton) {
 
   let jobId = '';
   let ownsJobFollow = false;
-  const running = getCachedRuntimeUiState()?.service.forkop.running;
-
   try {
     const startResponse = await ForkopShellMethods.componentActionStart(
       button.component,
@@ -624,6 +658,8 @@ async function handleComponentAction(button: ComponentActionButton) {
 
     jobId = startResponse.data.job_id;
     markUiActionOwned('component', jobId);
+    if (isForkopInstall(button))
+      setForkopInstallStatus(_('Installing Forkop X…'));
     if (followedComponentJobs.has(jobId)) {
       return;
     }
@@ -631,14 +667,7 @@ async function handleComponentAction(button: ComponentActionButton) {
     followedComponentJobs.add(jobId);
     ownsJobFollow = true;
 
-    const response = await ForkopShellMethods.waitComponentActionJob(
-      jobId,
-      button.component,
-      button.action,
-      button.version || getExpectedLatestVersionForAction(button),
-      running === undefined ? undefined : Boolean(running),
-    );
-
+    const response = await ForkopShellMethods.waitComponentActionJob(jobId);
     await completeComponentActionJob(button.key, jobId, response);
   } catch (error) {
     logger.error('[UPDATES]', 'handleComponentAction failed', error);
@@ -1095,6 +1124,19 @@ function renderComponentCard(card: ComponentCard) {
   );
 
   const cardChildren: Node[] = [header];
+  if (card.component === 'forkop') {
+    cardChildren.push(
+      E(
+        'div',
+        {
+          id: 'fkp_forkop-install-status',
+          role: 'status',
+          ...(forkopInstallStatus ? {} : { hidden: true }),
+        },
+        forkopInstallStatus,
+      ),
+    );
+  }
   if (detailsContainer) {
     cardChildren.push(detailsContainer);
   }

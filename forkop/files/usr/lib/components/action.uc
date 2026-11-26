@@ -459,10 +459,11 @@ function pkg_install_name_command(package_name) {
         command_from_args([ "opkg", "install", package_name ]) + " </dev/null";
 }
 
-function pkg_install_files_command(files) {
-    let args = is_apk() ? [ "apk", "add", "--allow-untrusted" ] : [ "opkg", "install", "--force-overwrite", "--force-downgrade" ];
-    if (is_apk() && forkop_package_init != "")
-        args = [ "apk", "--preserve-env", "add", "--allow-untrusted" ];
+function pkg_install_files_command(files, simulate) {
+    let args = is_apk() ? [ "apk", "--preserve-env", "add", "--no-network", "--allow-untrusted" ] :
+        [ "opkg", "install", "--force-overwrite", "--force-downgrade" ];
+    if (simulate)
+        push(args, "--simulate");
     for (let file in files)
         push(args, file);
     return command_env({ FORKOP_MIRROR_BASE_URL, FORKOP_INIT: forkop_package_init || SERVICE_INIT }) + " " +
@@ -1670,8 +1671,16 @@ function install_forkop(requested_version) {
     let preflight_error = preflight.error || forkop_package_preflight_space(preflight, rollback_packages);
     if (preflight_error != "")
         action_fail("forkop", "install", preflight_error, FORKOP_VERSION, latest_version);
-    if (!preinstall_release_dependencies([ backend_file, app_file, i18n_file, xrust?.target.path || "" ]))
+    let release_files = filter([ app_file, i18n_file, backend_file ], file => file != "");
+    let dependency_files = slice(release_files, 0);
+    if (xrust != null)
+        push(dependency_files, xrust.target.path);
+    if (!preinstall_release_dependencies(dependency_files))
         action_fail("forkop", "install", "Failed to install new dependencies of the Forkop release", FORKOP_VERSION, latest_version);
+    if (is_apk() && !run_logged("Checking offline installation of the Forkop release",
+        pkg_install_files_command(dependency_files, true)))
+        action_fail("forkop", "install", "Forkop release packages cannot be installed offline; check the component log",
+            FORKOP_VERSION, latest_version);
 
     if (!module_success([ LIB_DIR + "/service/ui.uc", "begin-package-upgrade-quiesce", owner_pid() ]))
         action_fail("forkop", "install", "Another Forkop service transition or package upgrade is starting", FORKOP_VERSION, latest_version);
@@ -1701,16 +1710,10 @@ function install_forkop(requested_version) {
                 mismatch || "Installed Xrust does not match the Forkop release", latest_version);
     }
 
-    // apk refreshes repository indexes for every `add` invocation. Install the
-    // release files in one transaction on APK systems to retain dependency
-    // resolution while avoiding two redundant index refreshes. Keep opkg's
-    // established ordering unchanged.
+    // Dependencies were prepared and checked above, while Forkop could still
+    // route requests. Install the local APKs together without using the network.
     if (is_apk()) {
-        let files = [ app_file ];
-        if (i18n_file != "")
-            push(files, i18n_file);
-        push(files, backend_file);
-        if (!run_logged("Installing Forkop release packages", pkg_install_files_command(files)))
+        if (!run_logged("Installing Forkop release packages", pkg_install_files_command(release_files)))
             fail_forkop_package_install(rollback_packages, "Failed to install Forkop release packages", latest_version);
     }
     else {
@@ -1764,7 +1767,7 @@ function install_forkop(requested_version) {
     if (new_version == "")
         new_version = latest_version;
     updates_log("Forkop updated to " + new_version);
-    action_success("forkop", "install", "Forkop has been installed", new_version, latest_version, 1, "latest", release.release_url);
+    action_success("forkop", "install", "Forkop has been installed", new_version, latest_version, 1, "", release.release_url);
 }
 
 function restore_component_option(package_name, path, value) {

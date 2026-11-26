@@ -2145,7 +2145,8 @@ function update_component_check_cache_from_action(value) {
     if (path == "")
         return;
 
-    if (action == "remove" && value.success === true) {
+    if (value.success === true &&
+        (action == "remove" || (component == "forkop" && action == "install"))) {
         remove_file(path);
         return;
     }
@@ -2404,6 +2405,7 @@ function component_fallback_job_state(component, action, message, exit_code, upd
 
 function finish_component_job(path, component, action, exit_code, output_file) {
     let updated_at = now_seconds();
+    let started_at = read_json_file(path)?.started_at;
     let value = output_json_object(output_file);
     let ok;
 
@@ -2411,13 +2413,16 @@ function finish_component_job(path, component, action, exit_code, output_file) {
         value.running = false;
         value.kind = "component";
         value.exit_code = arg_number(exit_code);
+        value.started_at = started_at;
         value.updated_at = updated_at;
         update_component_check_cache_from_action(value);
         ok = write_state_file(path, value);
     }
     else {
         let raw_output = file_last_nonblank_line_value(output_file, "Failed to execute", 240);
-        ok = write_state_file(path, component_fallback_job_state(component, action, raw_output, exit_code, updated_at));
+        let failed = component_fallback_job_state(component, action, raw_output, exit_code, updated_at);
+        failed.started_at = started_at;
+        ok = write_state_file(path, failed);
     }
 
     remove_file(output_file);

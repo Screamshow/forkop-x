@@ -2260,3 +2260,15 @@ msgstr "Настройки сохранены. Страница обновляе
 
 msgid "The generated Xrust configuration is invalid. Previous configuration recovery was requested. Correct the settings and apply them again; see the system log for details."
 msgstr "Конфигурация Xrust отклонена. Forkop запросил восстановление предыдущей конфигурации. Исправьте настройки и примените их снова. Подробности в системном журнале."
+
+msgid "Could not confirm completion"
+msgstr "Не удалось подтвердить завершение"
+
+msgid "Installing Forkop X…"
+msgstr "Идёт установка Forkop X…"
+
+msgid "Forkop X installation completed"
+msgstr "Установка Forkop X завершена"
+
+msgid "Forkop X installation failed"
+msgstr "Не удалось установить Forkop X"

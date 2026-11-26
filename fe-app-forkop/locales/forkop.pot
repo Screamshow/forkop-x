@@ -3166,3 +3166,15 @@ msgstr ""
 #: src/forkop/services/logErrorMessage.service.ts:8
 msgid "The generated Xrust configuration is invalid. Previous configuration recovery was requested. Correct the settings and apply them again; see the system log for details."
 msgstr ""
+
+msgid "Could not confirm completion"
+msgstr ""
+
+msgid "Installing Forkop X…"
+msgstr ""
+
+msgid "Forkop X installation completed"
+msgstr ""
+
+msgid "Forkop X installation failed"
+msgstr ""
