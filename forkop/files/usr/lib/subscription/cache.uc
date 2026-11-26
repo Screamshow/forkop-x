@@ -48,6 +48,7 @@ const SUBSCRIPTION_BOOTSTRAP_SECONDS = 5;
 const SUBSCRIPTION_UNUSABLE_RESPONSE = 2;
 const SUBSCRIPTION_UPDATE_ROLLBACK_DIR = TMP_SUBSCRIPTION_FOLDER + "/.update-rollback";
 let guard_subscription_source_update = false;
+let record_subscription_update_timestamps = true;
 let direct_fetch_dir = "";
 
 function as_string(value) {
@@ -1454,6 +1455,16 @@ function finish_subscription_source_update(commit) {
         else if (fs.stat(target) != null)
             restored = fs.unlink(target) && restored;
     }
+    if (restored && commit) {
+        let timestamps = fs.glob(SUBSCRIPTION_UPDATE_ROLLBACK_DIR + "/*.timestamp") || [];
+        if (length(timestamps) && !command_success_from_args([ "mkdir", "-p", FORKOP_SUBSCRIPTION_UPDATE_STATE_DIR ]))
+            return false;
+        for (let path in timestamps) {
+            let target = FORKOP_SUBSCRIPTION_UPDATE_STATE_DIR + "/" + fs.basename(path);
+            if (!common.copy_private_file_atomic(path, target))
+                restored = false;
+        }
+    }
     return restored && command_success_from_args([ "rm", "-rf", SUBSCRIPTION_UPDATE_ROLLBACK_DIR ]);
 }
 
@@ -1559,15 +1570,46 @@ function fetch_runtime_source(parsed, proxy, prefix) {
     return result;
 }
 
+function subscription_update_timestamp_path(section_name_value, entry) {
+    let name = as_string(section_name_value);
+    if (entry != null)
+        name += "." + rulesets.hash12(entry);
+    return FORKOP_SUBSCRIPTION_UPDATE_STATE_DIR + "/" + name + ".timestamp";
+}
+
+function subscription_source_due_result(section, entry, now) {
+    if (!connections.subscription_update_enabled(section, entry))
+        return 1;
+    let interval = connections.subscription_update_interval(section, entry) || "4h";
+    let seconds = duration_to_seconds_value(interval);
+    if (seconds == null || seconds <= 0) {
+        log_message("Invalid subscription_update_interval value for rule '" + section_name(section) + "': " + interval, "error");
+        return 2;
+    }
+
+    let section_id = section_name(section);
+    let previous = file_first_line_value(subscription_update_timestamp_path(section_id, entry));
+    if (previous == "")
+        previous = file_first_line_value(subscription_update_timestamp_path(section_id));
+    return update_due_status(now, previous, seconds);
+}
+
 function source_revision(source) {
-    let stat = fs.stat(source_json_path(TMP_SUBSCRIPTION_FOLDER, source));
-    return stat ? join(":", [ stat.inode, stat.size, stat.mtime, stat.ctime ]) : "";
+    let path = source_json_path(TMP_SUBSCRIPTION_FOLDER, source);
+    if (fs.stat(path) == null)
+        return "";
+    // Permissions, hard-link snapshots and rollback can change stat metadata
+    // without changing the last accepted response.
+    let digest = split(command_output_from_args([ "sha256sum", path ]), " ")[0];
+    return match(digest, /^[0-9a-f]{64}$/) != null ? digest : null;
 }
 
 // Only private response files are written here. UCI, the active cache, filter
 // bindings and the next-check timestamps still change under the reload lock.
 function prefetch_direct_sources(dir, force, target_section, target_index) {
     let now = int(clock()[0]);
+    if (!write_file(dir + "/.started-at", now + "\n"))
+        return false;
     for (let section in uci_sections()) {
         let name = section_name(section);
         if (!cache_section_is_safe(name) || !section_is_subscription_proxy(section) ||
@@ -1585,6 +1627,8 @@ function prefetch_direct_sources(dir, force, target_section, target_index) {
             let source = source_id(name, number);
             let prefix = dir + "/" + source;
             let revision = source_revision(source);
+            if (revision == null)
+                return false;
             let result = fetch_runtime_source(parsed, "", prefix);
             delete result.payload; // The normalizer already wrote it to prefix.json.
             result.profile = parsed;
@@ -1718,7 +1762,8 @@ function update_subscription_source(section_name_value, index_value, entry, phas
     if (direct_fetch_dir && !parsed.download_section) {
         staged = read_json(direct_fetch_dir + "/" + source_section + ".result");
         let profile = staged?.profile;
-        if (profile == null || profile.url != parsed.url || profile.hwid != parsed.hwid ||
+        if (profile == null || type(staged.revision) != "string" ||
+            profile.url != parsed.url || profile.hwid != parsed.hwid ||
             profile.user_agent != parsed.user_agent || profile.download_section != parsed.download_section ||
             staged.hwid != get_subscription_hwid(parsed.hwid) || staged.revision != source_revision(source_section))
             return 4;
@@ -1734,33 +1779,14 @@ function update_subscription_source(section_name_value, index_value, entry, phas
     );
 }
 
-function subscription_update_timestamp_path(section_name_value, entry) {
-    let name = as_string(section_name_value);
-    if (entry != null)
-        name += "." + rulesets.hash12(entry);
-    return FORKOP_SUBSCRIPTION_UPDATE_STATE_DIR + "/" + name + ".timestamp";
-}
-
 function write_subscription_update_timestamp(section_name_value, entry) {
-    ensure_dir(FORKOP_SUBSCRIPTION_UPDATE_STATE_DIR);
-    write_file(subscription_update_timestamp_path(section_name_value, entry), int(clock()[0]) + "\n");
-}
-
-function subscription_source_due_result(section, entry, now) {
-    if (!connections.subscription_update_enabled(section, entry))
-        return 1;
-    let interval = connections.subscription_update_interval(section, entry) || "4h";
-    let seconds = duration_to_seconds_value(interval);
-    if (seconds == null || seconds <= 0) {
-        log_message("Invalid subscription_update_interval value for rule '" + section_name(section) + "': " + interval, "error");
-        return 2;
-    }
-
-    let section_id = section_name(section);
-    let previous = file_first_line_value(subscription_update_timestamp_path(section_id, entry));
-    if (previous == "")
-        previous = file_first_line_value(subscription_update_timestamp_path(section_id));
-    return update_due_status(now, previous, seconds);
+    if (!record_subscription_update_timestamps)
+        return;
+    let path = subscription_update_timestamp_path(section_name_value, entry);
+    if (guard_subscription_source_update)
+        path = SUBSCRIPTION_UPDATE_ROLLBACK_DIR + "/" + fs.basename(path);
+    if (!write_file(path, int(clock()[0]) + "\n"))
+        die("Could not record successful subscription update\n");
 }
 
 function finalize_subscription_section_metadata(section_name_value, metadata_tmpfile, superseded) {
@@ -1788,7 +1814,7 @@ function update_count_summary(updated, unchanged, failed) {
     return length(parts) > 0 ? join(", ", parts) : "no subscription sources checked";
 }
 
-function subscription_update_section(section, force) {
+function subscription_update_section(section, force, now, summary) {
     section = object_or_empty(section);
     if (!section_is_subscription_proxy(section))
         return 3;
@@ -1798,7 +1824,6 @@ function subscription_update_section(section, force) {
     let due_sources = [];
     let scheduled = 0;
     let failed = 0;
-    let now = int(clock()[0]);
     for (let entry in entries) {
         let due = force ? 0 : subscription_source_due_result(section, entry, now);
         push(due_sources, due == 0);
@@ -1807,8 +1832,11 @@ function subscription_update_section(section, force) {
         else if (due != 1)
             failed++;
     }
-    if (!scheduled)
+    if (!scheduled) {
+        if (summary != null)
+            summary.failed += failed;
         return failed ? 1 : 3;
+    }
 
     ensure_runtime_dirs();
     log_message("Updating subscriptions for rule '" + section_name_value + "'", "info");
@@ -1821,6 +1849,7 @@ function subscription_update_section(section, force) {
     let unchanged = 0;
     let superseded = 0;
     let total = 0;
+    let checked_entries = [];
 
     for (let entry in entries) {
         total++;
@@ -1831,15 +1860,14 @@ function subscription_update_section(section, force) {
         }
         let metadata_output_path = temp_path(TMP_SUBSCRIPTION_FOLDER, source_section, "metadata-output");
         let update_result = update_subscription_source(section_name_value, total, entry, "runtime", metadata_output_path);
-        if (update_result != 4)
-            write_subscription_update_timestamp(section_name_value, entry);
-
         if (update_result == 0) {
             append_metadata_file(metadata_tmpfile, metadata_output_path, total, source_section);
+            push(checked_entries, entry);
             changed++;
         }
         else if (update_result == 2) {
             append_metadata_file(metadata_tmpfile, metadata_output_path, total, source_section);
+            push(checked_entries, entry);
             unchanged++;
         }
         else if (update_result == 4) {
@@ -1865,10 +1893,25 @@ function subscription_update_section(section, force) {
 
     if (superseded == 0) {
         let filters = filter_selection.finish(filter_snapshot);
-        if (!filters.ok)
+        if (!filters.ok) {
+            if (summary != null)
+                summary.failed += failed + 1;
             return 1;
-        if (filters.changed && update_result == 2)
+        }
+        if (filters.changed && changed == 0 && unchanged > 0) {
+            changed++;
+            unchanged--;
             update_result = 0;
+        }
+    }
+    for (let entry in checked_entries)
+        write_subscription_update_timestamp(section_name_value, entry);
+
+    if (summary != null) {
+        summary.updated += changed;
+        summary.failed += failed;
+        summary.unchanged += unchanged;
+        summary.superseded += superseded;
     }
 
     if (update_result == 0) {
@@ -1896,7 +1939,7 @@ function source_index_number(value) {
     return result > 0 ? result : null;
 }
 
-function subscription_update_selected_source(sections, section_name_value, source_index_value, force) {
+function subscription_update_selected_source(sections, section_name_value, source_index_value, force, now) {
     if (!cache_section_is_safe(section_name_value)) {
         log_message("Invalid subscription rule name", "error");
         return 1;
@@ -1930,7 +1973,7 @@ function subscription_update_selected_source(sections, section_name_value, sourc
     }
 
     if (!force) {
-        let due_result = subscription_source_due_result(section, selected_entry, int(clock()[0]));
+        let due_result = subscription_source_due_result(section, selected_entry, now);
         if (due_result != 0)
             return due_result == 1 ? 3 : 1;
     }
@@ -1941,8 +1984,6 @@ function subscription_update_selected_source(sections, section_name_value, sourc
     let metadata_output_path = temp_path(TMP_SUBSCRIPTION_FOLDER, source_section, "metadata-output");
     let filter_snapshot = filter_selection.snapshot(section);
     let update_result = update_subscription_source(section_name_value, source_index, selected_entry, "runtime", metadata_output_path);
-    if (update_result != 4)
-        write_subscription_update_timestamp(section_name_value, selected_entry);
 
     if (update_result == 0 || update_result == 2)
         write_source_metadata(
@@ -1963,6 +2004,7 @@ function subscription_update_selected_source(sections, section_name_value, sourc
             return 1;
         if (filters.changed)
             update_result = 0;
+        write_subscription_update_timestamp(section_name_value, selected_entry);
     }
 
     if (update_result == 4) {
@@ -2001,6 +2043,10 @@ function print_subscription_update_summary(summary) {
 
 function subscription_update_request(force_value, target_section_name, target_source_index) {
     let force = as_string(force_value) == "1";
+    let now = direct_fetch_dir == "" ? int(clock()[0]) :
+        int(file_first_line_value(direct_fetch_dir + "/.started-at"));
+    if (now <= 0)
+        die("Missing subscription prefetch timestamp\n");
     let sections = uci_sections();
     let summary = empty_subscription_update_summary();
 
@@ -2009,15 +2055,15 @@ function subscription_update_request(force_value, target_section_name, target_so
 
     if (target_section_name != "") {
         if (target_source_index != "")
-            add_subscription_update_result(summary, subscription_update_selected_source(sections, target_section_name, target_source_index, force));
+            add_subscription_update_result(summary, subscription_update_selected_source(sections, target_section_name, target_source_index, force, now));
         else
-            add_subscription_update_result(summary, subscription_update_section(find_section(sections, target_section_name), force));
+            subscription_update_section(find_section(sections, target_section_name), force, now, summary);
         print_subscription_update_summary(summary);
         return;
     }
 
     for (let section in sections)
-        add_subscription_update_result(summary, subscription_update_section(section, force));
+        subscription_update_section(section, force, now, summary);
 
     print_subscription_update_summary(summary);
 }
@@ -2278,7 +2324,7 @@ function subscription_bootstrap_retry_result(deferred_sections) {
         }
 
         log_message("Retrying deferred subscription rule '" + section + "' through the service proxy", "info");
-        let update_result = subscription_update_section(value, true);
+        let update_result = subscription_update_section(value, true, int(clock()[0]));
         if (update_result == 0 || update_result == 2) {
             result.recovered = append_word_once(result.recovered, section);
             continue;
@@ -2457,6 +2503,7 @@ else if (mode == "update-due-status-fixture") {
 else if (mode == "update-request") {
     guard_subscription_source_update = ARGV[4] == "1";
     direct_fetch_dir = ARGV[5] || "";
+    record_subscription_update_timestamps = ARGV[6] != "0";
     subscription_update_request(ARGV[1] || "0", ARGV[2] || "", ARGV[3] || "");
 }
 else if (mode == "prefetch-direct") {

@@ -150,9 +150,10 @@ function restore_directory_snapshot(snapshot, target) {
 function secure_private_dir(path) {
     if (path == null || path == "" || path == "/")
         return false;
-    if (fs.stat(path) == null && !fs.mkdir(path, 0700))
+    let directory = fs.stat(path);
+    if (directory == null && !fs.mkdir(path, 0700))
         return false;
-    if (!fs.chmod(path, 0700))
+    if (directory?.mode != 0700 && !fs.chmod(path, 0700))
         return false;
     let entries = fs.lsdir(path);
     if (type(entries) != "array")
@@ -160,7 +161,9 @@ function secure_private_dir(path) {
     for (let entry in entries) {
         let file = path + "/" + entry;
         let stat = fs.stat(file);
-        if (stat != null && stat.type == "file" && !fs.chmod(file, 0600))
+        // Reapplying the same mode changes ctime, which guards prefetched
+        // subscription responses against concurrent cache changes.
+        if (stat != null && stat.type == "file" && stat.mode != 0600 && !fs.chmod(file, 0600))
             return false;
     }
     return true;

@@ -42,7 +42,7 @@ function publish(path, payload, profile, previous_text) {
     payload.__forkop_source_cache = profile;
     let text = sprintf("%J\n", payload);
     if ((previous_text ?? fs.readfile(path)) == text)
-        return !!fs.chmod(path, 0600);
+        return fs.stat(path)?.mode == 0600 || !!fs.chmod(path, 0600);
 
     // Recover space consumed by a writer that died before its rename.
     let prefix = path + ".pending.";

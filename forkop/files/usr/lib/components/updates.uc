@@ -63,6 +63,7 @@ const PRIORITY_UC = getenv("FORKOP_PRIORITY_UC") || LIB_DIR + "/xrust/priority.u
 const DNS_FAILOVER_UC = getenv("FORKOP_DNS_FAILOVER_UC") || LIB_DIR + "/xrust/dns_failover.uc";
 const SUBSCRIPTION_APPLY_ERROR_FILE = getenv("FORKOP_SUBSCRIPTION_APPLY_ERROR_FILE") || RUNTIME_STATE_DIR + "/subscription-apply-error.json";
 let subscription_failure_detail = null;
+let subscription_incomplete = false;
 const DIAGNOSTICS_UC = getenv("FORKOP_DIAGNOSTICS_UC") || LIB_DIR + "/diagnostics/runtime.uc";
 const RULESET_CACHE_UC = getenv("FORKOP_RULESET_CACHE_UC") || LIB_DIR + "/xrust/ruleset_cache.uc";
 const COMPONENT_JOB_DIR = getenv("UPDATES_JOB_DIR") || getenv("FORKOP_UI_COMPONENT_ACTION_DIR") || "/var/run/forkop/component-actions";
@@ -3465,7 +3466,7 @@ function list_update_pid_begin() {
             return false;
         }
         let ticks = list_worker_identity.start_ticks(pid);
-        return ticks != "" && write_file(LIST_UPDATE_PID_FILE, pid + "\n" + ticks + "\n");
+        return ticks != "" && write_file(LIST_UPDATE_PID_FILE, pid + "\n" + ticks + "\n") ? true : null;
     });
 }
 
@@ -3702,7 +3703,12 @@ function finish_list_update(status, applied, generation_changed) {
 
 function list_update(reuse_sources, scheduled) {
     log_message(reuse_sources ? "Preparing changed list sources; reusing validated cache" : "Starting lists update", "info");
-    if (!list_update_pid_begin()) {
+    let worker_started = list_update_pid_begin();
+    if (worker_started == null) {
+        log_message("Could not register the lists update worker", "error");
+        exit(1);
+    }
+    if (!worker_started) {
         if (as_string(getenv("FORKOP_MANUAL_RESTART_LOCK_HELD") || "0") == "1") {
             log_message("Lists update is already running; manual restart preparation was not started", "warn");
             exit(1);
@@ -3933,7 +3939,7 @@ function subscription_prepare_cache_request(force, target_section, target_source
         force ? "1" : "0",
         as_string(target_section),
         as_string(target_source_index),
-        guarded ? "1" : "0", direct_dir || ""
+        guarded ? "1" : "0", direct_dir || "", guarded ? "1" : "0"
     ]);
     if (result.status != 0) {
         log_file_lines_from_text(result.output, "error", "subscription update: ");
@@ -3946,21 +3952,22 @@ function subscription_prepare_cache_request(force, target_section, target_source
     let unchanged = arg_number(fields[2] || "0");
     let superseded = arg_number(fields[3] || "0");
 
-    if (updated == 0) {
-        if (superseded > 0) {
-            log_message("Subscription update was superseded by newer configuration", "info");
-            return { ok: true, updated, failed, unchanged, superseded };
-        }
+    if (updated == 0 && unchanged == 0) {
         if (failed > 0) {
             log_message("Subscription update finished with errors; keeping the last working cache", "info");
             return { ok: false, updated, failed, unchanged, superseded };
         }
-        if (unchanged > 0)
-            log_message("Subscription update completed: no changes detected", "info");
-        else
-            log_message("No subscription rules are due for update", "info");
-        return { ok: true, updated, failed, unchanged, superseded };
+        if (superseded > 0) {
+            let message = "Subscription sources or cache changed during the update; retry the update";
+            log_message(message, "info");
+            if (force)
+                print(message + "\n");
+            return { ok: !force, updated, failed, unchanged, superseded };
+        }
+        log_message("No subscription rules are due for update", "info");
     }
+    else if (updated == 0 && failed == 0 && superseded == 0)
+        log_message("Subscription update completed: no changes detected", "info");
 
     return { ok: true, updated, failed, unchanged, superseded };
 }
@@ -4126,11 +4133,13 @@ function subscription_runtime_change_check(config_path) {
 function subscription_update_common_locked(force, target_section, target_source_index, direct_dir) {
     subscription_failure_detail = null;
     subscription_outbounds_changed = false;
+    subscription_incomplete = false;
     let prepared = subscription_prepare_cache_request(force, target_section, target_source_index, true, direct_dir);
     if (!prepared.ok)
         return false;
     let updated = prepared.updated;
     let failed = prepared.failed;
+    subscription_incomplete = failed > 0 || prepared.superseded > 0;
     if (updated == 0 && fs.stat(SUBSCRIPTION_APPLY_ERROR_FILE) == null)
         return true;
 
@@ -4248,9 +4257,7 @@ function subscription_update_common_locked(force, target_section, target_source_
         log_message("Subscription data was refreshed, but the final usable proxy set is unchanged; automatic latency test was not scheduled", "info");
     }
 
-    if (failed > 0)
-        log_message("Subscription update applied for changed rules; failed rules kept their previous cache", "info");
-    else
+    if (!subscription_incomplete)
         log_message("Subscription update completed", "info");
     return true;
 }
@@ -4313,6 +4320,14 @@ function subscription_update_common(force, target_section, target_source_index) 
     run_pending_reload_if_requested();
     if (ok && subscription_outbounds_changed)
         module_background([ DIAGNOSTICS_UC, "automatic-latency-test", "new" ]);
+    if (ok && subscription_incomplete) {
+        let message = "Subscription update partially completed; some sources failed or were skipped";
+        log_message(message, "warn");
+        if (force) {
+            print(message + "\n");
+            return 2;
+        }
+    }
     return ok ? 0 : 1;
 }
 
@@ -4340,7 +4355,9 @@ function subscription_prepare_only(target_section, target_source_index) {
     release_runtime_lock(SUBSCRIPTION_UPDATE_LOCK_DIR);
     if (owns_reload_lock)
         release_runtime_lock(RELOAD_LOCK_DIR);
-    if (!prepared.ok)
+    // A successful check of an unchanged source should not hide a download
+    // failure and turn a previously aborted manual restart into a stop/start.
+    if (!prepared.ok || (prepared.updated == 0 && prepared.failed > 0))
         exit(1);
 
     log_message(prepared.updated > 0 ?
