@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { formatRouteReason, isDefaultRoute } from './routeReason';
+import {
+  formatRouteReason,
+  isDefaultRoute,
+  isDirectConnection,
+} from './routeReason';
 
 describe('route reason', () => {
   it('explains unconditional device routes with and without exclusions', () => {
@@ -133,5 +137,15 @@ describe('route reason', () => {
     ]) {
       expect(isDefaultRoute(rule)).toBe(false);
     }
+  });
+  it('groups the BitTorrent direct exception with default routes', () => {
+    const rule = 'inbound=[tproxy-in tproxy6-in] protocol=bittorrent';
+    expect(isDirectConnection(`${rule} => route(direct-out)`)).toBe(true);
+    expect(isDirectConnection(`${rule} => route(VPN-out)`)).toBe(false);
+    expect(isDirectConnection('final')).toBe(true);
+    expect(isDirectConnection(undefined)).toBe(false);
+    expect(
+      isDirectConnection('domain_suffix=example.org => route(direct-out)'),
+    ).toBe(false);
   });
 });

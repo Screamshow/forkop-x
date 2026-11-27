@@ -27,6 +27,15 @@ export function isDefaultRoute(rule?: string): boolean {
   );
 }
 
+export function isDirectConnection(rule?: string): boolean {
+  return (
+    isDefaultRoute(rule) ||
+    /^inbound=(?:\[tproxy-in tproxy6-in\]|tproxy-in|tproxy6-in) protocol=bittorrent\s*=>\s*route\(direct-out\)$/.test(
+      rule?.trim() || '',
+    )
+  );
+}
+
 export function formatRouteReason(
   rule = '',
   payload = '',

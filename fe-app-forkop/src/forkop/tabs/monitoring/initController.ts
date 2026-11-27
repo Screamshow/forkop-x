@@ -26,7 +26,7 @@ import { CustomForkopMethods, ForkopShellMethods } from '../../methods';
 import { getOutboundTagBySection } from '../../runtimeTags';
 import { logger, socket, store, StoreType } from '../../services';
 import { Forkop } from '../../types';
-import { formatRouteReason, isDefaultRoute } from './routeReason';
+import { formatRouteReason, isDirectConnection } from './routeReason';
 import { customRulesetTag, customRulesetLabel } from './rulesetLabels';
 import { getConnectionPage, reconcileRows } from './reconcileRows';
 import {
@@ -403,7 +403,7 @@ function getConnectionsForActiveTab(): MonitoredConnection[] {
       ? Array.from(closedConnections.values())
       : Array.from(activeConnections.values()).filter(
           (connection) =>
-            isDefaultRoute(connection.rule) === (activeTab === 'direct'),
+            isDirectConnection(connection.rule) === (activeTab === 'direct'),
         );
 
   return sortConnections(source, activeTab);
@@ -563,7 +563,7 @@ function renderControls() {
 
   let directCount = 0;
   for (const connection of activeConnections.values()) {
-    if (isDefaultRoute(connection.rule)) directCount++;
+    if (isDirectConnection(connection.rule)) directCount++;
   }
   const tabs = {
     active: {
