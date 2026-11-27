@@ -3032,7 +3032,18 @@ stage_fresh_pinned_xrust() {
 install_repair_xrust_archive() {
     if [ "$PKG_IS_APK" -eq 1 ]; then
         # The exact local archive has already passed identity, checksum and signature checks.
-        apk add --no-network --allow-untrusted --force-reinstall "$1" </dev/null
+        if ! apk add --no-network --allow-untrusted --force-reinstall "$1" </dev/null; then
+            # APK also counts failures already recorded for other packages.
+            # Require a clean record for this exact package before accepting the transaction.
+            awk -v version="$2" '
+                /^P:/ { target = ($0 == "P:rust-x"); matching = 0 }
+                target && /^V:/ { matching = ($0 == "V:" version); found += matching }
+                target && /^f:/ && $0 !~ /^f:S?$/ { broken = 1 }
+                /^$/ { target = 0 }
+                END { exit !(found == 1 && !broken) }
+            ' "${FORKOP_APK_DB_PATH:-/lib/apk/db/installed}" || return 1
+            warn "APK reported an error. The requested rust-x package is installed without APK failure flags."
+        fi
     else
         opkg_with_lock_retry --force-reinstall --force-downgrade install "$1" </dev/null
     fi
@@ -3042,7 +3053,7 @@ rollback_xrust_repair() {
     [ "$REPAIR_XRUST_ACTIVE" -eq 1 ] || return 0
     REPAIR_XRUST_ACTIVE=0
     if [ -n "$REPAIR_XRUST_ROLLBACK" ]; then
-        if install_repair_xrust_archive "$REPAIR_XRUST_ROLLBACK" &&
+        if install_repair_xrust_archive "$REPAIR_XRUST_ROLLBACK" "$REPAIR_XRUST_PREVIOUS" &&
             [ "$(pinned_xrust_installed_version)" = "$REPAIR_XRUST_PREVIOUS" ]; then
             warn "Restored the previous rust-x package $REPAIR_XRUST_PREVIOUS"
             return 0
@@ -3255,7 +3266,7 @@ repair_xrust() {
         msg "Forkop configuration backup: $backup"
 
         REPAIR_XRUST_ACTIVE=1
-        install_repair_xrust_archive "$XRUST_PACKAGE_FILE" &&
+        install_repair_xrust_archive "$XRUST_PACKAGE_FILE" "$core_package_version" &&
             [ "$(pinned_xrust_installed_version)" = "$core_package_version" ] &&
             pinned_xrust_binary_matches || fail "Installing the exact Xrust package failed"
         REPAIR_XRUST_ACTIVE=0
@@ -3263,9 +3274,6 @@ repair_xrust() {
         msg "Installed Xrust $FORKOP_XRUST_VERSION for Forkop $repair_tag"
     fi
 
-    # An ordinary update must capture the same running state it would have
-    # seen without the repair. Explicit repair still checks service startup.
-    [ "$REPAIR_XRUST" -eq 1 ] || return 0
     if ! "$service" status >/dev/null 2>&1; then
         install_json_ucode installer-start-forkop </dev/null &&
             install_json_ucode installer-wait-forkop-ready </dev/null ||
@@ -3619,7 +3627,7 @@ main() {
         check_system
         repair_xrust
         release_xrust_repair_locks || fail "Could not release the Xrust repair locks"
-        [ "$REPAIR_XRUST" -ne 1 ] || return 0
+        return 0
     fi
     sync_time
     check_system

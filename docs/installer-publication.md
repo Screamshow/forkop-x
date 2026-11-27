@@ -23,11 +23,11 @@ status and leaves the successful Forkop update in place; the backend reports
 whether core recovery succeeded. Other installed core variants are preserved.
 
 If installed Forkop 3.x has a missing or incompatible Xrust executable, the
-installer repairs that release in place. `--repair-xrust` explicitly selects
-this mode and exits after the repair. An ordinary update resumes after a
-successful repair. The repair compares the installed package and executable against the
-archived pin and platform package revision, verifies and
-installs the matching `rust-x`, then checks that Forkop starts. Repair keeps a
+installer repairs that release in place, checks that Forkop starts and exits.
+`--repair-xrust` explicitly selects the same mode. The repair verifies and
+installs the matching `rust-x` from the archived pin and platform revision. If
+APK reports an error, repair continues only when the exact package has no APK
+failure flags and its executable reports the pinned version. Repair keeps a
 separate copy of the UCI file and stages the exact previous Xrust package for
 rollback. Installations with a separate sing-box package or unmanaged core
 require manual recovery.
