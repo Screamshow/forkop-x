@@ -12,7 +12,8 @@
         ]
       },
       "uci": [
-        "forkop"
+        "forkop",
+        "firewall"
       ]
     },
     "write": {

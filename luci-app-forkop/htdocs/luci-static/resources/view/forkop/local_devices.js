@@ -2,6 +2,8 @@
 "require baseclass";
 "require rpc";
 "require ui";
+"require uci";
+"require validation";
 "require view.forkop.main as main";
 
 const callHostHints = rpc.declare({
@@ -45,7 +47,7 @@ function normalizeLocalDeviceName(name) {
   return `${name || ""}`.trim().replace(/\.lan$/i, "");
 }
 
-function addLocalDeviceChoice(choices, ip, name) {
+function addLocalDeviceChoice(choices, localNetworks, routerIps, ip, name) {
   const normalizedIp = `${ip || ""}`.trim();
   const normalizedName = normalizeLocalDeviceName(name);
 
@@ -57,56 +59,83 @@ function addLocalDeviceChoice(choices, ip, name) {
     return;
   }
 
-  choices[normalizedIp] = normalizedName;
+  const words = parseAddress(normalizedIp);
+  if (
+    words &&
+    !routerIps.has(words.join(":")) &&
+    localNetworks.some((network) => matchesPrefix(words, network))
+  ) {
+    choices[normalizedIp] = normalizedName;
+  }
 }
 
-function addRouterIp(routerIps, ip) {
-  const normalizedIp = `${ip || ""}`.trim();
-
-  if (!normalizedIp || !main.validateIP(normalizedIp).valid) {
-    return;
-  }
-
-  routerIps[normalizedIp] = true;
+function parseAddress(ip) {
+  return validation.parseIPv4(ip) || validation.parseIPv6(ip);
 }
 
-function buildRouterIpMap(networkInterfaces) {
-  const routerIps = {};
-
-  if (!Array.isArray(networkInterfaces)) {
-    return routerIps;
-  }
-
-  networkInterfaces.forEach((networkInterface) => {
-    const ipAddresses = [];
-    const ipv4Addresses =
-      networkInterface &&
-      typeof networkInterface === "object" &&
-      Array.isArray(networkInterface["ipv4-address"])
-        ? networkInterface["ipv4-address"]
-        : [];
-    const ipv6Addresses =
-      networkInterface &&
-      typeof networkInterface === "object" &&
-      Array.isArray(networkInterface["ipv6-address"])
-        ? networkInterface["ipv6-address"]
-        : [];
-
-    ipAddresses.push(...ipv4Addresses, ...ipv6Addresses);
-    ipAddresses.forEach((address) => {
-      addRouterIp(
-        routerIps,
-        address && typeof address === "object" ? address.address : address,
-      );
-    });
+function matchesPrefix(words, { address, mask }) {
+  if (words.length !== address.length) return false;
+  const wordBits = words.length === 4 ? 8 : 16;
+  return words.every((word, index) => {
+    const bits = Math.min(wordBits, mask - index * wordBits);
+    return bits <= 0 || (word ^ address[index]) >> (wordBits - bits) === 0;
   });
-
-  return routerIps;
 }
 
-function buildLocalDeviceChoices(hostHints, dhcpLeases, networkInterfaces) {
+function buildLocalNetworks(networkInterfaces, zones) {
+  const local = new Set();
+  const uplinks = new Set();
+  for (const zone of zones) {
+    const networks =
+      zone.name === "wan" || zone.masq === "1" || zone.masq6 === "1"
+        ? uplinks
+        : local;
+    normalizeOptionValues(zone.network).forEach((name) => networks.add(name));
+  }
+
+  const routerIps = new Set();
+  const localNetworks = [];
+  for (const net of networkInterfaces) {
+    const isLocal =
+      net.up &&
+      local.has(net.interface) &&
+      !uplinks.has(net.interface) &&
+      !net.route?.some(
+        ({ target, mask }) =>
+          Number(mask) === 0 && (target === "0.0.0.0" || target === "::"),
+      );
+    const addresses = [
+      ...(net["ipv4-address"] || []),
+      ...(net["ipv6-address"] || []),
+      ...(net["ipv6-prefix-assignment"] || [])
+        .map((prefix) => prefix["local-address"])
+        .filter(Boolean),
+    ];
+    for (const entry of addresses) {
+      const address = parseAddress(entry.address);
+      if (!address) continue;
+      routerIps.add(address.join(":"));
+      const mask = Number(entry.mask);
+      const maxMask = address.length === 4 ? 32 : 128;
+      if (isLocal && Number.isInteger(mask) && mask > 0 && mask <= maxMask) {
+        localNetworks.push({ address, mask });
+      }
+    }
+  }
+  return { localNetworks, routerIps };
+}
+
+function buildLocalDeviceChoices(
+  hostHints,
+  dhcpLeases,
+  networkInterfaces,
+  zones,
+) {
   const choices = {};
-  const routerIps = buildRouterIpMap(networkInterfaces);
+  const { localNetworks, routerIps } = buildLocalNetworks(
+    networkInterfaces,
+    zones,
+  );
 
   if (hostHints && typeof hostHints === "object") {
     Object.values(hostHints).forEach((hint) => {
@@ -117,9 +146,10 @@ function buildLocalDeviceChoices(hostHints, dhcpLeases, networkInterfaces) {
       [
         ...normalizeOptionValues(hint.ipaddrs),
         ...normalizeOptionValues(hint.ipv4),
+        ...normalizeOptionValues(hint.ip6addrs),
         ...normalizeOptionValues(hint.ipv6),
       ].forEach((ip) => {
-        addLocalDeviceChoice(choices, ip, hint.name);
+        addLocalDeviceChoice(choices, localNetworks, routerIps, ip, hint.name);
       });
     });
   }
@@ -130,13 +160,15 @@ function buildLocalDeviceChoices(hostHints, dhcpLeases, networkInterfaces) {
         return;
       }
 
-      addLocalDeviceChoice(choices, lease.ipaddr, lease.hostname);
+      addLocalDeviceChoice(
+        choices,
+        localNetworks,
+        routerIps,
+        lease.ipaddr,
+        lease.hostname,
+      );
     });
   }
-
-  Object.keys(routerIps).forEach((ip) => {
-    delete choices[ip];
-  });
 
   return choices;
 }
@@ -154,12 +186,17 @@ function loadLocalDeviceChoices() {
     callHostHints().catch(() => ({})),
     callDHCPLeases().catch(() => ({})),
     callNetworkInterfaceDump().catch(() => []),
+    uci
+      .load("firewall")
+      .then(() => uci.sections("firewall", "zone"))
+      .catch(() => []),
   ])
-    .then(([hostHints, dhcpLeases, networkInterfaces]) => {
+    .then(([hostHints, dhcpLeases, networkInterfaces, zones]) => {
       localDeviceChoicesCache = buildLocalDeviceChoices(
         hostHints,
         dhcpLeases,
         networkInterfaces,
+        zones,
       );
       return localDeviceChoicesCache;
     })

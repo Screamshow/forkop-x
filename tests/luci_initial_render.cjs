@@ -121,6 +121,7 @@ async function checkTailscaleStatusOrder(assetDir) {
       tag, attrs, children, style: {}, isConnected: true,
       textContent: typeof children[0] === 'string' ? children[0] : '',
       addEventListener(name, handler) { this[name] = handler; },
+      setAttribute(name, value) { this.attrs[name] = String(value); },
       replaceChildren(...items) { this.children = items; },
       appendChild(child) { this.children.push(child); },
     };

@@ -29,6 +29,7 @@ ops/deployed-nginx/
 !/tests/subscription_reality_filter.sh
 !/tests/editor_preview_download.py
 !/tests/luci_save_apply.cjs
+!/tests/luci_local_devices.cjs
 !/tests/native_tunnel_profile.cjs
 !/tests/list_change_cache.sh
 !/tests/component_action_rollback.uc

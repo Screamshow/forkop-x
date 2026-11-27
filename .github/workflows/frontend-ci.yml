@@ -6,6 +6,7 @@ on:
       - 'fe-app-forkop/**'
       - 'luci-app-forkop/**'
       - 'tests/luci_initial_render.cjs'
+      - 'tests/luci_local_devices.cjs'
       - 'tests/luci_save_apply.cjs'
       - '.github/workflows/frontend-ci.yml'
 
@@ -32,6 +33,10 @@ jobs:
       - name: Check LuCI Save and Apply
         working-directory: .
         run: node tests/luci_save_apply.cjs
+
+      - name: Check LuCI local device suggestions
+        working-directory: .
+        run: node tests/luci_local_devices.cjs
 
       - name: Check LuCI initial rendering
         working-directory: .
