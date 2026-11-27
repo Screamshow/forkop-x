@@ -184,7 +184,8 @@ let xray_features = "transport.xhttp.split,transport.grpc.multi,tls.xray-pins,tl
 let vless_base = "vless://" + uuid + "@127.0.0.1:8443?";
 let download = { address: "127.0.0.2", port: 9443, network: "xhttp", security: "tls",
     tlsSettings: { serverName: "front.example", verifyPeerCertByName: "cert.example" },
-    xhttpSettings: { path: "/download", host: "get.example", extra: { xPaddingBytes: "300-400" } } };
+    xhttpSettings: { path: "/download", host: "get.example",
+        extra: { xPaddingBytes: "300-400", headers: { "X-Download": "yes" }, xmux: { hKeepAlivePeriod: -1 } } } };
 let extra = replace(sprintf("%J", { xPaddingBytes: "100-200", downloadSettings: download }), /./g,
     function(c) { return sprintf("%%%02X", ord(c)); });
 let ws_default = vless_base + "type=ws&security=none&host=ws.example#ws-default";
@@ -198,11 +199,21 @@ expect(inferred_tls.tls?.server_name == "front.example", "an explicit XHTTP upli
 let secondary = split.transport.download_settings;
 expect(secondary?.server == "127.0.0.2" && secondary.server_port == 9443 && secondary.transport.path == "/download" &&
     secondary.transport.host == "get.example" && secondary.transport.x_padding_bytes == "300-400" &&
+    secondary.transport.headers["X-Download"] == "yes" && secondary.transport.xmux.h_keep_alive_period == -1 &&
     secondary.tls.server_name == "front.example" && secondary.tls.verify_server_name[0] == "cert.example", "XHTTP download settings were lost");
 let link_serializer = require("subscription.share_link");
 let exported_split = normalize(link_serializer.serialize_outbound_link(split))[0];
 expect(exported_split.transport.download_settings?.server == "127.0.0.2" &&
+    exported_split.transport.download_settings.transport.headers["X-Download"] == "yes" &&
+    exported_split.transport.download_settings.transport.xmux.h_keep_alive_period == -1 &&
     exported_split.transport.download_settings.tls.verify_server_name[0] == "cert.example", "XHTTP split export roundtrip");
+let legacy_download = { ...download, xhttpSettings: { ...download.xhttpSettings,
+    headers: { "X-Download": "legacy" }, extra: { xPaddingBytes: "300-400" } } };
+let legacy_extra = replace(sprintf("%J", { downloadSettings: legacy_download }), /./g,
+    function(c) { return sprintf("%%%02X", ord(c)); });
+let legacy_split = normalize(vless_base + "type=xhttp&extra=" + legacy_extra)[0];
+expect(legacy_split.transport.download_settings.transport.headers["X-Download"] == "legacy",
+    "old Forkop split share links retain download headers beside extra");
 let cached_split = { ...split, share_link: clear_split, transport: { ...split.transport, x_padding_bytes: "9-12" } };
 delete cached_split.transport.download_settings;
 parser.repair_cached_outbounds([cached_split]);
@@ -227,6 +238,82 @@ if (xray_binary)
     expect(run([xray_binary, "check", "-c", work+"/generated.json"]) == 0, "Xrust rejected extended Xray options");
 expect(generate(manual, trojan_core, work+"/kept.json", "1") != 0 &&
     index(last_log_line(), "separate XHTTP download connection") >= 0, "old core silently accepted XHTTP split");
+
+let quic_params = {congestion: "reno", keepAlivePeriod: 7, disableGSO: true};
+let h3_fm = replace(sprintf("%J", {quicParams: quic_params}), /./g,
+    function(c) { return sprintf("%%%02X", ord(c)); });
+let h3_uri = vless_base + "type=xhttp&security=tls&sni=front.example&alpn=h3&fm=" + h3_fm + "#XHTTP-H3";
+let h3_mixed_uri = replace(h3_uri, "alpn=h3", "alpn=h3%2Ch2");
+let h3 = normalize(h3_uri)[0];
+expect(length(h3.tls.alpn) == 1 && h3.tls.alpn[0] == "h3", "XHTTP URI must preserve sole h3 ALPN");
+expect(h3.transport.quic_params.congestion == "reno" && h3.transport.quic_params.keep_alive_period == 7 &&
+    h3.transport.quic_params.disable_gso === true, "XHTTP URI lost finalmask.quicParams");
+expect(normalize(h3_mixed_uri)[0].transport.quic_params == null, "H2 URI should ignore H3-only QUIC parameters");
+delete h3.share_link;
+let h3_export = normalize(link_serializer.serialize_outbound_link(h3))[0];
+expect(length(h3_export.tls.alpn) == 1 && h3_export.tls.alpn[0] == "h3", "XHTTP URI export preserves h3");
+expect(h3_export.transport.quic_params.keep_alive_period == 7, "XHTTP URI export lost QUIC parameters");
+let cached_h3 = { ...h3, share_link: h3_uri, transport: { ...h3.transport } };
+delete cached_h3.transport.quic_params;
+let cached_h2 = { ...cached_h3, tls: { ...h3.tls, alpn: ["h2"] }, transport: { ...cached_h3.transport } };
+parser.repair_cached_outbounds([cached_h3, cached_h2]);
+expect(cached_h3.transport.quic_params.keep_alive_period == 7 && cached_h2.transport.quic_params == null,
+    "cached QUIC parameters should be restored only for a matching H3 profile");
+let h3_json = normalize(sprintf("%J", {outbounds: [{protocol: "vless", tag: "h3-json",
+    settings: {vnext: [{address: "127.0.0.1", port: 9443, users: [{id: uuid, encryption: "none"}]}]},
+    streamSettings: {network: "xhttp", security: "tls", tlsSettings: {serverName: "front.example", alpn: ["h3"]},
+        finalmask: {quicParams: quic_params}, xhttpSettings: {mode: "stream-one", path: "/json"}}}]}))[0];
+expect(length(h3_json.tls.alpn) == 1 && h3_json.tls.alpn[0] == "h3", "Xray JSON preserves sole h3 ALPN");
+expect(h3_json.transport.quic_params.disable_gso === true, "Xray JSON lost QUIC parameters");
+let h3_download = { ...download, tlsSettings: { ...download.tlsSettings, alpn: ["h3"] },
+    finalmask: {quicParams: {congestion: "reno", maxIdleTimeout: 19}} };
+let h3_extra = replace(sprintf("%J", { downloadSettings: h3_download }), /./g,
+    function(c) { return sprintf("%%%02X", ord(c)); });
+let h3_split = vless_base + "type=xhttp&path=%2Fuplink&extra=" + h3_extra + "#XHTTP-H3-download";
+let h3_split_node = normalize(h3_split)[0];
+delete h3_split_node.share_link;
+let h3_split_export = normalize(link_serializer.serialize_outbound_link(h3_split_node))[0];
+expect(h3_split_export.transport.download_settings.tls.alpn[0] == "h3", "XHTTP split export preserves download h3");
+expect(h3_split_export.transport.download_settings.transport.quic_params.max_idle_timeout == 19,
+    "XHTTP split export lost independent download QUIC parameters");
+let h3_features = xray_features + ",transport.xhttp.http3";
+manual.section[0].selector_proxy_links = [h3_uri, h3_split];
+expect(generate(manual, trojan_core, work+"/generated.json", "1", h3_features) == 0, "manual h3 fixture failed");
+let h3_nodes = outbounds_of_type(json(fs.readfile(work+"/generated.json")), ["vless"]);
+expect(length(h3_nodes) == 2 && length(filter(h3_nodes, node => (node.tls?.alpn || [])[0] == "h3")) == 1 &&
+    length(filter(h3_nodes, node => (node.transport?.download_settings?.tls?.alpn || [])[0] == "h3")) == 1,
+    "manual XHTTP lost h3 on the uplink or download");
+expect(length(filter(h3_nodes, node => node.transport?.quic_params?.keep_alive_period == 7)) == 1 &&
+    length(filter(h3_nodes, node => node.transport?.download_settings?.transport?.quic_params?.max_idle_timeout == 19)) == 1,
+    "manual XHTTP lost the uplink or download QUIC parameters");
+if (xray_binary)
+    expect(run([xray_binary, "check", "-c", work+"/generated.json"]) == 0, "Xrust rejected XHTTP QUIC parameters");
+for (let pair in [[h3_uri, "requires XHTTP over HTTP/3"], [h3_split, "requires HTTP/3 on the XHTTP download connection"]]) {
+    manual.section[0].selector_proxy_links = [pair[0]];
+    expect(generate(manual, trojan_core, work+"/kept.json", "1", xray_features) != 0 &&
+        index(last_log_line(), pair[1]) >= 0, "old core accepted a required h3 endpoint: " + last_log_line());
+}
+let h3_mask = replace(sprintf("%J", {udp: [{type: "salamander", settings: {}}]}), /./g,
+    function(c) { return sprintf("%%%02X", ord(c)); });
+let h3_hop = replace(sprintf("%J", {quicParams: {udpHop: {ports: "10000-11000"}}}), /./g,
+    function(c) { return sprintf("%%%02X", ord(c)); });
+for (let pair in [[h3_mask, "requires unsupported XHTTP HTTP/3 UDP masks"],
+                   [h3_hop, "requires unsupported XHTTP HTTP/3 UDP port hopping"],
+                   ["%7B%21", "has invalid XHTTP HTTP/3 finalmask settings"]]) {
+    manual.section[0].selector_proxy_links = [replace(h3_uri, h3_fm, pair[0])];
+    expect(generate(manual, trojan_core, work+"/kept.json", "1", h3_features) != 0 &&
+        index(last_log_line(), pair[1]) >= 0, "not reported as unsupported: " + last_log_line());
+}
+
+manual.section[0].selector_proxy_links = [h3_mixed_uri];
+expect(generate(manual, trojan_core, work+"/generated.json", "1", xray_features) == 0,
+    "mixed ALPN should not require the XHTTP h3 feature");
+h3_json.tls.alpn = "h3";
+write(work+"/cache/probe-subscription-1.json", { outbounds: [vless, h3_json] });
+expect(generate(fixture, trojan_core, work+"/generated.json", "1", xray_features) == 0 &&
+    has_log("requires XHTTP over HTTP/3"), "older core should skip a required h3 subscription outbound");
+let old_h3_nodes = outbounds_of_type(json(fs.readfile(work+"/generated.json")), ["vless"]);
+expect(length(old_h3_nodes) == 1 && old_h3_nodes[0].transport == null, "non-XHTTP node should survive older-core filtering");
 
 for (let link in [grpc_multi, replace(grpc_multi, "%2Fsvc%2Fmany", "svc")]) {
     manual.section[0].selector_proxy_links = [link];

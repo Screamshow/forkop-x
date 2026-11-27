@@ -83,7 +83,7 @@ if (pipe)
 let version = xrust.version_from_output(version_output);
 let flags = map([ 'transport.xhttp', 'outbound.trojan', 'sniff.bittorrent-extended', 'outbound.vless.encryption' ],
     feature => xrust.has_feature(version_output, feature) ? '1' : '0');
-let features = filter([ 'transport.xhttp.split', 'transport.grpc.multi', 'tls.xray-pins', 'tls.verify-name' ],
+let features = filter([ 'transport.xhttp.split', 'transport.xhttp.http3', 'transport.grpc.multi', 'tls.xray-pins', 'tls.verify-name' ],
     feature => xrust.has_feature(version_output, feature));
 cmd += join(' ', map([ dir+'/fixture.json', dir+'/candidate.json', '127.0.0.1', '0',
     flags[0], '', version, flags[1], flags[2], flags[3], join(',', features) ], q));

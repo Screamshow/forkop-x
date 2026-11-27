@@ -1,6 +1,7 @@
 #!/usr/bin/env ucode
 
 let fs = require("fs");
+let xhttp_quic = require("subscription.xhttp_quic");
 let common = require("core.common");
 
 let as_string = common.as_string;
@@ -78,25 +79,41 @@ function add_query(params, key, value) {
         push(params, uri_encode(key) + "=" + uri_encode(value));
 }
 
+function xhttp_xray_range(value) {
+    if (type(value) != "object")
+        return value;
+    return value.from == value.to ? value.from : value.from + "-" + value.to;
+}
+
 function xhttp_extra(transport) {
     let extra = {};
+    if (type(transport.headers) == "object")
+        extra.headers = transport.headers;
+
     for (let item in [
         ["xPaddingBytes", "x_padding_bytes"],
-        ["noGRPCHeader", "no_grpc_header"],
         ["scMaxEachPostBytes", "sc_max_each_post_bytes"],
         ["scMinPostsIntervalMs", "sc_min_posts_interval_ms"],
         ["scStreamUpServerSecs", "sc_stream_up_server_secs"],
+        ["uplinkChunkSize", "uplink_chunk_size"],
+        ["sessionIDLength", "session_id_length"]
+    ]) {
+        if (transport[item[1]] != null)
+            extra[item[0]] = xhttp_xray_range(transport[item[1]]);
+    }
+
+    for (let item in [
+        ["noGRPCHeader", "no_grpc_header"],
         ["uplinkHTTPMethod", "uplink_http_method"],
         ["sessionIDPlacement", "session_placement"],
         ["sessionIDKey", "session_key"],
         ["scMaxBufferedPosts", "sc_max_buffered_posts"],
         ["seqPlacement", "seq_placement"], ["seqKey", "seq_key"],
         ["uplinkDataPlacement", "uplink_data_placement"], ["uplinkDataKey", "uplink_data_key"],
-        ["uplinkChunkSize", "uplink_chunk_size"],
         ["xPaddingObfsMode", "x_padding_obfs_mode"], ["xPaddingKey", "x_padding_key"],
         ["xPaddingHeader", "x_padding_header"], ["xPaddingPlacement", "x_padding_placement"],
         ["xPaddingMethod", "x_padding_method"],
-        ["sessionIDTable", "session_id_table"], ["sessionIDLength", "session_id_length"]
+        ["sessionIDTable", "session_id_table"]
     ]) {
         if (transport[item[1]] != null)
             extra[item[0]] = transport[item[1]];
@@ -109,12 +126,13 @@ function xhttp_extra(transport) {
             ["maxConnections", "max_connections"],
             ["cMaxReuseTimes", "c_max_reuse_times"],
             ["hMaxRequestTimes", "h_max_request_times"],
-            ["hMaxReusableSecs", "h_max_reusable_secs"],
-            ["hKeepAlivePeriod", "h_keep_alive_period"]
+            ["hMaxReusableSecs", "h_max_reusable_secs"]
         ]) {
             if (transport.xmux[item[1]] != null)
-                xmux[item[0]] = transport.xmux[item[1]];
+                xmux[item[0]] = xhttp_xray_range(transport.xmux[item[1]]);
         }
+        if (transport.xmux.h_keep_alive_period != null)
+            xmux.hKeepAlivePeriod = transport.xmux.h_keep_alive_period;
         if (length(keys(xmux)) > 0)
             extra.xmux = xmux;
     }
@@ -134,7 +152,10 @@ function add_xray_verification_query(params, tls) {
 function xhttp_download_stream(download) {
     let transport = download.transport;
     let result = { address: download.server, port: download.server_port, network: "xhttp", security: "none",
-        xhttpSettings: { host: transport.host, path: transport.path, headers: transport.headers, extra: xhttp_extra(transport) } };
+        xhttpSettings: { host: transport.host, path: transport.path, extra: xhttp_extra(transport) } };
+    let finalmask = xhttp_quic.to_finalmask(transport.quic_params);
+    if (finalmask != null)
+        result.finalmask = finalmask;
     let tls = download.tls;
     if (type(tls) != "object" || tls.enabled === false)
         return result;
@@ -220,6 +241,9 @@ function add_transport_query(params, outbound) {
         add_query(params, "path", transport.path);
         add_query(params, "host", transport.host);
         add_query(params, "mode", transport.mode);
+        let finalmask = xhttp_quic.to_finalmask(transport.quic_params);
+        if (finalmask != null)
+            add_query(params, "fm", sprintf("%J", finalmask));
         let extra = xhttp_extra(transport);
         if (type(transport.download_settings) == "object" && type(transport.download_settings.transport) == "object")
             extra.downloadSettings = xhttp_download_stream(transport.download_settings);

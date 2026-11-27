@@ -1,6 +1,7 @@
 #!/usr/bin/env ucode
 
 let fs = require("fs");
+let xhttp_quic = require("subscription.xhttp_quic");
 let common = require("core.common");
 let core_url = require("core.url");
 
@@ -72,7 +73,7 @@ function split_csv(value) {
 
 function tls_alpn_for_transport(alpn, transport) {
     transport = lc(as_string(transport));
-    if (transport == "xhttp" && length(alpn) == 0)
+    if ((transport == "xhttp" || transport == "splithttp") && length(alpn) == 0)
         return ["h2", "http/1.1"];
     if ((transport == "ws" || transport == "httpupgrade") && length(alpn) > 0)
         return ["http/1.1"];
@@ -119,6 +120,7 @@ function xhttp_copy_known_settings(target, source) {
         return;
 
     for (let key in [
+        "headers",
         "xPaddingBytes",
         "x_padding_bytes",
         "noGRPCHeader",
@@ -205,6 +207,10 @@ function xhttp_positive_integer_value(value) {
     return number != null && number > 0 ? number : null;
 }
 
+function xhttp_range_bounds(from, to) {
+    return min(from, to) + "-" + max(from, to);
+}
+
 function xhttp_range_value(value, positive) {
     if (!xhttp_value_present(value))
         return null;
@@ -212,7 +218,7 @@ function xhttp_range_value(value, positive) {
     if (type(value) == "object") {
         let from = positive ? xhttp_positive_integer_value(value.from) : xhttp_non_negative_integer_value(value.from);
         let to = positive ? xhttp_positive_integer_value(value.to) : xhttp_non_negative_integer_value(value.to);
-        return from != null && to != null && from <= to ? { from, to } : null;
+        return from != null && to != null ? xhttp_range_bounds(from, to) : null;
     }
 
     let number = positive ? xhttp_positive_integer_value(value) : xhttp_non_negative_integer_value(value);
@@ -226,7 +232,7 @@ function xhttp_range_value(value, positive) {
 
     let from = positive ? xhttp_positive_integer_value(substr(value, 0, dash)) : xhttp_non_negative_integer_value(substr(value, 0, dash));
     let to = positive ? xhttp_positive_integer_value(substr(value, dash + 1)) : xhttp_non_negative_integer_value(substr(value, dash + 1));
-    return from != null && to != null && from <= to ? from + "-" + to : null;
+    return from != null && to != null ? xhttp_range_bounds(from, to) : null;
 }
 
 function xhttp_optional_range(object, key, value) {
@@ -317,10 +323,33 @@ function xhttp_optional_xmux_range(object, key, value) {
         object[key] = normalized;
 }
 
-function xhttp_optional_xmux_integer(object, key, value) {
-    let normalized = xhttp_non_negative_integer_value(value);
-    if (normalized != null)
-        object[key] = normalized;
+function xhttp_signed_integer_value(value) {
+    if (type(value) == "int")
+        return value;
+    if (type(value) == "double")
+        return int(value) == value ? int(value) : null;
+
+    let text = trim(as_string(value));
+    let digits = substr(text, 0, 1) == "-" ? substr(text, 1) : text;
+    return is_integer_string(digits) ? int(text, 10) : null;
+}
+
+function xhttp_post_interval_value(value) {
+    if (type(value) == "object") {
+        let from = xhttp_signed_integer_value(value.from);
+        let to = xhttp_signed_integer_value(value.to);
+        return from != null && to != null ? xhttp_range_bounds(from, to) : null;
+    }
+
+    let exact = xhttp_signed_integer_value(value);
+    if (exact != null)
+        return exact;
+    let bounds = match(trim(as_string(value)), /^(-?[0-9]+)-(-?[0-9]+)$/);
+    if (bounds == null)
+        return null;
+    let from = xhttp_signed_integer_value(bounds[1]);
+    let to = xhttp_signed_integer_value(bounds[2]);
+    return xhttp_range_bounds(from, to);
 }
 
 function xhttp_normalize_xmux(value) {
@@ -334,19 +363,50 @@ function xhttp_normalize_xmux(value) {
     xhttp_optional_xmux_range(result, "c_max_reuse_times", xhttp_object_setting_value(source, "cMaxReuseTimes", "c_max_reuse_times"));
     xhttp_optional_xmux_range(result, "h_max_request_times", xhttp_object_setting_value(source, "hMaxRequestTimes", "h_max_request_times"));
     xhttp_optional_xmux_range(result, "h_max_reusable_secs", xhttp_object_setting_value(source, "hMaxReusableSecs", "h_max_reusable_secs"));
-    xhttp_optional_xmux_integer(result, "h_keep_alive_period", xhttp_object_setting_value(source, "hKeepAlivePeriod", "h_keep_alive_period"));
+    let keep_alive = xhttp_signed_integer_value(xhttp_object_setting_value(source, "hKeepAlivePeriod", "h_keep_alive_period"));
+    if (keep_alive != null)
+        result.h_keep_alive_period = keep_alive;
 
     return length(keys(result)) > 0 ? result : null;
 }
 
 let xray_xhttp_download;
 
-function xhttp_apply_query_settings(result, query) {
+function xhttp_apply_quic_params(transport, security, alpn, finalmask) {
+    alpn = type(alpn) == "array" ? alpn : split_csv(alpn);
+    if (lc(as_string(security)) != "tls" || length(alpn) != 1 || alpn[0] != "h3" ||
+        finalmask == null || finalmask == "")
+        return;
+    if (type(finalmask) == "string") {
+        try { finalmask = json(finalmask); }
+        catch (e) { finalmask = null; }
+    }
+    if (type(finalmask) != "object" ||
+        (finalmask.quicParams != null && type(finalmask.quicParams) != "object")) {
+        transport.__forkop_xhttp_finalmask_error = "has invalid XHTTP HTTP/3 finalmask settings";
+        return;
+    }
+    if (finalmask.udp != null && (type(finalmask.udp) != "array" || length(finalmask.udp) > 0)) {
+        transport.__forkop_xhttp_finalmask_error = "requires unsupported XHTTP HTTP/3 UDP masks";
+        return;
+    }
+    let quic = xhttp_quic.from_finalmask(finalmask);
+    if (quic != null)
+        transport.quic_params = quic;
+}
+
+function xhttp_apply_query_settings(result, query, xray_json) {
     let extra = xhttp_extra_settings(query);
+    xhttp_apply_quic_params(result, query.security, query.alpn, query.fm);
+    let headers = xhttp_setting_value(query, extra, "headers", "headers");
+    if (type(headers) == "object")
+        result.headers = headers;
     xhttp_optional_positive_range(result, "x_padding_bytes", xhttp_setting_value(query, extra, "xPaddingBytes", "x_padding_bytes"));
     xhttp_optional_bool(result, "no_grpc_header", xhttp_setting_value(query, extra, "noGRPCHeader", "no_grpc_header"));
     xhttp_optional_positive_range(result, "sc_max_each_post_bytes", xhttp_setting_value(query, extra, "scMaxEachPostBytes", "sc_max_each_post_bytes"));
-    xhttp_optional_range(result, "sc_min_posts_interval_ms", xhttp_setting_value(query, extra, "scMinPostsIntervalMs", "sc_min_posts_interval_ms"));
+    let post_interval = xhttp_post_interval_value(xhttp_setting_value(query, extra, "scMinPostsIntervalMs", "sc_min_posts_interval_ms"));
+    if (post_interval != null)
+        result.sc_min_posts_interval_ms = post_interval;
     xhttp_optional_range(result, "sc_stream_up_server_secs", xhttp_setting_value(query, extra, "scStreamUpServerSecs", "sc_stream_up_server_secs"));
     xhttp_apply_remnawave_settings(result, query, extra);
     let xmux = xhttp_normalize_xmux(xhttp_setting_value(query, extra, "xmux", "xmux"));
@@ -355,13 +415,15 @@ function xhttp_apply_query_settings(result, query) {
 
     let extra_object = xhttp_object_arg(query.extra);
     let download = query.downloadSettings ?? extra_object.downloadSettings;
-    if (download == null)
-        download = xhttp_object_arg(xhttp_object_arg(extra_object.xhttpSettings).extra).downloadSettings;
+    if (download == null) {
+        let settings = xhttp_object_arg(extra_object.xhttpSettings);
+        download = settings.downloadSettings ?? xhttp_object_arg(settings.extra).downloadSettings;
+    }
     if (download == null)
         return;
     if (type(download) == "object" && length(keys(download)) == 1 && type(download.xhttpSettings) == "object")
         return;
-    result.download_settings = xray_xhttp_download(download);
+    result.download_settings = xray_xhttp_download(download, !xray_json);
 }
 
 function json_decode_text(text) {
@@ -2325,9 +2387,9 @@ function xray_tls_from_stream(stream, network) {
     return tls;
 }
 
-function xray_transport_from_stream(stream) {
+function xray_transport_from_stream(stream, legacy_download_headers) {
     stream = object_or_empty(stream);
-    let network = lc(as_string(stream.network || ""));
+    let network = lc(as_string(stream.method || stream.network || ""));
     if (network == "" || network == "tcp")
         return null;
 
@@ -2375,8 +2437,8 @@ function xray_transport_from_stream(stream) {
         return result;
     }
 
-    if (network == "xhttp") {
-        let settings = object_or_empty(stream.xhttpSettings);
+    if (network == "xhttp" || network == "splithttp") {
+        let settings = object_or_empty(stream.xhttpSettings || stream.splithttpSettings);
         let result = {
             type: "xhttp",
             mode: as_string(settings.mode || "auto"),
@@ -2390,19 +2452,19 @@ function xray_transport_from_stream(stream) {
             result.mode = "auto";
         if (as_string(settings.host || "") != "")
             result.host = as_string(settings.host);
-        if (type(settings.headers) == "object")
+        // Old Forkop share links put download headers beside extra.
+        if (legacy_download_headers && type(settings.headers) == "object")
             result.headers = settings.headers;
-        xhttp_apply_query_settings(result, settings);
-        let xmux = xhttp_normalize_xmux(settings.xmux);
-        if (xmux)
-            result.xmux = xmux;
+        // Xray uses extra for every option except the outer host, path and mode.
+        xhttp_apply_query_settings(result, settings.extra == null ? settings : { extra: settings.extra }, true);
+        xhttp_apply_quic_params(result, stream.security, stream.tlsSettings?.alpn, stream.finalmask);
         return result;
     }
 
     return null;
 }
 
-xray_xhttp_download = function(download) {
+xray_xhttp_download = function(download, legacy_download_headers) {
     if (type(download) != "object")
         die("Invalid XHTTP download settings\n");
     let server = as_string(download.address);
@@ -2410,7 +2472,7 @@ xray_xhttp_download = function(download) {
     let settings = object_or_empty(download.xhttpSettings || download.splithttpSettings);
     let extra = xhttp_object_arg(settings.extra);
     let security = lc(as_string(download.security || "none"));
-    let network = lc(as_string(download.network || "xhttp"));
+    let network = lc(as_string(download.method || download.network || "xhttp"));
     if (server == "" || port == null || (network != "xhttp" && network != "splithttp") ||
         (security != "none" && security != "tls" && security != "reality") ||
         length(keys(object_or_empty(download.sockopt))) > 0 ||
@@ -2420,7 +2482,9 @@ xray_xhttp_download = function(download) {
     let result = {
         server: server,
         server_port: port,
-        transport: xray_transport_from_stream({ network: "xhttp", xhttpSettings: settings })
+        transport: xray_transport_from_stream({
+            ...download, network: "xhttp", xhttpSettings: settings
+        }, legacy_download_headers)
     };
     delete result.transport.mode;
     if (security != "none")
@@ -2494,7 +2558,7 @@ function convert_xray_vless(outbound, tag) {
 
     let stream = object_or_empty(outbound.streamSettings);
     let transport = xray_transport_from_stream(stream);
-    let tls = xray_tls_from_stream(stream, lc(as_string(stream.network || "")));
+    let tls = xray_tls_from_stream(stream, lc(as_string(stream.method || stream.network || "")));
     if (tls)
         result.tls = tls;
     if (transport)
@@ -2938,6 +3002,16 @@ function normalize_sing_box_xhttp_transport(outbound) {
     let sc_max_each_post_bytes = xhttp_present_positive_range_or_default(outbound.transport.sc_max_each_post_bytes, 1000000);
     if (sc_max_each_post_bytes != null)
         outbound.transport.sc_max_each_post_bytes = sc_max_each_post_bytes;
+    if (type(outbound.transport.sc_min_posts_interval_ms) == "object")
+        outbound.transport.sc_min_posts_interval_ms = xhttp_post_interval_value(outbound.transport.sc_min_posts_interval_ms);
+    let xmux = outbound.transport.xmux;
+    if (type(xmux) == "object") {
+        for (let field in ["max_concurrency", "max_connections", "c_max_reuse_times",
+            "h_max_request_times", "h_max_reusable_secs"]) {
+            if (type(xmux[field]) == "object")
+                xmux[field] = xhttp_range_value(xmux[field], false);
+        }
+    }
     return outbound;
 }
 
@@ -2963,6 +3037,26 @@ function legacy_uri_password(outbound, parsed) {
     return old_password;
 }
 
+function repair_cached_xhttp_settings(transport, parsed, tls, parsed_tls) {
+    if (type(transport) != "object" || type(parsed) != "object" || transport.type != "xhttp" ||
+        parsed.type != "xhttp" || transport.path != parsed.path || transport.host != parsed.host ||
+        transport.mode != parsed.mode)
+        return;
+    if (!exists(transport, "headers") && exists(parsed, "headers"))
+        transport.headers = parsed.headers;
+    if (xhttp_quic.uses_h3(tls) && xhttp_quic.uses_h3(parsed_tls)) {
+        if (!exists(transport, "quic_params") && exists(parsed, "quic_params"))
+            transport.quic_params = parsed.quic_params;
+        if (exists(parsed, "__forkop_xhttp_finalmask_error"))
+            transport.__forkop_xhttp_finalmask_error = parsed.__forkop_xhttp_finalmask_error;
+    }
+    if (!exists(transport, "xmux") && exists(parsed, "xmux"))
+        transport.xmux = parsed.xmux;
+    else if (type(transport.xmux) == "object" && type(parsed.xmux) == "object" &&
+        !exists(transport.xmux, "h_keep_alive_period") && exists(parsed.xmux, "h_keep_alive_period"))
+        transport.xmux.h_keep_alive_period = parsed.xmux.h_keep_alive_period;
+}
+
 function repair_cached_outbounds(outbounds) {
     for (let outbound in outbounds || []) {
         if (type(outbound) != "object")
@@ -2983,6 +3077,12 @@ function repair_cached_outbounds(outbounds) {
         }
         if (type(outbound.transport) == "object" && outbound.transport.type == "xhttp" &&
             type(parsed.transport) == "object" && parsed.transport.type == "xhttp") {
+            repair_cached_xhttp_settings(outbound.transport, parsed.transport, outbound.tls, parsed.tls);
+            let down = outbound.transport.download_settings;
+            let source_down = parsed.transport.download_settings;
+            if (type(down) == "object" && type(source_down) == "object" &&
+                down.server == source_down.server && down.server_port == source_down.server_port)
+                repair_cached_xhttp_settings(down.transport, source_down.transport, down.tls, source_down.tls);
             for (let key in ["uplink_http_method", "session_placement", "session_key", "sc_max_buffered_posts",
                 "seq_placement", "seq_key", "uplink_data_placement", "uplink_data_key", "uplink_chunk_size",
                 "x_padding_obfs_mode", "x_padding_key", "x_padding_header", "x_padding_placement",

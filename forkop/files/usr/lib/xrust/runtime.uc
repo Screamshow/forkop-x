@@ -187,7 +187,7 @@ function xrust_version_output() {
 }
 
 function xray_client_features(output) {
-    return join(",", filter([ "transport.xhttp.split", "transport.grpc.multi", "tls.xray-pins", "tls.verify-name" ],
+    return join(",", filter([ "transport.xhttp.split", "transport.xhttp.http3", "transport.grpc.multi", "tls.xray-pins", "tls.verify-name" ],
         feature => xrust.has_feature(output, feature)));
 }
 

@@ -32,6 +32,7 @@ let flintnet_subscription_source = connections.flintnet_subscription_source;
 let urltest_override = require("config.urltest_override");
 let subscription_share_link = require("subscription.share_link");
 let subscription_parser = require("subscription.parser");
+let xhttp_quic = require("subscription.xhttp_quic");
 const IPV6_TPROXY_ENABLED = core_ip.ipv6_tproxy_enabled();
 let uci = null;
 let fixture_uci_data = null;
@@ -649,14 +650,38 @@ function unsupported_xray_tls(tls) {
     return "";
 }
 
+function xhttp_needs_http3(tls) {
+    return xhttp_quic.uses_h3(tls) && !has_xray_client_feature("transport.xhttp.http3");
+}
+
+function unsupported_xhttp_finalmask(transport) {
+    if (transport?.__forkop_xhttp_finalmask_error != null)
+        return transport.__forkop_xhttp_finalmask_error;
+    if (transport?.quic_params?.udp_hop != null)
+        return "requires unsupported XHTTP HTTP/3 UDP port hopping";
+    return "";
+}
+
 function unsupported_xray_client_option(outbound) {
     let transport = object_or_empty(outbound.transport);
     let reason = unsupported_xray_tls(outbound.tls);
     if (reason != "")
         return reason;
+    if (transport.type == "xhttp" && xhttp_needs_http3(outbound.tls))
+        return "requires XHTTP over HTTP/3";
+    if (transport.type == "xhttp") {
+        let finalmask_error = unsupported_xhttp_finalmask(transport);
+        if (finalmask_error != "")
+            return finalmask_error;
+    }
     if (transport.type == "xhttp" && transport.download_settings != null) {
         if (!has_xray_client_feature("transport.xhttp.split"))
             return "requires a separate XHTTP download connection";
+        if (xhttp_needs_http3(transport.download_settings.tls))
+            return "requires HTTP/3 on the XHTTP download connection";
+        let download_error = unsupported_xhttp_finalmask(transport.download_settings.transport);
+        if (download_error != "")
+            return download_error + " on the download connection";
         if (transport.download_settings.tls?.xray_pinned_peer_cert_sha256 != null &&
             !has_xray_client_feature("tls.xray-pins"))
             return "requires Xray certificate pinning on the XHTTP download connection";

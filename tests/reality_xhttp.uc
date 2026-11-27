@@ -98,10 +98,52 @@ let priority = normalize(base + "&uplinkHTTPMethod=POST&sessionIDPlacement=cooki
     encode('{"uplinkHTTPMethod":"GET","SessionIDPlacement":"header","scMaxBufferedPosts":17}'));
 expect(priority.transport.uplink_http_method == "POST" && priority.transport.session_placement == "cookie" &&
     priority.transport.sc_max_buffered_posts == 0, "flat query precedence and zero");
+let http_options = {
+    headers: { "X-Test": "profile" },
+    xmux: { maxConnections: { from: 2, to: 3 }, hKeepAlivePeriod: -1 },
+    scMinPostsIntervalMs: "30--1"
+};
+let options_uri = base + "&extra=" + encode(sprintf("%J", http_options));
+let options = normalize(options_uri);
+expect(options.transport.headers["X-Test"] == "profile" &&
+    options.transport.xmux.h_keep_alive_period == -1, "XHTTP URI retained headers and negative XMUX keepalive");
+expect(options.transport.sc_min_posts_interval_ms == "-1-30" &&
+    normalize(base + "&scMinPostsIntervalMs=-1").transport.sc_min_posts_interval_ms == -1,
+    "XHTTP preserves Xray's signed POST interval and orders ranges");
+let object_intervals = normalize(base + "&extra=" +
+    encode(sprintf("%J", { scMinPostsIntervalMs: { from: 30, to: -1 }, xPaddingBytes: { from: 10, to: 20 } }))).transport;
+expect(object_intervals.sc_min_posts_interval_ms == "-1-30" && object_intervals.x_padding_bytes == "10-20",
+    "XHTTP converts object ranges to values accepted by the runtime");
+let generated_options = vless_outbound(generate([options_uri], [], "0.0.45")).transport;
+expect(generated_options.headers["X-Test"] == "profile" &&
+    generated_options.xmux.h_keep_alive_period == -1, "manual XHTTP retained headers and negative XMUX keepalive");
+delete options.share_link;
+let exported_options = normalize(links.serialize_outbound_link(options)).transport;
+expect(exported_options.headers["X-Test"] == "profile" &&
+    exported_options.xmux.max_connections == "2-3" && exported_options.xmux.h_keep_alive_period == -1,
+    "XHTTP export encodes range objects as Xray ranges");
+let old_options = { ...options, share_link: options_uri,
+    transport: { ...options.transport, xmux: { max_connections: 7 } } };
+delete old_options.transport.headers;
+parser.repair_cached_outbounds([old_options]);
+expect(old_options.transport.headers["X-Test"] == "profile" &&
+    old_options.transport.xmux.max_connections == 7 && old_options.transport.xmux.h_keep_alive_period == -1,
+    "XHTTP repair recovered missing settings and kept the explicit limit");
 let xray = normalize({outbounds:[{protocol:"vless",tag:"xray",settings:{vnext:[{address:"127.0.0.1",port:19443,
     users:[{id:"00000000-0000-4000-8000-000000000001",encryption:"none"}]}]},streamSettings:{network:"xhttp",
     xhttpSettings:{mode:"packet-up",extra:{uplinkHTTPMethod:"GET",SessionIDPlacement:"header",SessionIDKey:"X-Ray",scMaxBufferedPosts:4}}}}]});
 fields(xray, "X-Ray", 4);
+let aliased = normalize({outbounds:[{protocol:"vless",tag:"aliased",settings:{vnext:[{address:"127.0.0.1",port:19443,
+    users:[{id:"00000000-0000-4000-8000-000000000001",encryption:"none"}]}]},streamSettings:{
+    network:"splithttp",splithttpSettings:{host:"outer.example",path:"/outer",mode:"stream-up",
+        headers:{"X-Outer":"ignored"},xmux:{maxConnections:7},
+        extra:{host:"extra.example",path:"/extra",mode:"packet-up",headers:{"X-Inner":"retained"},
+            xmux:{maxConcurrency:2,hKeepAlivePeriod:-1}}}}}]});
+expect(aliased.transport.type == "xhttp" && aliased.transport.host == "outer.example" &&
+    aliased.transport.path == "/outer" && aliased.transport.mode == "stream-up" &&
+    aliased.transport.headers["X-Inner"] == "retained" && !exists(aliased.transport.headers, "X-Outer") &&
+    aliased.transport.xmux.max_concurrency == 2 && !exists(aliased.transport.xmux, "max_connections") &&
+    aliased.transport.xmux.h_keep_alive_period == -1, "Xray splithttp uses its extra and the outer host, path and mode");
 let invalid = normalize(base + "&uplinkHTTPMethod=INVALID&SessionIDPlacement=invalid&scMaxBufferedPosts=-1");
 expect(!exists(invalid.transport,"uplink_http_method") && !exists(invalid.transport,"session_placement") &&
     !exists(invalid.transport,"sc_max_buffered_posts"), "invalid values excluded");
