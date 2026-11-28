@@ -49,6 +49,8 @@ print(probe.marker, "\n");
 UCODE
 
 printf 'payload\n' >"$SOURCE_DIR/core/payload.txt"
+printf 'binary\0old' >"$SOURCE_DIR/core/binary"
+printf 'same bytes' >"$SOURCE_DIR/core/protected"
 
 # A proven manifest is trusted for a few seconds, which would hide the staleness
 # the checks below are about; full validation is what they exercise.
@@ -160,6 +162,8 @@ stale="$(resolve_only)"
 [ "$stale" = "$SOURCE_DIR" ] ||
   fail "a cache built from replaced sources must not be resolved, got '$stale'"
 
+printf 'binary\0new' >"$SOURCE_DIR/core/binary"
+chmod 400 "$built/core/protected"
 rebuilt="$(resolve)"
 [ "$rebuilt" != "$SOURCE_DIR" ] && [ "$rebuilt" != "$built" ] ||
   fail "replaced sources must produce a new cache directory, got '$rebuilt'"
@@ -168,6 +172,16 @@ rmdir "$UPDATES_LOCK_DIR"
 rebuilt_out="$(ucode -L "$rebuilt" "$rebuilt/service/entry.uc")"
 [ "$rebuilt_out" = "probe-domain-v2" ] ||
   fail "rebuilt cache must carry the new sources, got '$rebuilt_out'"
+[ "$built/core/probe.uc" -ef "$rebuilt/core/probe.uc" ] &&
+  [ "$built/core/payload.txt" -ef "$rebuilt/core/payload.txt" ] ||
+  fail "identical completed modules and payloads should share storage"
+[ ! "$built/core/protected" -ef "$rebuilt/core/protected" ] ||
+  fail "different file permissions must stay independent"
+cmp "$rebuilt/core/binary" "$SOURCE_DIR/core/binary" &&
+  [ ! "$built/core/binary" -ef "$rebuilt/core/binary" ] ||
+  fail "binary differences after NUL must keep distinct files"
+[ "$(ucode -L "$built" "$built/service/entry.uc")" = "$source_out" ] ||
+  fail "a worker using the previous generation must still load its original code"
 
 # A module added beside unchanged siblings leaves every recorded file signature
 # intact, so the directory listing is what has to notice it.
@@ -180,6 +194,8 @@ UCODE
 with_added="$(resolve)"
 [ -f "$with_added/core/added.uc" ] ||
   fail "the added module must reach the rebuilt cache"
+[ ! -e "$built" ] && [ "$with_added/core/probe.uc" -ef "$rebuilt/core/probe.uc" ] ||
+  fail "deleting an older generation must preserve shared files"
 rm -f "$SOURCE_DIR/core/added.uc"
 [ "$(resolve_only)" = "$SOURCE_DIR" ] ||
   fail "a removed module must invalidate the cache"
@@ -235,6 +251,27 @@ with_fake_ucode="$(
 )"
 [ "$with_fake_ucode" = "$SOURCE_DIR" ] ||
   fail "a different interpreter must invalidate the cache, got '$with_fake_ucode'"
+different_compiler="$(bytecode "$SOURCE_DIR" "$CACHE_DIR" build FORKOP_UCODE_BIN="$FAKE_UCODE_DIR/ucode")"
+[ "$different_compiler" != "$SOURCE_DIR" ] &&
+  [ ! "$stale_lock/core/probe.uc" -ef "$different_compiler/core/probe.uc" ] ||
+  fail "an interpreter change must build an independent generation"
+printf '#!/bin/sh\nexit 1\n' >"$FAKE_UCODE_DIR/ln"
+chmod +x "$FAKE_UCODE_DIR/ln"
+unlinked="$(bytecode "$SOURCE_DIR" "$CACHE_DIR" build PATH="$FAKE_UCODE_DIR:$PATH" FORKOP_UCODE_BIN="$FAKE_UCODE_DIR/ucode")"
+[ "$unlinked" != "$SOURCE_DIR" ] && cmp -s "$unlinked/core/probe.uc" "$different_compiler/core/probe.uc" &&
+  [ ! "$unlinked/core/probe.uc" -ef "$different_compiler/core/probe.uc" ] ||
+  fail "hardlink failure must leave a complete independent copy"
+cat >"$WORK_DIR/replaced-compiler" <<'SH'
+#!/bin/sh
+if [ "$1" = -c ] && [ -f "$0.next" ]; then mv "$0.next" "$0"; fi
+exec "$REAL_UCODE" "$@"
+SH
+chmod +x "$WORK_DIR/replaced-compiler"
+cp -p "$WORK_DIR/replaced-compiler" "$WORK_DIR/replaced-compiler.next"
+compiler_race=$(bytecode "$SOURCE_DIR" "$CACHE_DIR" build FORKOP_UCODE_BIN="$WORK_DIR/replaced-compiler" REAL_UCODE="$(command -v ucode)")
+[ "$compiler_race" = "$SOURCE_DIR" ] && [ ! -e "$WORK_DIR/replaced-compiler.next" ] &&
+  grep -Fxq "lib=$unlinked" "$CACHE_DIR/manifest" ||
+  fail "a compiler replaced mid-build must leave the last complete manifest in place"
 
 # Rewriting a compiled file with the same inode, length and mtime must not
 # give this build a manifest for bytes the compiler never read.

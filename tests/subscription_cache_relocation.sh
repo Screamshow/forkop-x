@@ -34,7 +34,7 @@ function subscription_source_profile(s,e){return e;}
 function get_subscription_user_agent(v){return default_ua;}
 UC
 for fn in source_id source_json_path source_url_path source_user_agent_path source_hwid_path cache_section_is_safe \
-    subscription_cache_is_usable user_agent_supported user_agent_matches_config hwid_matches_config \
+    user_agent_supported user_agent_matches_config hwid_matches_config \
     source_cache_profile_matches source_cache_matches_profile find_matching_source_cache restore_persistent_subscription_cache persist_subscription_cache \
     recover_subscription_sources_for_sections persist_recovered_subscription_sources; do
     sed -n "/^function $fn(/,/^}/p" "$SOURCE"
@@ -67,7 +67,7 @@ for(let p in fs.glob(FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR+"/other-subscripti
 clear_runtime();recover_subscription_sources_for_sections(sections);check("moved-subscription-1","A");check("main-subscription-2","C");
 // Matching sidecars must not cause an invalid persistent payload to be retained.
 fs.writefile(source_json_path(FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR,"main-subscription-1"),"invalid");
-if(!persist_recovered_subscription_sources(sections)||!subscription_cache_is_usable(source_json_path(FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR,"main-subscription-1")))die("invalid persistent payload retained\n");
+if(!persist_recovered_subscription_sources(sections)||!parser.validate_subscription(source_json_path(FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR,"main-subscription-1")))die("invalid persistent payload retained\n");
 // A populated but mismatched runtime slot must not bypass identity checks.
 if(restore_persistent_subscription_cache("main-subscription-1",TMP_SUBSCRIPTION_FOLDER,FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR,"https://unknown.invalid","","",default_ua))die("wrong URL accepted\n");
 if(restore_persistent_subscription_cache("main-subscription-1",TMP_SUBSCRIPTION_FOLDER,FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR,"https://b.invalid","custom/1","",default_ua))die("manual UA ignored\n");

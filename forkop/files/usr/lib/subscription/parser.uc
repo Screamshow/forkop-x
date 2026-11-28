@@ -505,34 +505,30 @@ function canonical_runtime_value(value) {
     return value;
 }
 
-function runtime_outbounds_signature(subscription) {
-    if (type(subscription) != "object" || type(subscription.outbounds) != "array")
-        return null;
+function runtime_outbounds_values_equal(left_value, right_value) {
+    if (type(left_value?.outbounds) != "array" || type(right_value?.outbounds) != "array" ||
+        length(left_value.outbounds) != length(right_value.outbounds))
+        return false;
 
     // Providers may return the same proxy set in a different order. Forkop
     // keeps the previously applied order, so ordering alone must not turn a
     // periodic refresh into a sing-box reload that drops active connections.
     // Nested arrays remain order-sensitive because their order may be part of
     // an individual outbound's runtime configuration.
-    let result = [];
-    for (let outbound in subscription.outbounds)
-        push(result, sprintf("%J", canonical_runtime_value(outbound)));
-    sort(result, function(a, b) {
-        return a < b ? -1 : (a > b ? 1 : 0);
-    });
-    return result;
-}
-
-function runtime_outbounds_values_equal(left_value, right_value) {
-    if (type(left_value?.outbounds) != "array" || type(right_value?.outbounds) != "array" ||
-        length(left_value.outbounds) != length(right_value.outbounds))
-        return false;
-
-    let left = runtime_outbounds_signature(left_value);
-    let right = runtime_outbounds_signature(right_value);
-    for (let i = 0; i < length(left); i++)
-        if (left[i] != right[i])
+    let counts = {};
+    for (let outbound in left_value.outbounds) {
+        let key = sprintf("%J", canonical_runtime_value(outbound));
+        counts[key] = (counts[key] || 0) + 1;
+    }
+    for (let outbound in right_value.outbounds) {
+        let key = sprintf("%J", canonical_runtime_value(outbound));
+        if (!counts[key])
             return false;
+        if (counts[key] == 1)
+            delete counts[key];
+        else
+            counts[key]--;
+    }
     return true;
 }
 
@@ -3128,20 +3124,23 @@ function repair_cached_outbounds(outbounds) {
     return outbounds;
 }
 
-function repair_cached_subscription_file(path) {
-    let content = fs.readfile(path);
-    let subscription;
-    try { subscription = json(content); } catch (e) { return false; }
+function repair_cached_subscription_file(path, subscription) {
+    if (subscription == null)
+        subscription = read_json_file(path);
     if (type(subscription) != "object" || type(subscription.outbounds) != "array")
         return false;
-    let before = sprintf("%J", subscription);
-    repair_cached_outbounds(subscription.outbounds);
-    let after = sprintf("%J", subscription);
-    if (before == after)
+    let changed = false;
+    for (let outbound in subscription.outbounds) {
+        let before = changed ? null : sprintf("%J", outbound);
+        repair_cached_outbounds([outbound]);
+        if (!changed && before != sprintf("%J", outbound))
+            changed = true;
+    }
+    if (!changed)
         return !!fs.chmod(path, 0600);
     let stamp = clock();
     let temporary = sprintf("%s.%d.%d.repair", path, stamp[0], stamp[1]);
-    if (common.write_private_file(temporary, after + "\n") == null || !fs.rename(temporary, path)) {
+    if (common.write_private_json_file(temporary, subscription) == null || !fs.rename(temporary, path)) {
         fs.unlink(temporary);
         return false;
     }

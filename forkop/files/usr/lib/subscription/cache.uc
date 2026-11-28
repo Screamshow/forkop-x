@@ -367,12 +367,6 @@ function subscription_parser() {
     return parser_module;
 }
 
-function subscription_cache_is_usable(path) {
-    if (fs.stat(as_string(path)) == null)
-        return false;
-    return subscription_parser().validate_subscription(path);
-}
-
 function source_json_path(dir, source_section) {
     return as_string(dir) + "/" + as_string(source_section) + ".json";
 }
@@ -517,7 +511,7 @@ function ensure_runtime_cache_format() {
                 let cached = read_json(path);
                 if (type(cached) != "object" || type(cached.outbounds) != "array")
                     continue;
-                if (!subscription_parser().repair_cached_subscription_file(path))
+                if (!subscription_parser().repair_cached_subscription_file(path, cached))
                     log_message("Cannot repair cached subscription " + path, "warn");
             }
             subscription_share_link.populate_subscription_dir(FORKOP_PERSISTENT_SUBSCRIPTION_CACHE_DIR);
@@ -1680,11 +1674,14 @@ function download_subscription_into_cache(section_name_value, parsed, proxy, sou
     // Preserve the applied order if only provider metadata or order changed.
     let unchanged = parser.runtime_outbounds_values_equal(result.payload, previous.payload);
     let payload = previous.payload;
-    if (!unchanged) {
-        // Keep old selected names attached to the connection across renames.
+    if (!unchanged)
         payload = filter_identity.inherit_names(previous.payload, result.payload);
+    // Keep only the selected body while deriving metadata, serializing and
+    // publishing. Both profiles remain available for identity checks.
+    delete previous.payload;
+    delete result.payload;
+    if (!unchanged)
         subscription_share_link.populate_subscription_links(payload);
-    }
     let profile = { url: parsed.url, user_agent: result.user_agent, hwid: result.hwid, metadata: null };
     let metadata = result.metadata;
     if (valid_metadata_object(metadata))

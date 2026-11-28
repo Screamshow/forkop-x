@@ -38,12 +38,9 @@ function same_process(expected, actual) {
     return type(expected) == "object" && type(actual) == "object" &&
         int(expected.pid) > 0 && expected.pid == actual.pid && expected.start_ticks == actual.start_ticks;
 }
-// One controller endpoint per config path for this invocation: the poll loop
-// must not re-read the whole config and rewrite the secret file every round.
-let controllers = {};
-function controller(config_path) {
-    if (controllers[config_path] != null) return controllers[config_path];
-    let root = read(config_path);
+let controller_auth_file;
+function controller(config_path, root) {
+    if (root == null) root = read(config_path);
     let api = type(root) == "object" ? common.object_or_empty(common.object_or_empty(root.experimental).clash_api) : {};
     let address = str(api.external_controller);
     if (address == "") return null;
@@ -57,33 +54,31 @@ function controller(config_path) {
         "header = \"Authorization: Bearer " + escaped + "\"\n") == null) {
         unlink(temporary); return null;
     }
-    controllers[config_path] = { address, auth: temporary };
-    return controllers[config_path];
+    controller_auth_file = temporary;
+    return { address, auth: temporary };
 }
-function forget_controllers() {
-    for (let path in controllers) unlink(controllers[path].auth);
-    controllers = {};
-}
-function controller_request(config_path, path, method) {
-    let api = controller(config_path);
+function controller_request(api, path, method) {
     if (api == null) return null;
     let result = capture([ "curl", "--noproxy", "*", "-fsS", "--max-time", method == "POST" ? "60" : "2", "--config", api.auth,
         "--request", method || "GET", "http://" + api.address + path ]);
     return result.status == 0 ? (method == "DELETE" ? { ok: true } : parsed(result.output)) : null;
 }
-function status(config_path) {
-    let value = controller_request(config_path, "/rust-x/applied-config", "GET");
+function status(api) {
+    let value = controller_request(api, "/rust-x/applied-config", "GET");
     return type(value) == "object" && value.schema == 1 && value.ready === true && value.hot_reload === true &&
         int(value.generation) > 0 && match(str(value.config_sha256), /^[a-f0-9]{64}$/) != null ? value : null;
 }
-function retired_tags(previous, current) {
-    let active = {};
+function rule_set_tags(config) {
+    if (type(config) != "object") return null;
+    let tags = {};
+    for (let entry in common.array_or_empty(common.object_or_empty(config.route).rule_set))
+        if (str(entry.tag) != "") tags[str(entry.tag)] = true;
+    return tags;
+}
+function remove_active_tags(tags, current) {
     for (let entry in common.array_or_empty(common.object_or_empty(current.route).rule_set))
-        active[str(entry.tag)] = true;
-    let removed = {};
-    for (let entry in common.array_or_empty(common.object_or_empty(previous.route).rule_set))
-        if (str(entry.tag) != "" && !active[str(entry.tag)]) removed[str(entry.tag)] = true;
-    return removed;
+        delete tags[str(entry.tag)];
+    return tags;
 }
 function affected_ids(connections, removed) {
     let ids = [];
@@ -101,25 +96,28 @@ function affected_ids(connections, removed) {
     return ids;
 }
 function close_retired(previous_path, current_path, explicit_tag) {
+    let removed = explicit_tag == "" ? rule_set_tags(read(previous_path)) : {};
+    if (removed == null) return 1;
     let current = read(current_path);
-    let previous = explicit_tag != "" ? {} : read(previous_path);
-    if (type(current) != "object" || type(previous) != "object") return 1;
-    let capability = explicit_tag == "" ? status(current_path) : null;
+    if (type(current) != "object") return 1;
+    if (explicit_tag != "") removed[explicit_tag] = true;
+    else remove_active_tags(removed, current);
+    let api = controller(current_path, current);
+    current = null;
+    let capability = explicit_tag == "" ? status(api) : null;
     if (capability != null && capability.connection_revalidation === true) {
-        let checked = controller_request(current_path, "/rust-x/revalidate-connections", "POST");
+        let checked = controller_request(api, "/rust-x/revalidate-connections", "POST");
         if (type(checked) != "object" || checked.superseded === true || int(checked.skipped || 0) > 0) return 1;
         print(int(checked.closed || 0), "\n"); return 0;
     }
-    let removed = explicit_tag != "" ? {} : retired_tags(previous, current);
-    if (explicit_tag != "") removed[explicit_tag] = true;
     let has_removed = false;
     for (let tag in removed) has_removed = true;
     if (!has_removed) { print("0\n"); return 0; }
-    let view = controller_request(current_path, "/connections", "GET");
+    let view = controller_request(api, "/connections", "GET");
     if (type(view) != "object") return 1;
     let count = 0;
     for (let id in affected_ids(view.connections, removed)) {
-        if (controller_request(current_path, "/connections/" + id, "DELETE") == null) return 1;
+        if (controller_request(api, "/connections/" + id, "DELETE") == null) return 1;
         count++;
     }
     print(count, "\n"); return 0;
@@ -142,7 +140,7 @@ function plan(stage_path, current_path) {
     if (!current_path)
         current_path = str(common.object_or_empty(uci.get_all(CONFIG_NAME, "settings")).config_path);
     let process = provenance();
-    let before = status(current_path);
+    let before = status(controller(current_path));
     if (!same_process(process, provenance()) || before == null || int(before.pid) != int(process.pid)) {
         print("cold\n"); return 0;
     }
@@ -175,7 +173,8 @@ function plan(stage_path, current_path) {
 function apply(plan_path, restore_path) {
     let value = read(plan_path);
     if (type(value) != "object" || !same_process(value.process, provenance())) return 1;
-    let before = status(value.current_path);
+    let api = controller(value.current_path);
+    let before = status(api);
     if (before == null || int(before.pid) != int(value.process.pid)) return 1;
     // Require a new acknowledgment for this signal, including rollback of a
     // no-op configuration whose hash is already visible.
@@ -194,7 +193,7 @@ function apply(plan_path, restore_path) {
     while (int(clock(true)[0]) <= deadline) {
         let actual = { pid: expected.pid, start_ticks: start_ticks(expected.pid) };
         if (!same_process(expected, actual)) return 1;
-        let current = status(value.current_path);
+        let current = status(api);
         // Confirm the full provenance (sole procd-owned core) once, on success.
         if (acknowledged(value, current, actual, fingerprint))
             return same_process(expected, provenance()) ? 0 : 1;
@@ -203,14 +202,14 @@ function apply(plan_path, restore_path) {
     }
     return 1;
 }
-function finish(code) { forget_controllers(); exit(code); }
+function finish(code) { if (controller_auth_file) unlink(controller_auth_file); exit(code); }
 let mode = ARGV[0] || "";
 if (mode == "plan") finish(plan(ARGV[1] || "", ARGV[2] || ""));
 else if (mode == "close-retired") finish(close_retired(ARGV[1] || "", ARGV[2] || "", ""));
 else if (mode == "close-tag") finish(close_retired("", ARGV[1] || "", ARGV[2] || ""));
 else if (mode == "connections-fixture") {
     let fixture = read(ARGV[1]);
-    print(sprintf("%J", affected_ids(fixture.connections, retired_tags(fixture.previous, fixture.current))), "\n");
+    print(sprintf("%J", affected_ids(fixture.connections, remove_active_tags(rule_set_tags(fixture.previous), fixture.current))), "\n");
 }
 else if (mode == "apply") finish(apply(ARGV[1] || "", ""));
 else if (mode == "restore") finish(apply(ARGV[1] || "", ARGV[2] || ""));

@@ -954,7 +954,7 @@ async function runChecks({ resume }: { resume?: PersistedDiagnosticRun } = {}) {
         }
         logger.error(
           '[DIAGNOSTIC]',
-          `runChecks - ${runner.run.name} failed`,
+          `runChecks - ${runner.code} failed`,
           e,
         );
       }

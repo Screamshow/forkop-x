@@ -92,10 +92,6 @@ function log(message, level) {
     system("logger -t forkop " + quote("[" + level + "] " + message) + " >/dev/null 2>&1");
 }
 
-function sleep_seconds(seconds) {
-    system("sleep " + quote("" + seconds));
-}
-
 function main() {
     let started = int(clock(true)[0]);
     let update_check_interval = UPDATE_CHECK_INTERVAL_SECONDS > 0 ? UPDATE_CHECK_INTERVAL_SECONDS : 60;
@@ -165,7 +161,7 @@ function main() {
             }
         }
 
-        sleep_seconds(INTERVAL_SECONDS > 0 ? INTERVAL_SECONDS : 5);
+        sleep(1000 * (INTERVAL_SECONDS > 0 ? INTERVAL_SECONDS : 5));
     }
 }
 

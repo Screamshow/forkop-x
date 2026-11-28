@@ -8,7 +8,7 @@ trap 'rm -rf "$WORK"' EXIT
 
 {
     cat <<'UC'
-const GRACE_SECONDS = 0, FAILURE_SECONDS = 2, INTERVAL_SECONDS = 1;
+const GRACE_SECONDS = 0, FAILURE_SECONDS = 2, INTERVAL_SECONDS = 1, UPDATE_CHECK_INTERVAL_SECONDS = 60;
 const BIN_PATH = "forkop";
 let now = 0, kind, guarded, recoveries, commands;
 function clock(monotonic) { return [now, 0]; }
@@ -21,7 +21,7 @@ function log() {}
 function quote(value) { return value; }
 function system(command) { push(commands, command); return 0; }
 function resume_due_latency_test() {}
-function sleep_seconds(seconds) { now += seconds; if (now > 4) die("fixture complete"); }
+function sleep(milliseconds) { assert(milliseconds == 1000); now++; if (now > 4) die("fixture complete"); }
 UC
     sed -n '/^function main(/,/^}/p' "$LIB/service/watchdog.uc"
     cat <<'UC'

@@ -115,11 +115,17 @@ function remove_tree(path) {
         command_success([ "rm", "-rf", path ]);
 }
 
-function runtime_dependencies() {
-    let result = [ UCODE_BIN ];
+function runtime_dependency_snapshot() {
+    let paths = [ UCODE_BIN ];
     for (let path in fs.glob("/usr/lib/libucode.so*"))
-        push(result, path);
-    sort(result);
+        push(paths, path);
+    let result = [];
+    for (let path in sort(paths)) {
+        let signature = file_signature(path);
+        if (signature == null)
+            return null;
+        push(result, [ path, signature ]);
+    }
     return result;
 }
 
@@ -224,11 +230,8 @@ function manifest_text(library, files, dependencies, directories) {
     text += "src=" + SOURCE_DIR + "\n";
     text += "bin=" + UCODE_BIN + "\n";
 
-    for (let path in dependencies) {
-        let signature = file_signature(path);
-        if (signature != null)
-            text += "dep=" + path + "\t" + signature + "\n";
-    }
+    for (let entry in dependencies)
+        text += "dep=" + entry[0] + "\t" + entry[1] + "\n";
 
     for (let entry in directories)
         text += "dir=" + entry[0] + "\t" + entry[1] + "\n";
@@ -414,7 +417,42 @@ function release_build_lock() {
     fs.rmdir(build_lock_path());
 }
 
-function compile_library(files) {
+function reusable_library(manifest, dependencies) {
+    if (manifest.version != MANIFEST_VERSION || manifest.src != SOURCE_DIR ||
+        manifest.bin != UCODE_BIN || parent_dir(manifest.lib) != CACHE_DIR ||
+        !match(fs.basename(manifest.lib), /^lib\.[0-9]+\.[0-9]+$/) ||
+        fs.lstat(manifest.lib)?.type != "directory")
+        return null;
+    return sprintf("%J", dependencies) == sprintf("%J", manifest.deps) ? manifest.lib : null;
+}
+
+// Both paths refer to completed cache files. Stage the link beside the new file
+// so failure leaves its freshly compiled (or copied) contents in place.
+function share_identical_file(previous, target) {
+    let old = fs.lstat(previous);
+    let fresh = fs.lstat(target);
+    if (old?.type != "file" || fresh?.type != "file" || old.size != fresh.size ||
+        old.mode != fresh.mode || old.uid != fresh.uid || old.gid != fresh.gid)
+        return;
+    let left = fs.open(previous, "r");
+    let right = fs.open(target, "r");
+    let equal = left != null && right != null;
+    for (let offset = 0; equal && offset < fresh.size; offset += 8192) {
+        let remaining = fresh.size - offset;
+        let chunk = remaining < 8192 ? remaining : 8192;
+        let bytes = left.read(chunk);
+        equal = bytes != null && length(bytes) == chunk && bytes === right.read(chunk);
+    }
+    if (left) left.close();
+    if (right) right.close();
+    if (equal) {
+        let linked = target + ".link." + unique_suffix();
+        if (command_success([ "ln", previous, linked ]) && !fs.rename(linked, target))
+            fs.unlink(linked);
+    }
+}
+
+function compile_library(files, previous) {
     let library = CACHE_DIR + "/lib." + unique_suffix();
     if (!ensure_dir(library))
         return null;
@@ -429,13 +467,12 @@ function compile_library(files) {
         }
 
         // A module that fails to compile is copied as source, so its require still resolves.
-        if (is_module_file(relative_path) && compile_file(source, target))
-            continue;
-
-        if (!copy_file(source, target)) {
+        if (!(is_module_file(relative_path) && compile_file(source, target)) && !copy_file(source, target)) {
             remove_tree(library);
             return null;
         }
+        if (previous != null)
+            share_identical_file(previous + "/" + relative_path, target);
     }
 
     if (!self_check(library)) {
@@ -471,18 +508,21 @@ function build() {
         return library_dir();
 
     let snapshot = source_file_snapshot(files);
-    let library = snapshot == null ? null : compile_library(files);
+    let dependencies = runtime_dependency_snapshot();
+    let previous = parse_manifest(fs.readfile(manifest_path()));
+    let library = snapshot == null || dependencies == null ? null :
+        compile_library(files, reusable_library(previous, dependencies));
 
     // The tree changed during the walk, so this file list may miss what landed late.
-    if (library != null && (!directory_signatures_match(directories) ||
+    if (library != null && (sprintf("%J", dependencies) != sprintf("%J", runtime_dependency_snapshot()) ||
+        !directory_signatures_match(directories) ||
         sprintf("%J", source_file_snapshot(files)) != sprintf("%J", snapshot))) {
         remove_tree(library);
         release_build_lock();
         return SOURCE_DIR;
     }
 
-    let text = library == null ? null : manifest_text(library, snapshot, runtime_dependencies(), directories);
-    let replaced = parse_manifest(fs.readfile(manifest_path())).lib;
+    let text = library == null ? null : manifest_text(library, snapshot, dependencies, directories);
 
     if (text == null || !enabled() || !publish_manifest(text)) {
         remove_tree(library);
@@ -490,7 +530,7 @@ function build() {
         return SOURCE_DIR;
     }
 
-    remove_older_libraries(library, replaced);
+    remove_older_libraries(library, previous.lib);
     release_build_lock();
     write_validation_stamp(library);
     return library;

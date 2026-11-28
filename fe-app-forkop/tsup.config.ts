@@ -1,6 +1,7 @@
 import { defineConfig } from 'tsup';
 import fs from 'fs';
 import path from 'path';
+import { parse } from '@babel/parser';
 import { compactLuCIAssets } from './scripts/compact-luci-assets';
 import { readTranslations } from './scripts/read-translations';
 
@@ -25,25 +26,28 @@ export default defineConfig({
         // Emit non-ASCII text as UTF-8 instead of \uXXXX escapes (the Russian
         // dictionary is ~3x smaller); LuCI already loads UTF-8 view sources.
         options.charset = 'utf8';
-        // Preserve LuCI directives and exported names; only compact whitespace.
+        // LuCI consumes public property names from the export list below.
         options.minifyWhitespace = true;
-        options.minifyIdentifiers = false;
+        options.minifyIdentifiers = true;
         options.minifySyntax = false;
     },
     onSuccess: () => {
         const outDir =
             '../luci-app-forkop/htdocs/luci-static/resources/view/forkop';
         const file = path.join(outDir, 'main.js');
-        let code = fs.readFileSync(file, 'utf8');
-
-        code = code.replace(
-            /export\s*{([\s\S]*?)}/,
-            (match, group) => {
-                return `return baseclass.extend({${group}})`;
+        const code = fs.readFileSync(file, 'utf8');
+        const exports = parse(code, { sourceType: 'module' }).program.body.at(-1);
+        if (exports?.type !== 'ExportNamedDeclaration' || exports.source || !exports.specifiers.length) {
+            throw new Error('Expected a trailing named export list in the LuCI bundle');
+        }
+        const properties = exports.specifiers.map(specifier => {
+            if (specifier.type !== 'ExportSpecifier' || specifier.exported.type !== 'Identifier') {
+                throw new Error('Unsupported LuCI export');
             }
-        );
-
-        fs.writeFileSync(file, code, 'utf8');
+            return `${specifier.exported.name}:${specifier.local.name}`;
+        });
+        const bundled = code.slice(0, exports.start!) + `return baseclass.extend({${properties.join(',')}});\n`;
+        fs.writeFileSync(file, bundled, 'utf8');
         console.log(`✅ Patched LuCI build: ${file}`);
         compactLuCIAssets();
     },

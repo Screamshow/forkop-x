@@ -95,7 +95,7 @@ private_json(work + "/fixture.json", {
     section: [{ ".name": "probe", ".type": "section", enabled: "1", action: "connection", selector_proxy_links: [uri] }]
 });
 run(["ucode", "-L", lib, lib + "/xrust/generator.uc", "generate-config-fixture",
-    work + "/fixture.json", work + "/generated.json", "127.0.0.1", "0", "0", "", "1.13.21"]);
+    work + "/fixture.json", work + "/generated.json", "127.0.0.1", "0", "0", "", "1.13.21", "1"]);
 mode(work + "/generated.json", 0600);
 mode(work + "/generated.json.section-cache", 0700);
 mode(work + "/generated.json.section-cache/probe.json", 0600);
