@@ -4927,8 +4927,8 @@
     ]
   },
   {
-    "call": "Closed in history",
-    "key": "Closed in history",
+    "call": "Closed Connections",
+    "key": "Closed Connections",
     "places": [
       "src/forkop/tabs/dashboard/initController.ts:1806"
     ]

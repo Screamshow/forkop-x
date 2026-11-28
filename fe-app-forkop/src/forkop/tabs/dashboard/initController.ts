@@ -1769,7 +1769,7 @@ async function renderSystemInfoWidget() {
         value: String(systemInfoWidget.data.connections),
       },
       {
-        key: _('Closed in history'),
+        key: _('Closed Connections'),
         value: String(systemInfoWidget.data.closedConnections ?? 0),
       },
     ],

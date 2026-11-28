@@ -2910,7 +2910,7 @@ msgid "You can select Output Network Interface, by default autodetect"
 msgstr ""
 
 #: src/forkop/tabs/dashboard/initController.ts:1806
-msgid "Closed in history"
+msgid "Closed Connections"
 msgstr ""
 
 #: src/forkop/tabs/dashboard/initController.ts:715

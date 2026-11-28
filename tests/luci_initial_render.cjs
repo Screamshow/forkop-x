@@ -185,7 +185,7 @@ function checkRussianCatalog() {
   for (const key of [
     'Route detected BitTorrent directly',
     'Incompatible subscription nodes were skipped',
-    'Closed in history',
+    'Closed Connections',
     'Failed to select server',
     'Previous page',
     'Next page',
