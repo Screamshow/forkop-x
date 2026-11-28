@@ -70,6 +70,7 @@ function addLocalDeviceChoice(choices, localNetworks, routerIps, ip, name) {
 }
 
 function parseAddress(ip) {
+  if (typeof ip !== "string") return null;
   return validation.parseIPv4(ip) || validation.parseIPv6(ip);
 }
 
@@ -100,19 +101,24 @@ function buildLocalNetworks(networkInterfaces, zones) {
       net.up &&
       local.has(net.interface) &&
       !uplinks.has(net.interface) &&
-      !net.route?.some(
-        ({ target, mask }) =>
-          Number(mask) === 0 && (target === "0.0.0.0" || target === "::"),
-      );
+      (net.route == null ||
+        (Array.isArray(net.route) &&
+          !net.route.some(
+            (route) =>
+              !route ||
+              typeof route !== "object" ||
+              (Number(route.mask) === 0 &&
+                (route.target === "0.0.0.0" || route.target === "::")),
+          )));
     const addresses = [
       ...(net["ipv4-address"] || []),
       ...(net["ipv6-address"] || []),
       ...(net["ipv6-prefix-assignment"] || [])
-        .map((prefix) => prefix["local-address"])
+        .map((prefix) => prefix?.["local-address"])
         .filter(Boolean),
     ];
     for (const entry of addresses) {
-      const address = parseAddress(entry.address);
+      const address = parseAddress(entry?.address);
       if (!address) continue;
       routerIps.add(address.join(":"));
       const mask = Number(entry.mask);
@@ -182,15 +188,15 @@ function loadLocalDeviceChoices() {
     return localDeviceChoicesPromise;
   }
 
-  localDeviceChoicesPromise = Promise.all([
-    callHostHints().catch(() => ({})),
-    callDHCPLeases().catch(() => ({})),
-    callNetworkInterfaceDump().catch(() => []),
-    uci
-      .load("firewall")
-      .then(() => uci.sections("firewall", "zone"))
-      .catch(() => []),
-  ])
+  localDeviceChoicesPromise = Promise.resolve()
+    .then(() =>
+      Promise.all([
+        callHostHints().catch(() => ({})),
+        callDHCPLeases().catch(() => ({})),
+        callNetworkInterfaceDump(),
+        uci.load("firewall").then(() => uci.sections("firewall", "zone")),
+      ]),
+    )
     .then(([hostHints, dhcpLeases, networkInterfaces, zones]) => {
       localDeviceChoicesCache = buildLocalDeviceChoices(
         hostHints,
@@ -200,6 +206,8 @@ function loadLocalDeviceChoices() {
       );
       return localDeviceChoicesCache;
     })
+    // Keep saved values editable and allow a retry when suggestions fail.
+    .catch(() => ({}))
     .finally(() => {
       localDeviceChoicesPromise = null;
     });
@@ -270,7 +278,7 @@ function createLocalDeviceDynamicListWidget(option, section_id, cfgvalue) {
             sortLocalDeviceChoiceValues(loadedChoices),
             loadedChoices,
           );
-          choicesLoaded = true;
+          choicesLoaded = Boolean(localDeviceChoicesCache);
         })
         .finally(() => {
           choicesLoading = false;
