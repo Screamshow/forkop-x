@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const net = require("node:net");
 const vm = require("node:vm");
 
-function loadDevicePicker(assetDir, { firewallAvailable = true, malformed = false, failFirstDump = false } = {}) {
+function loadDevicePicker(assetDir, { firewallAvailable = true, malformed = false, responses = {} } = {}) {
   const addresses = (address, mask) => [{ address, mask }];
   const interfaces = [
     { interface: "lan", up: true, "ipv4-address": addresses("192.168.90.1", 24) },
@@ -40,27 +40,49 @@ function loadDevicePicker(assetDir, { firewallAvailable = true, malformed = fals
   if (malformed) {
     interfaces[0].route = {};
     interfaces[1]["ipv4-address"].unshift(null, {});
+    interfaces[1]["ipv4-address"].push({ address: "192.0.2.1", mask: { toString: null } });
     interfaces[1]["ipv6-prefix-assignment"].unshift(null);
+    interfaces.push(null, {
+      interface: "broken",
+      up: true,
+      "ipv4-address": { address: "192.0.2.1", mask: 24 },
+      "ipv6-address": false,
+      "ipv6-prefix-assignment": {},
+    }, {
+      interface: "guest",
+      up: true,
+      "ipv4-address": {},
+      "ipv6-prefix-assignment": [{ "local-address": { address: "fd00:92::1", mask: 64 } }],
+    });
+    zones.push(null);
+    hints.broken = { name: { toString: null }, ipaddrs: [{ toString: null }, "192.168.91.20"] };
   }
-  let dumpCalls = 0;
+  const calls = {};
+  const defaults = {
+    getHostHints: hints,
+    getDHCPLeases: leases,
+    dump: { interface: interfaces },
+    get: { values: { ...zones } },
+  };
   const source = fs.readFileSync(
     `luci-app-forkop/${assetDir}/luci-static/resources/view/forkop/local_devices.js`,
     "utf8",
   );
 
-  return vm.runInNewContext(`(function () { ${source}\n})()`, {
+  const picker = vm.runInNewContext(`(function () { ${source}\n})()`, {
+    document: { createTextNode: textContent => ({ textContent }) },
     baseclass: { extend: (entry) => entry },
-    rpc: { declare: ({ method }) => async () => {
-      if (method === "dump" && ++dumpCalls === 1 && failFirstDump)
-        return {};
-      return { getHostHints: hints, getDHCPLeases: leases, dump: interfaces }[method];
-    } },
-    uci: {
-      async load() {
+    rpc: { declare: ({ method, expect }) => async (...args) => {
+      const count = calls[method] = (calls[method] || 0) + 1;
+      if (method === "get") {
+        assert.deepEqual(args, ["firewall", "zone"]);
         if (!firewallAvailable) throw new Error("Firewall configuration unavailable");
-      },
-      sections: () => zones,
-    },
+      }
+      const result = responses[method]
+        ? await responses[method](count, defaults[method])
+        : defaults[method];
+      return expect?.interface ? result?.interface || [] : result;
+    } },
     validation: {
       parseIPv4: (ip) => ip.match(/^[\d.]+$/) && net.isIPv4(ip) ? ip.split(".").map(Number) : null,
       parseIPv6(ip) {
@@ -73,15 +95,31 @@ function loadDevicePicker(assetDir, { firewallAvailable = true, malformed = fals
     main: { validateIP: (ip) => ({ valid: Boolean(net.isIP(ip)) }) },
     ui: { DynamicList: class {
       constructor(values, choices, options) {
-        this.values = Array.from(values);
-        this.choices = { ...choices };
+        this.selected = Array.from(values, value => ({
+          value,
+          parentElement: { firstElementChild: { textContent: choices[value] || value } },
+        }));
+        this.choices = choices;
+        this.suggestions = { ...choices };
         this.validate = options.validate;
+        this.events = {};
       }
       render() { return this; }
-      addEventListener() {}
+      querySelectorAll() { return this.selected; }
+      addEventListener(type, handler) { this.events[type] = handler; }
+      interact(type, key) { this.events[type]({ target: { closest: () => true }, key }); }
+      getValue() { return this.selected.map(({ value }) => value); }
+      get labels() { return this.selected.map(input => input.parentElement.firstElementChild.textContent); }
+      clearChoices() { this.suggestions = {}; }
+      addChoices(values, labels) {
+        for (const value of values) this.suggestions[value] = labels[value].textContent;
+      }
     } },
   });
+  return { ...picker, calls };
 }
+
+const drain = () => new Promise(resolve => setImmediate(resolve));
 
 async function checkPicker(assetDir) {
   const picker = loadDevicePicker(assetDir);
@@ -100,24 +138,96 @@ async function checkPicker(assetDir) {
   };
   const saved = ["46.138.250.50", "192.168.90.204"];
   const widget = await picker.createLocalDeviceDynamicListWidget(option, "section", saved);
-  assert.deepEqual(widget.choices, expected);
-  assert.deepEqual(widget.values, saved);
+  assert.deepEqual(widget.suggestions, expected);
+  assert.deepEqual(widget.getValue(), saved);
   assert.equal(widget.validate("10.25.0.10"), true);
 
   const malformed = loadDevicePicker(assetDir, { malformed: true });
   const mixedValues = ["192.168.90.204", "192.168.91.30/32", "fd00:91::30"];
   const main = await malformed.createLocalDeviceDynamicListWidget(option, "main", mixedValues);
-  assert.deepEqual(main.values, mixedValues);
-  assert.deepEqual(main.choices, {
+  await drain();
+  assert.deepEqual(main.getValue(), mixedValues);
+  assert.deepEqual(main.suggestions, {
     "192.168.91.30": "Guest phone",
     "fd00:91::30": "Phone",
   });
 
-  const retry = loadDevicePicker(assetDir, { failFirstDump: true });
-  const fallback = await retry.createLocalDeviceDynamicListWidget(option, "main", saved);
-  assert.deepEqual(fallback.values, saved);
-  assert.deepEqual(fallback.choices, {});
-  assert.deepEqual({ ...await retry.loadLocalDeviceChoices() }, expected);
+  for (const firstDump of [{ interface: [] }, { interface: {} }, null]) {
+    const retry = loadDevicePicker(assetDir, {
+      responses: { dump: (count, good) => count === 1 ? firstDump : good },
+    });
+    const fallback = await retry.createLocalDeviceDynamicListWidget(option, "main", saved);
+    await drain();
+    assert.deepEqual(fallback.getValue(), saved);
+    assert.deepEqual(fallback.suggestions, {});
+    fallback.interact("keydown", "ArrowDown");
+    await drain();
+    assert.deepEqual(fallback.suggestions, expected);
+    assert.equal(retry.calls.dump, 2);
+  }
+
+  const recovery = loadDevicePicker(assetDir, {
+    responses: {
+      getHostHints(count, good) {
+        if (count === 1) throw new Error("Temporary failure");
+        return good;
+      },
+      getDHCPLeases: (count, good) => count === 2 ? {} : good,
+    },
+  });
+  assert.deepEqual({ ...await recovery.loadLocalDeviceChoices() }, { "192.168.91.30": "Guest phone" });
+  assert.deepEqual({ ...await recovery.loadLocalDeviceChoices() }, { ...expected, "192.168.91.30": "Phone" });
+  assert.deepEqual({ ...await recovery.loadLocalDeviceChoices() }, expected);
+  assert.deepEqual({ ...await recovery.loadLocalDeviceChoices() }, expected);
+  assert.equal(recovery.calls.dump, 3, "cache only a successful non-empty result");
+
+  const firewallRecovery = loadDevicePicker(assetDir, {
+    responses: {
+      get(count, good) {
+        if (count === 1) throw new Error("Temporary firewall failure");
+        return good;
+      },
+    },
+  });
+  assert.deepEqual({ ...await firewallRecovery.loadLocalDeviceChoices() }, {});
+  assert.deepEqual({ ...await firewallRecovery.loadLocalDeviceChoices() }, expected);
+  assert.equal(firewallRecovery.calls.get, 2);
+
+  let finishDump;
+  const stalled = loadDevicePicker(assetDir, {
+    responses: { dump: (_count, good) => new Promise(resolve => { finishDump = () => resolve(good); }) },
+  });
+  let changes = 0;
+  const editable = stalled.createLocalDeviceDynamicListWidget({
+    ...option,
+    onDeviceListChange: () => changes++,
+  }, "main", mixedValues);
+  assert.equal(typeof editable?.then, "undefined", "saved IPs render without waiting for RPC");
+  assert.deepEqual(editable.labels, mixedValues);
+  const cidrs = stalled.createLocalDeviceDynamicListWidget(option, "other", ["192.168.90.204/32"]);
+  cidrs.interact("pointerdown");
+  editable.interact("focusin");
+  await drain();
+  assert.equal(stalled.calls.dump, 1, "concurrent widgets share a single lookup");
+  const [removed, ...remaining] = editable.selected;
+  editable.selected = [...remaining, { value: "192.168.91.30", parentElement: { firstElementChild: { textContent: "192.168.91.30" } } }];
+  const liveValues = editable.getValue();
+  finishDump();
+  await drain();
+  assert.deepEqual(editable.getValue(), liveValues);
+  assert.deepEqual(editable.labels, ["192.168.91.30/32", "Phone", "Guest phone"]);
+  assert.equal(removed.parentElement.firstElementChild.textContent, mixedValues[0]);
+  assert.deepEqual(cidrs.suggestions, expected);
+  assert.equal(changes, 0);
+
+  const lazy = loadDevicePicker(assetDir);
+  const empty = lazy.createLocalDeviceDynamicListWidget(option, "empty", []);
+  lazy.createLocalDeviceDynamicListWidget(option, "cidr", ["192.168.90.204/32", "fd00:91::/64"]);
+  await drain();
+  assert.equal(lazy.calls.dump, undefined, "CIDRs and empty lists stay lazy");
+  empty.interact("focusin");
+  await drain();
+  assert.deepEqual(empty.suggestions, expected);
 }
 
 Promise.all(["htdocs", "generated"].map(checkPicker)).catch((error) => {

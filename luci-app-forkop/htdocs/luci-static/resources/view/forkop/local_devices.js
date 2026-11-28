@@ -2,53 +2,49 @@
 "require baseclass";
 "require rpc";
 "require ui";
-"require uci";
 "require validation";
 "require view.forkop.main as main";
 
 const callHostHints = rpc.declare({
   object: "luci-rpc",
   method: "getHostHints",
-  expect: { "": {} },
+  reject: true,
 });
 const callDHCPLeases = rpc.declare({
   object: "luci-rpc",
   method: "getDHCPLeases",
-  expect: { "": {} },
+  reject: true,
 });
 const callNetworkInterfaceDump = rpc.declare({
   object: "network.interface",
   method: "dump",
-  expect: { interface: [] },
+  reject: true,
+});
+// LuCI's shared UCI cache retains failed loads for the lifetime of the page.
+const callFirewallZones = rpc.declare({
+  object: "uci",
+  method: "get",
+  params: ["config", "type"],
+  reject: true,
 });
 
 let localDeviceChoicesCache = null;
 let localDeviceChoicesPromise = null;
 
 function normalizeOptionValues(value) {
-  if (!value) {
-    return [];
-  }
-
-  if (Array.isArray(value)) {
-    return value
-      .filter(Boolean)
-      .map((item) => `${item}`.trim())
-      .filter(Boolean);
-  }
-
-  return `${value}`
-    .split(/\s+/)
+  const values = typeof value === "string" ? value.split(/\s+/) : asArray(value);
+  return values
+    .filter((item) => typeof item === "string")
     .map((item) => item.trim())
     .filter(Boolean);
 }
 
 function normalizeLocalDeviceName(name) {
-  return `${name || ""}`.trim().replace(/\.lan$/i, "");
+  return typeof name === "string" ? name.trim().replace(/\.lan$/i, "") : "";
 }
 
 function addLocalDeviceChoice(choices, localNetworks, routerIps, ip, name) {
-  const normalizedIp = `${ip || ""}`.trim();
+  const normalizedIp = typeof ip === "string" ? ip.trim() : "";
   const normalizedName = normalizeLocalDeviceName(name);
 
   if (!normalizedIp || !normalizedName) {
@@ -74,6 +70,10 @@ function parseAddress(ip) {
   return validation.parseIPv4(ip) || validation.parseIPv6(ip);
 }
 
+function parsePrefixLength(mask) {
+  return typeof mask === "string" && /^\d+$/.test(mask) ? Number(mask) : mask;
+}
+
 function matchesPrefix(words, { address, mask }) {
   if (words.length !== address.length) return false;
   const wordBits = words.length === 4 ? 8 : 16;
@@ -87,6 +87,7 @@ function buildLocalNetworks(networkInterfaces, zones) {
   const local = new Set();
   const uplinks = new Set();
   for (const zone of zones) {
+    if (!isObject(zone)) continue;
     const networks =
       zone.name === "wan" || zone.masq === "1" || zone.masq6 === "1"
         ? uplinks
@@ -97,6 +98,7 @@ function buildLocalNetworks(networkInterfaces, zones) {
   const routerIps = new Set();
   const localNetworks = [];
   for (const net of networkInterfaces) {
+    if (!isObject(net)) continue;
     const isLocal =
       net.up &&
       local.has(net.interface) &&
@@ -105,23 +107,22 @@ function buildLocalNetworks(networkInterfaces, zones) {
         (Array.isArray(net.route) &&
           !net.route.some(
             (route) =>
-              !route ||
-              typeof route !== "object" ||
-              (Number(route.mask) === 0 &&
+              !isObject(route) ||
+              (parsePrefixLength(route.mask) === 0 &&
                 (route.target === "0.0.0.0" || route.target === "::")),
           )));
     const addresses = [
-      ...(net["ipv4-address"] || []),
-      ...(net["ipv6-address"] || []),
-      ...(net["ipv6-prefix-assignment"] || [])
-        .map((prefix) => prefix?.["local-address"])
-        .filter(Boolean),
+      ...asArray(net["ipv4-address"]),
+      ...asArray(net["ipv6-address"]),
+      ...asArray(net["ipv6-prefix-assignment"]).map(
+        (prefix) => prefix?.["local-address"],
+      ),
     ];
     for (const entry of addresses) {
       const address = parseAddress(entry?.address);
       if (!address) continue;
       routerIps.add(address.join(":"));
-      const mask = Number(entry.mask);
+      const mask = parsePrefixLength(entry.mask);
       const maxMask = address.length === 4 ? 32 : 128;
       if (isLocal && Number.isInteger(mask) && mask > 0 && mask <= maxMask) {
         localNetworks.push({ address, mask });
@@ -129,6 +130,14 @@ function buildLocalNetworks(networkInterfaces, zones) {
     }
   }
   return { localNetworks, routerIps };
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function isObject(value) {
+  return value != null && typeof value === "object" && !Array.isArray(value);
 }
 
 function buildLocalDeviceChoices(
@@ -190,21 +199,33 @@ function loadLocalDeviceChoices() {
 
   localDeviceChoicesPromise = Promise.resolve()
     .then(() =>
-      Promise.all([
-        callHostHints().catch(() => ({})),
-        callDHCPLeases().catch(() => ({})),
+      Promise.allSettled([
+        callHostHints(),
+        callDHCPLeases(),
         callNetworkInterfaceDump(),
-        uci.load("firewall").then(() => uci.sections("firewall", "zone")),
+        callFirewallZones("firewall", "zone"),
       ]),
     )
-    .then(([hostHints, dhcpLeases, networkInterfaces, zones]) => {
-      localDeviceChoicesCache = buildLocalDeviceChoices(
-        hostHints,
-        dhcpLeases,
-        networkInterfaces,
-        zones,
+    .then(([hintsResult, leasesResult, dumpResult, zonesResult]) => {
+      const interfaces = dumpResult.value?.interface;
+      const zones = zonesResult.value?.values;
+      if (!Array.isArray(interfaces) || !isObject(zones)) return {};
+
+      const hints = hintsResult.value;
+      const leases = leasesResult.value;
+      const validHints = isObject(hints);
+      const validLeases = Array.isArray(leases?.dhcp_leases);
+      const choices = buildLocalDeviceChoices(
+        validHints ? hints : null,
+        validLeases ? leases : null,
+        interfaces,
+        Object.values(zones),
       );
-      return localDeviceChoicesCache;
+      // A partial or empty result can be retried on the next interaction.
+      if (validHints && validLeases && Object.keys(choices).length) {
+        localDeviceChoicesCache = choices;
+      }
+      return choices;
     })
     // Keep saved values editable and allow a retry when suggestions fail.
     .catch(() => ({}))
@@ -223,91 +244,103 @@ function sortLocalDeviceChoiceValues(choices) {
 }
 
 function hasSingleIpValue(values) {
-  return normalizeOptionValues(values).some(
-    (value) => main.validateIP(value).valid,
-  );
+  return values.some((value) => main.validateIP(value).valid);
 }
 
-function preloadLocalDeviceChoicesForValues(values) {
-  return hasSingleIpValue(values)
-    ? loadLocalDeviceChoices()
-    : Promise.resolve(null);
+function updateSelectedDeviceLabels(node, choices) {
+  // DynamicList.setValue() emits change events even for identical values.
+  for (const input of node.querySelectorAll(
+    ':scope > .item > input[type="hidden"]',
+  )) {
+    const label = input.parentElement.firstElementChild;
+    const text = choices[input.value] || input.value;
+    if (label.textContent !== text) label.textContent = text;
+  }
 }
 
 function createLocalDeviceDynamicListWidget(option, section_id, cfgvalue) {
   const values = normalizeOptionValues(
     cfgvalue != null ? cfgvalue : option.default,
   );
-  const shouldResolveExistingLabels = hasSingleIpValue(values);
-
-  return (
-    shouldResolveExistingLabels ? loadLocalDeviceChoices() : Promise.resolve({})
-  ).then((initialChoices) => {
-    const choices = localDeviceChoicesCache || initialChoices || {};
-    const widget = new ui.DynamicList(values, choices, {
-      id: option.cbid(section_id),
-      sort: sortLocalDeviceChoiceValues(choices),
-      optional: option.optional || option.rmempty,
-      datatype: option.datatype,
-      placeholder: option.placeholder,
-      validate: option.validate.bind(option, section_id),
-      disabled: option.readonly != null ? option.readonly : option.map.readonly,
-    });
-    const node = widget.render();
-    if (typeof option.onDeviceWidgetReady === "function") {
-      option.onDeviceWidgetReady(section_id, widget);
-    }
-    if (typeof option.onDeviceListChange === "function") {
-      node.addEventListener("cbi-dynlist-change", () => {
-        option.onDeviceListChange(section_id, widget.getValue());
-      });
-    }
-    let choicesLoaded = Boolean(localDeviceChoicesCache);
-    let choicesLoading = false;
-
-    const loadChoices = () => {
-      if (choicesLoaded || choicesLoading) {
-        return;
-      }
-
-      choicesLoading = true;
-      loadLocalDeviceChoices()
-        .then((loadedChoices) => {
-          widget.clearChoices();
-          widget.addChoices(
-            sortLocalDeviceChoiceValues(loadedChoices),
-            loadedChoices,
-          );
-          choicesLoaded = Boolean(localDeviceChoicesCache);
-        })
-        .finally(() => {
-          choicesLoading = false;
-        });
-    };
-
-    const maybeLoadChoices = (ev) => {
-      if (
-        ev.target &&
-        typeof ev.target.closest === "function" &&
-        ev.target.closest(".cbi-dropdown")
-      ) {
-        loadChoices();
-      }
-    };
-
-    node.addEventListener("mousedown", maybeLoadChoices, true);
-    node.addEventListener("focusin", maybeLoadChoices, true);
-
-    return node;
+  let choices = localDeviceChoicesCache || {};
+  const widget = new ui.DynamicList(values, choices, {
+    id: option.cbid(section_id),
+    sort: sortLocalDeviceChoiceValues(choices),
+    optional: option.optional || option.rmempty,
+    datatype: option.datatype,
+    placeholder: option.placeholder,
+    validate: option.validate.bind(option, section_id),
+    disabled: option.readonly != null ? option.readonly : option.map.readonly,
   });
+  const node = widget.render();
+  if (typeof option.onDeviceWidgetReady === "function") {
+    option.onDeviceWidgetReady(section_id, widget);
+  }
+  if (typeof option.onDeviceListChange === "function") {
+    node.addEventListener("cbi-dynlist-change", () => {
+      option.onDeviceListChange(section_id, widget.getValue());
+    });
+  }
+  let choicesLoaded = Boolean(localDeviceChoicesCache);
+  let choicesLoading = false;
+
+  const loadChoices = () => {
+    if (choicesLoaded || choicesLoading) {
+      return;
+    }
+
+    choicesLoading = true;
+    loadLocalDeviceChoices()
+      .then((loadedChoices) => {
+        if (!Object.keys(loadedChoices).length) return;
+        if (Object.keys(choices).length) widget.clearChoices();
+        const sorted = sortLocalDeviceChoiceValues(loadedChoices);
+        // LuCI treats string labels passed to addChoices() as HTML.
+        const labels = Object.fromEntries(
+          sorted.map((ip) => [ip, document.createTextNode(loadedChoices[ip])]),
+        );
+        widget.addChoices(sorted, labels);
+        // DynamicList also uses its choice map for later setValue() calls.
+        widget.choices = choices = loadedChoices;
+        updateSelectedDeviceLabels(node, choices);
+        choicesLoaded = Boolean(localDeviceChoicesCache);
+      })
+      .catch((error) =>
+        console.warn("Failed to update local device suggestions", error),
+      )
+      .finally(() => {
+        choicesLoading = false;
+      });
+  };
+
+  const maybeLoadChoices = (ev) => {
+    if (
+      ev.target &&
+      typeof ev.target.closest === "function" &&
+      ev.target.closest(".cbi-dropdown")
+    ) {
+      loadChoices();
+    }
+  };
+
+  node.addEventListener("pointerdown", maybeLoadChoices, true);
+  node.addEventListener("focusin", maybeLoadChoices, true);
+  node.addEventListener(
+    "keydown",
+    (ev) => {
+      if (["Enter", " ", "ArrowDown"].includes(ev.key)) maybeLoadChoices(ev);
+    },
+    true,
+  );
+
+  if (hasSingleIpValue(values)) loadChoices();
+  return node;
 }
 
 const EntryPoint = {
   createLocalDeviceDynamicListWidget,
-  hasSingleIpValue,
   loadLocalDeviceChoices,
   normalizeOptionValues,
-  preloadLocalDeviceChoicesForValues,
 };
 
 return baseclass.extend(EntryPoint);
